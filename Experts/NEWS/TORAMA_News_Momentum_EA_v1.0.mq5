@@ -25,8 +25,8 @@ input double   LotSize = 0.10;                 // Lot size per position
 input int      MaxPositionsPerSide = 5;        // Max positions per direction (BUY or SELL)
 
 input group "=== PROFIT & LOSS PROTECTION ==="
-input double   IndividualTPDollars = 30.0;     // Take Profit $ per position
-input double   IndividualSLDollars = 50.0;     // Stop Loss $ per position (CRITICAL)
+input double   IndividualTPPercent = 75.0;     // Take Profit % of gap (75% recommended)
+input double   IndividualSLPercent = 125.0;    // Stop Loss % of gap (125% recommended, CRITICAL)
 input double   GlobalTPDollars = 200.0;        // Global Take Profit $
 input double   MaxDrawdownPercent = 15.0;      // Max drawdown % (emergency stop)
 
@@ -57,6 +57,10 @@ input int      SRUpdateMinutes = 240;          // Re-evaluate S/R every N minute
 
 // Working variables (can be modified by auto-detection)
 int workingMaxSpread;  // Actual max spread used (auto-set based on symbol)
+
+// Calculated TP/SL in dollars (from percentages of gap)
+double calculatedTPDollars = 0;
+double calculatedSLDollars = 0;
 
 // Support & Resistance variables
 double currentSupport = 0;
@@ -271,10 +275,17 @@ int OnInit()
       Print("⚠️ Symbol: ", symbol, " (using MaxSpread: ", workingMaxSpread, ")");
    }
    
+   //--- CALCULATE TP/SL FROM GRID GAP
+   double currentPrice = SymbolInfoDouble(_Symbol, SYMBOL_BID);
+   double gridGapDollars = currentPrice * (GridSpacingPercent / 100.0);
+   
+   calculatedTPDollars = gridGapDollars * (IndividualTPPercent / 100.0);
+   calculatedSLDollars = gridGapDollars * (IndividualSLPercent / 100.0);
+   
    Print("Symbol: ", _Symbol);
-   Print("Grid Spacing: ", GridSpacingPercent, "%");
-   Print("Individual TP: $", IndividualTPDollars);
-   Print("Individual SL: $", IndividualSLDollars, " (FAST SL: ", EnableFastSL ? "ON" : "OFF", ")");
+   Print("Grid Spacing: ", GridSpacingPercent, "% ($", DoubleToString(gridGapDollars, 2), " gap)");
+   Print("Individual TP: ", IndividualTPPercent, "% of gap = $", DoubleToString(calculatedTPDollars, 2));
+   Print("Individual SL: ", IndividualSLPercent, "% of gap = $", DoubleToString(calculatedSLDollars, 2), " (FAST SL: ", EnableFastSL ? "ON" : "OFF", ")");
    Print("Global TP: $", GlobalTPDollars);
    Print("Max Drawdown: ", MaxDrawdownPercent, "%");
    Print("Close Opposite on Reversal: ", CloseOppositeOnReversal ? "YES" : "NO");
@@ -289,15 +300,21 @@ int OnInit()
       return INIT_PARAMETERS_INCORRECT;
    }
    
-   if(IndividualSLDollars <= 0)
+   if(IndividualSLPercent <= 0)
    {
-      Alert("❌ Individual SL must be > 0 for news trading!");
+      Alert("❌ Individual SL % must be > 0 for news trading!");
       return INIT_PARAMETERS_INCORRECT;
    }
    
-   if(IndividualTPDollars <= IndividualSLDollars * 0.3)
+   if(IndividualTPPercent <= 0)
    {
-      Print("⚠️ WARNING: TP is very small compared to SL. Recommended: TP >= SL/2");
+      Alert("❌ Individual TP % must be > 0!");
+      return INIT_PARAMETERS_INCORRECT;
+   }
+   
+   if(IndividualTPPercent < IndividualSLPercent * 0.3)
+   {
+      Print("⚠️ WARNING: TP% is very small compared to SL%. Recommended: TP% >= 50-100% of SL%");
    }
    
    // Initialize
@@ -570,8 +587,8 @@ bool OpenPosition(string direction, double price)
       Print("✅ ", direction, " position opened");
       Print("   Ticket: ", result.order);
       Print("   Price: ", price);
-      Print("   TP: $", IndividualTPDollars, " at ", tp);
-      Print("   SL: $", IndividualSLDollars, " at ", sl);
+      Print("   TP: $", DoubleToString(calculatedTPDollars, 2), " at ", tp);
+      Print("   SL: $", DoubleToString(calculatedSLDollars, 2), " at ", sl);
       
       if(direction == "BUY")
          totalBuys++;
@@ -617,7 +634,7 @@ void CalculateTPSL(string direction, double entryPrice, double &tp, double &sl)
          testPrice,
          profit))
       {
-         if(profit >= IndividualTPDollars)
+         if(profit >= calculatedTPDollars)
          {
             tp = testPrice;
             break;
@@ -648,7 +665,7 @@ void CalculateTPSL(string direction, double entryPrice, double &tp, double &sl)
          testPrice,
          profit))
       {
-         if(profit <= -IndividualSLDollars)
+         if(profit <= -calculatedSLDollars)
          {
             sl = testPrice;
             break;
@@ -837,7 +854,7 @@ void CheckFastSL()
       if(ArraySize(sellPositions) > 0)
       {
          double sellPnL = CalculatePnLByDirection("SELL");
-         if(sellPnL < -IndividualSLDollars * 0.5) // 50% of SL
+         if(sellPnL < -calculatedSLDollars * 0.5) // 50% of SL
          {
             Print("⚡ FAST SL: Closing losing SELL positions (wrong direction)");
             Print("   Time in momentum: ", secondsInMomentum, " seconds");
@@ -852,7 +869,7 @@ void CheckFastSL()
       if(ArraySize(buyPositions) > 0)
       {
          double buyPnL = CalculatePnLByDirection("BUY");
-         if(buyPnL < -IndividualSLDollars * 0.5)
+         if(buyPnL < -calculatedSLDollars * 0.5)
          {
             Print("⚡ FAST SL: Closing losing BUY positions (wrong direction)");
             Print("   Time in momentum: ", secondsInMomentum, " seconds");
@@ -1274,12 +1291,12 @@ void UpdateInfoPanel()
    ObjectSetString(0, panelPrefix + "DD", OBJPROP_TEXT, "DD: " + DoubleToString(dd, 1) + "%");
    ObjectSetInteger(0, panelPrefix + "DD", OBJPROP_COLOR, ddColor);
    
-   // Grid & TP/SL - Show actual settings
+   // Grid & TP/SL - Show both percentages and calculated dollars
    ObjectSetString(0, panelPrefix + "Grid", OBJPROP_TEXT, 
                    "Grid: " + DoubleToString(GridSpacingPercent, 2) + "% ($" + DoubleToString(gridSpacing, 2) + ")");
    ObjectSetString(0, panelPrefix + "TPSL", OBJPROP_TEXT,
-                   "Individual TP: $" + DoubleToString(IndividualTPDollars, 0) + 
-                   " | SL: $" + DoubleToString(IndividualSLDollars, 0));
+                   "TP: " + DoubleToString(IndividualTPPercent, 0) + "% ($" + DoubleToString(calculatedTPDollars, 2) + 
+                   ") | SL: " + DoubleToString(IndividualSLPercent, 0) + "% ($" + DoubleToString(calculatedSLDollars, 2) + ")");
 }
 
 //+------------------------------------------------------------------+
