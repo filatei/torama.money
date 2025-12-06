@@ -1,0 +1,4 @@
+logs/
+*.ex5
+*.log
+*.tmp
