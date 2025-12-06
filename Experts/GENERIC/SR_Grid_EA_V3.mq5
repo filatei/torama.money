@@ -1692,16 +1692,35 @@ void DrawHLine(string name, double price, color clr, ENUM_LINE_STYLE style, int 
 //+------------------------------------------------------------------+
 void CreateInfoPanel()
 {
-   ObjectDelete(0, "Panel_Bg");
+   // Delete old panel objects
+   ObjectsDeleteAll(0, "Panel_");
+   ObjectsDeleteAll(0, "P_");
+   
+   // Main panel background - solid and on top
    ObjectCreate(0, "Panel_Bg", OBJ_RECTANGLE_LABEL, 0, 0, 0);
    ObjectSetInteger(0, "Panel_Bg", OBJPROP_XDISTANCE, 5);
    ObjectSetInteger(0, "Panel_Bg", OBJPROP_YDISTANCE, 25);
-   ObjectSetInteger(0, "Panel_Bg", OBJPROP_XSIZE, 330);
-   ObjectSetInteger(0, "Panel_Bg", OBJPROP_YSIZE, 480);
-   ObjectSetInteger(0, "Panel_Bg", OBJPROP_BGCOLOR, InpPanelBgColor);
+   ObjectSetInteger(0, "Panel_Bg", OBJPROP_XSIZE, 380);
+   ObjectSetInteger(0, "Panel_Bg", OBJPROP_YSIZE, 290);
+   ObjectSetInteger(0, "Panel_Bg", OBJPROP_BGCOLOR, C'15,15,25');
    ObjectSetInteger(0, "Panel_Bg", OBJPROP_BORDER_TYPE, BORDER_FLAT);
+   ObjectSetInteger(0, "Panel_Bg", OBJPROP_BORDER_COLOR, clrGold);
    ObjectSetInteger(0, "Panel_Bg", OBJPROP_CORNER, CORNER_LEFT_UPPER);
-   ObjectSetInteger(0, "Panel_Bg", OBJPROP_BACK, true);
+   ObjectSetInteger(0, "Panel_Bg", OBJPROP_BACK, false);  // On top
+   ObjectSetInteger(0, "Panel_Bg", OBJPROP_SELECTABLE, false);
+   ObjectSetInteger(0, "Panel_Bg", OBJPROP_ZORDER, 100);
+   
+   // Header bar
+   ObjectCreate(0, "Panel_Header", OBJ_RECTANGLE_LABEL, 0, 0, 0);
+   ObjectSetInteger(0, "Panel_Header", OBJPROP_XDISTANCE, 5);
+   ObjectSetInteger(0, "Panel_Header", OBJPROP_YDISTANCE, 25);
+   ObjectSetInteger(0, "Panel_Header", OBJPROP_XSIZE, 380);
+   ObjectSetInteger(0, "Panel_Header", OBJPROP_YSIZE, 28);
+   ObjectSetInteger(0, "Panel_Header", OBJPROP_BGCOLOR, C'180,140,20');
+   ObjectSetInteger(0, "Panel_Header", OBJPROP_BORDER_TYPE, BORDER_FLAT);
+   ObjectSetInteger(0, "Panel_Header", OBJPROP_CORNER, CORNER_LEFT_UPPER);
+   ObjectSetInteger(0, "Panel_Header", OBJPROP_BACK, false);
+   ObjectSetInteger(0, "Panel_Header", OBJPROP_ZORDER, 101);
 }
 
 //+------------------------------------------------------------------+
@@ -1714,10 +1733,13 @@ void CreateText(string name, int x, int y, string text, color clr, int size = 9)
    ObjectSetInteger(0, name, OBJPROP_XDISTANCE, x);
    ObjectSetInteger(0, name, OBJPROP_YDISTANCE, y);
    ObjectSetString(0, name, OBJPROP_TEXT, text);
-   ObjectSetString(0, name, OBJPROP_FONT, "Consolas");
+   ObjectSetString(0, name, OBJPROP_FONT, "Arial Bold");
    ObjectSetInteger(0, name, OBJPROP_FONTSIZE, size);
    ObjectSetInteger(0, name, OBJPROP_COLOR, clr);
    ObjectSetInteger(0, name, OBJPROP_CORNER, CORNER_LEFT_UPPER);
+   ObjectSetInteger(0, name, OBJPROP_BACK, false);  // On top
+   ObjectSetInteger(0, name, OBJPROP_SELECTABLE, false);
+   ObjectSetInteger(0, name, OBJPROP_ZORDER, 102);
 }
 
 //+------------------------------------------------------------------+
@@ -1725,118 +1747,73 @@ void CreateText(string name, int x, int y, string text, color clr, int size = 9)
 //+------------------------------------------------------------------+
 void UpdateInfoPanel()
 {
-   int x = 10, y = 30, lh = 15;
+   int x = 12, y = 30, lh = 17;
+   int col2 = 200;  // Second column x position
    
    double equity = accInfo.Equity();
    double ddPct = GetCurrentDrawdownPercent();
    double maxDD = MathMin(InpMaxDrawdownPct, SACROSANCT_MAX_DD);
    
-   CreateText("P_H1", x, y, "═══ SR GRID EA V3 ═══", clrGold, 10);
-   y += lh;
-   CreateText("P_H2", x, y, "   TORAMA CAPITAL", clrGold, 9);
+   // === HEADER ===
+   CreateText("P_Brand", x + 90, y + 5, "TORAMA CAPITAL", clrBlack, 12);
    
-   y += lh + 3;
-   string status = EAStopped ? "⛔ STOPPED" : "🟢 ACTIVE";
+   // === ROW 1: Status & Symbol ===
+   y += 32;
+   string status = EAStopped ? "STOPPED" : "ACTIVE";
    color stClr = EAStopped ? clrRed : clrLime;
-   CreateText("P_Status", x, y, "Status: " + status, stClr);
+   CreateText("P_Status", x, y, "Status: " + status, stClr, 9);
+   CreateText("P_Sym", col2, y, _Symbol + " (" + GetSymbolTypeString() + ")", clrCyan, 9);
    
-   if(EAStopped && StopReason != "")
-   {
-      y += lh;
-      CreateText("P_Reason", x, y, "Reason: " + StopReason, clrOrange);
-   }
-   
+   // === ROW 2: Bias & Zone ===
    y += lh;
    string biasStr = "NEUTRAL";
    color biasClr = clrYellow;
-   if(CurrentBias == BIAS_BUY) { biasStr = "▲ BUY"; biasClr = clrLime; }
-   else if(CurrentBias == BIAS_SELL) { biasStr = "▼ SELL"; biasClr = clrRed; }
-   else if(CurrentBias == BIAS_BOTH) { biasStr = "◆ BOTH"; biasClr = clrCyan; }
-   CreateText("P_Bias", x, y, "Bias: " + biasStr + " | Zone: " + CurrentZone, biasClr);
+   if(CurrentBias == BIAS_BUY) { biasStr = "BUY"; biasClr = clrLime; }
+   else if(CurrentBias == BIAS_SELL) { biasStr = "SELL"; biasClr = clrRed; }
+   else if(CurrentBias == BIAS_BOTH) { biasStr = "BOTH"; biasClr = clrCyan; }
+   CreateText("P_Bias", x, y, "Bias: " + biasStr, biasClr, 9);
+   CreateText("P_Zone", col2, y, "Zone: " + CurrentZone, clrSilver, 9);
    
+   // === ROW 3: S/R Levels (compact) ===
    y += lh;
-   CreateText("P_Sep1", x, y, "─────────────────────────────────", clrGray);
+   CreateText("P_Res", x, y, "R: " + DoubleToString(R1, SymSpec.digits), clrCoral, 9);
+   CreateText("P_Price", x + 120, y, DoubleToString(symInfo.Bid(), SymSpec.digits), clrWhite, 10);
+   CreateText("P_Sup", col2 + 60, y, "S: " + DoubleToString(S1, SymSpec.digits), clrLime, 9);
    
+   // === ROW 4: Grid Info ===
    y += lh;
-   CreateText("P_Sym", x, y, "Symbol: " + _Symbol + " (" + GetSymbolTypeString() + ")", clrCyan);
+   CreateText("P_Gap", x, y, "Gap: " + DoubleToString(CurrentGap, 2) + "%", clrCyan, 9);
+   CreateText("P_Buys", x + 90, y, "B:" + IntegerToString(BuyCount) + "/" + IntegerToString(InpMaxBuyPositions), clrLime, 9);
+   CreateText("P_Sells", col2, y, "S:" + IntegerToString(SellCount) + "/" + IntegerToString(InpMaxSellPositions), clrRed, 9);
+   CreateText("P_Regens", col2 + 70, y, "Regen:" + IntegerToString(Stats.gridRegens), clrAqua, 9);
    
-   y += lh;
-   CreateText("P_Spread", x, y, "Spread: " + IntegerToString(symInfo.Spread()) + " pts", InpPanelTextColor);
-   
-   y += lh;
-   CreateText("P_Sep2", x, y, "─────────────────────────────────", clrGray);
-   
-   y += lh;
-   CreateText("P_R3", x, y, "R3: " + DoubleToString(R3, SymSpec.digits), InpResistanceColor);
-   y += lh;
-   CreateText("P_R2", x, y, "R2: " + DoubleToString(R2, SymSpec.digits), InpResistanceColor);
-   y += lh;
-   CreateText("P_R1", x, y, "R1: " + DoubleToString(R1, SymSpec.digits), InpResistanceColor);
-   y += lh;
-   CreateText("P_Price", x, y, ">> " + DoubleToString(symInfo.Bid(), SymSpec.digits) + " <<", clrWhite, 10);
-   y += lh;
-   CreateText("P_S1", x, y, "S1: " + DoubleToString(S1, SymSpec.digits), InpSupportColor);
-   y += lh;
-   CreateText("P_S2", x, y, "S2: " + DoubleToString(S2, SymSpec.digits), InpSupportColor);
-   y += lh;
-   CreateText("P_S3", x, y, "S3: " + DoubleToString(S3, SymSpec.digits), InpSupportColor);
-   
-   y += lh;
-   CreateText("P_Sep3", x, y, "─────────────────────────────────", clrGray);
-   
-   y += lh;
-   CreateText("P_Gap", x, y, "Gap: " + DoubleToString(CalculateGapPrice(), SymSpec.digits) + 
-              " (" + DoubleToString(CurrentGap, 2) + "%)", clrCyan);
-   
-   y += lh;
-   CreateText("P_Buys", x, y, "Buys: " + IntegerToString(BuyCount) + "/" + 
-              IntegerToString(InpMaxBuyPositions), clrLime);
-   y += lh;
-   CreateText("P_Sells", x, y, "Sells: " + IntegerToString(SellCount) + "/" + 
-              IntegerToString(InpMaxSellPositions), clrRed);
-   
-   y += lh;
-   CreateText("P_Grid", x, y, "Grid: " + (InpInfiniteGrid ? "♾️ INFINITE" : "LIMITED") + 
-              " | Regens: " + IntegerToString(Stats.gridRegens), clrCyan);
-   
-   y += lh;
-   CreateText("P_Sep4", x, y, "─────────────────────────────────", clrGray);
-   
+   // === ROW 5: Drawdown & Equity ===
    y += lh;
    color ddClr = ddPct > maxDD * 0.8 ? clrRed : (ddPct > maxDD * 0.5 ? clrOrange : clrLime);
-   CreateText("P_DD", x, y, "DD: " + DoubleToString(ddPct, 2) + "% / " + 
-              DoubleToString(maxDD, 1) + "%", ddClr);
+   CreateText("P_DD", x, y, "DD: " + DoubleToString(ddPct, 1) + "/" + DoubleToString(maxDD, 0) + "%", ddClr, 9);
+   CreateText("P_MaxDD", x + 110, y, "Peak: " + DoubleToString(Stats.maxDrawdownPct, 1) + "%", clrSilver, 9);
+   CreateText("P_Equity", col2 + 30, y, "Eq: $" + DoubleToString(equity, 0), clrWhite, 9);
    
-   y += lh;
-   CreateText("P_MaxDD", x, y, "Peak DD: " + DoubleToString(Stats.maxDrawdownPct, 2) + "%", InpPanelTextColor);
-   
-   y += lh;
-   CreateText("P_Equity", x, y, "Equity: $" + DoubleToString(equity, 2), InpPanelTextColor);
-   
+   // === ROW 6: P/L ===
    y += lh;
    color plClr = Stats.netProfit >= 0 ? clrLime : clrRed;
-   CreateText("P_PL", x, y, "Net P/L: $" + DoubleToString(Stats.netProfit, 2), plClr);
-   
-   y += lh;
    color tdClr = TodayPL >= 0 ? clrLime : clrRed;
-   CreateText("P_Today", x, y, "Today: $" + DoubleToString(TodayPL, 2), tdClr);
+   CreateText("P_NetPL", x, y, "Net: $" + DoubleToString(Stats.netProfit, 2), plClr, 9);
+   CreateText("P_TodayPL", col2, y, "Today: $" + DoubleToString(TodayPL, 2), tdClr, 9);
    
-   y += lh;
-   CreateText("P_Sep5", x, y, "─────────────────────────────────", clrGray);
-   
+   // === ROW 7: Win Rate & Trades ===
    y += lh;
    int total = Stats.winTrades + Stats.lossTrades;
    double winRate = total > 0 ? (Stats.winTrades * 100.0 / total) : 0;
-   CreateText("P_WR", x, y, "Win: " + DoubleToString(winRate, 1) + "% (" + 
-              IntegerToString(Stats.winTrades) + "/" + IntegerToString(total) + ")", InpPanelTextColor);
+   CreateText("P_WR", x, y, "Win: " + DoubleToString(winRate, 0) + "% (" + IntegerToString(Stats.winTrades) + "/" + IntegerToString(total) + ")", clrSilver, 9);
+   CreateText("P_Trades", col2, y, "Today: " + IntegerToString(TodayTradeCount) + " trades", clrSilver, 9);
    
+   // === ROW 8: Consecutive & Spread ===
    y += lh;
-   CreateText("P_Consec", x, y, "Consec W/L: " + IntegerToString(Stats.consecutiveWins) + "/" + 
-              IntegerToString(Stats.consecutiveLosses), InpPanelTextColor);
+   CreateText("P_Consec", x, y, "Consec W/L: " + IntegerToString(Stats.consecutiveWins) + "/" + IntegerToString(Stats.consecutiveLosses), clrSilver, 9);
+   CreateText("P_Spread", col2, y, "Spread: " + IntegerToString(symInfo.Spread()) + " pts", clrSilver, 9);
    
-   y += lh;
-   CreateText("P_Trades", x, y, "Today Trades: " + IntegerToString(TodayTradeCount), InpPanelTextColor);
-   
+   // === ROW 9: Features Active ===
    y += lh;
    string feat = "";
    if(InpMartingaleMode != MARTINGALE_OFF) feat += "M" + IntegerToString(CurrentMartingaleStep) + " ";
@@ -1844,10 +1821,17 @@ void UpdateInfoPanel()
    if(IsRecovering) feat += "RECOV ";
    if(InpUseBreakeven) feat += "BE:" + IntegerToString(Stats.breakevenMoves) + " ";
    if(InpUseTrailing) feat += "TR:" + IntegerToString(Stats.trailingMoves) + " ";
-   if(feat == "") feat = "Standard";
-   CreateText("P_Feat", x, y, feat, clrCyan);
+   if(InpInfiniteGrid) feat += "INF ";
+   if(feat == "") feat = "Standard Mode";
+   CreateText("P_Feat", x, y, feat, clrAqua, 9);
    
+   // === ROW 10: Mode & Stop Reason ===
    y += lh;
-   CreateText("P_Broker", x, y, StringSubstr(Broker.name, 0, 30), clrGray);
+   string modeStr = InpTurboMode ? "TURBO" : "NORMAL";
+   CreateText("P_Mode", x, y, "Mode: " + modeStr, clrGold, 9);
+   if(EAStopped && StopReason != "")
+      CreateText("P_Reason", col2, y, StopReason, clrOrange, 9);
+   else
+      CreateText("P_Reason", col2, y, StringSubstr(Broker.name, 0, 20), clrGray, 8);
 }
 //+------------------------------------------------------------------+
