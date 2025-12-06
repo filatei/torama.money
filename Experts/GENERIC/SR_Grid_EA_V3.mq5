@@ -334,9 +334,15 @@ void OnDeinit(const int reason)
    if(ATRHandle != INVALID_HANDLE)
       IndicatorRelease(ATRHandle);
    
+   // Remove ALL visual objects
    ObjectsDeleteAll(0, "SR_");
    ObjectsDeleteAll(0, "Grid_");
    ObjectsDeleteAll(0, "Panel_");
+   ObjectsDeleteAll(0, "P_");
+   
+   // Force chart redraw
+   ChartRedraw(0);
+   
    Comment("");
    
    Print("═══════════════════════════════════════════");
