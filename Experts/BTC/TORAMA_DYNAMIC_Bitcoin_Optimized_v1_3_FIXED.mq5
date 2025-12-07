@@ -1,18 +1,19 @@
 //+------------------------------------------------------------------+
-//|                  TORAMA Bitcoin Optimized EA v1.0                |
+//|                  TORAMA Bitcoin Optimized EA v1.3                |
 //|                                           TORAMA CAPITAL          |
 //|                                      https://www.torama.money     |
 //+------------------------------------------------------------------+
 #property copyright "TORAMA CAPITAL"
 #property link      "https://www.torama.money"
-#property version   "1.20"
-#property description "Bitcoin (BTCUSD) Optimized EA - CORRECT P&L CALCULATIONS"
-#property description "Based on 69 days historical data | Uses OrderCalcProfit"
+#property version   "1.30"
+#property description "Bitcoin (BTCUSD) Optimized EA - FIXED TP/SL CALCULATIONS v1.3"
+#property description "Based on 69 days historical data | Simple direct dollar distance"
 #property description "v1.1: PERMANENT STOP at max drawdown (requires manual restart)"
 #property description "v1.2: FIXED - Direction buttons don't close opposite positions"
+#property description "v1.3: CRITICAL FIX - Replaced flawed OrderCalcProfit with direct distance"
 
 //--- EA Version (single source of truth)
-#define EA_VERSION "1.2"
+#define EA_VERSION "1.3"
 #define EA_NAME "BITCOIN GRID"
 
 //--- Input Parameters
@@ -1712,138 +1713,74 @@ bool OpenPosition(string direction, double price)
    request.price = (direction == "BUY") ? SymbolInfoDouble(_Symbol, SYMBOL_ASK) : SymbolInfoDouble(_Symbol, SYMBOL_BID);
    request.deviation = 10;
    request.magic = MagicNumber;
-   request.comment = "Momentum v4.1 H4SR";
+   request.comment = "Bitcoin Grid v1.3";
    request.type_filling = ORDER_FILLING_IOC;
    
-   // UNIVERSAL TP/SL CALCULATION v3 - With cent account detection
-   // Uses tick value to calculate profit per price unit
+   // ==================================================================
+   // FIXED TP/SL CALCULATION v1.3 - DIRECT DOLLAR DISTANCE
+   // For dollar-quoted instruments (BTCUSD, XAUUSD), TP/SL dollars 
+   // represent PRICE DISTANCE, not profit amounts!
+   // ==================================================================
    
-   double tickValue = SymbolInfoDouble(_Symbol, SYMBOL_TRADE_TICK_VALUE);
-   double tickSize = SymbolInfoDouble(_Symbol, SYMBOL_TRADE_TICK_SIZE);
+   Print("📊 TP/SL Calculation (FIXED v1.3):");
+   Print("   Direction: ", direction);
+   Print("   Entry Price: $", DoubleToString(request.price, 2));
+   Print("   TP Target: $", DoubleToString(IndividualTPDollars, 2));
+   Print("   SL Limit: $", DoubleToString(IndividualSLDollars, 2));
+   
+   // For dollar-quoted instruments: TP/SL are simply price distances
+   if(direction == "BUY")
+   {
+      // BUY: TP above entry, SL below entry
+      request.tp = (IndividualTPDollars > 0) ? request.price + IndividualTPDollars : 0;
+      request.sl = (IndividualSLDollars > 0) ? request.price - IndividualSLDollars : 0;
+   }
+   else  // SELL
+   {
+      // SELL: TP below entry, SL above entry
+      request.tp = (IndividualTPDollars > 0) ? request.price - IndividualTPDollars : 0;
+      request.sl = (IndividualSLDollars > 0) ? request.price + IndividualSLDollars : 0;
+   }
+   
+   Print("   TP Price: $", DoubleToString(request.tp, 2));
+   Print("   SL Price: $", DoubleToString(request.sl, 2));
+   
+   // Verify minimum stop distance (broker requirements)
    double point = SymbolInfoDouble(_Symbol, SYMBOL_POINT);
+   double minStopLevel = SymbolInfoInteger(_Symbol, SYMBOL_TRADE_STOPS_LEVEL) * point;
    
-   // ==================================================================
-   // UNIVERSAL TP/SL CALCULATOR v4.0 - ITERATIVE LOT SIZE APPROACH
-   // Works on ANY account type, ANY broker, ANY contract size!
-   // ==================================================================
-   
-   Print("📊 Starting UNIVERSAL TP/SL Calculation v4.0...");
-   Print("   Symbol: ", _Symbol);
-   Print("   User Settings:");
-   Print("   - Individual TP: $", IndividualTPDollars);
-   Print("   - Individual SL: $", IndividualSLDollars);
-   Print("   - User Lot Size: ", LotSize);
-   
-   // Get current price for testing
-   double testPrice = (direction == "BUY") ? SymbolInfoDouble(_Symbol, SYMBOL_ASK) : SymbolInfoDouble(_Symbol, SYMBOL_BID);
-   
-   // STEP 1: Find what lot size gives us desired TP profit
-   // We'll test with a small price movement (0.1% of price)
-   double testDistance = testPrice * 0.001;  // 0.1% price movement
-   double testPriceTo = testPrice + testDistance;
-   
-   Print("🔍 Testing profit calculation:");
-   Print("   Test from: ", testPrice);
-   Print("   Test to: ", testPriceTo);
-   Print("   Test distance: ", testDistance, " (0.1% of price)");
-   
-   // Test profit for 1.0 lot with test distance
-   double testProfit = 0;
-   ENUM_ORDER_TYPE testOrderType = (direction == "BUY") ? ORDER_TYPE_BUY : ORDER_TYPE_SELL;
-   
-   if(OrderCalcProfit(testOrderType, _Symbol, 1.0, testPrice, testPriceTo, testProfit))
+   if(minStopLevel > 0)
    {
-      double profitPer1Lot = MathAbs(testProfit);
-      Print("   Profit for 1.0 lot over test distance: $", profitPer1Lot);
-      
-      if(profitPer1Lot > 0.000001)
+      if(direction == "BUY")
       {
-         // Calculate what lot size we need for desired TP
-         double neededLotForTP = IndividualTPDollars / (profitPer1Lot / testDistance);
-         Print("   Calculated lot needed for TP: ", neededLotForTP);
-         
-         // Calculate actual distances using USER's lot size
-         double actualProfitPerDistance = profitPer1Lot * LotSize;
-         double tpDistance = (IndividualTPDollars / actualProfitPerDistance) * testDistance;
-         double slDistance = (IndividualSLDollars / actualProfitPerDistance) * testDistance;
-         
-         Print("📊 Final TP/SL Calculation:");
-         Print("   Profit per ", testDistance, " price units at ", LotSize, " lot: $", actualProfitPerDistance);
-         Print("   TP Distance needed: ", DoubleToString(tpDistance, 3), " price units");
-         Print("   SL Distance needed: ", DoubleToString(slDistance, 3), " price units");
-         
-         // Sanity check
-         double tpPercent = (tpDistance / testPrice) * 100.0;
-         double slPercent = (slDistance / testPrice) * 100.0;
-         
-         Print("   TP Distance: ", DoubleToString(tpPercent, 2), "% of price");
-         Print("   SL Distance: ", DoubleToString(slPercent, 2), "% of price");
-         
-         if(tpDistance > testPrice * 0.5 || slDistance > testPrice * 0.5)
+         if(request.tp > 0 && request.tp - request.price < minStopLevel)
          {
-            Print("⚠️ WARNING: TP/SL distances > 50% of price!");
-            Print("   This will likely cause Error 10016");
-            Print("   SOLUTION: Increase LotSize significantly");
-            Print("   Recommended lot: ", DoubleToString(neededLotForTP, 2));
-            Print("   Your current lot: ", LotSize);
-            Print("   Multiplier needed: ", DoubleToString(neededLotForTP / LotSize, 1), "x");
+            Print("⚠️ Adjusting TP to meet minimum stop level");
+            request.tp = request.price + minStopLevel;
          }
-         
-         // Set TP and SL prices
-         if(direction == "BUY")
+         if(request.sl > 0 && request.price - request.sl < minStopLevel)
          {
-            request.tp = request.price + tpDistance;
-            request.sl = request.price - slDistance;
+            Print("⚠️ Adjusting SL to meet minimum stop level");
+            request.sl = request.price - minStopLevel;
          }
-         else  // SELL
-         {
-            request.tp = request.price - tpDistance;
-            request.sl = request.price + slDistance;
-         }
-         
-         // CRITICAL SAFETY CHECK: Prevent negative or invalid TP/SL
-         if(request.sl <= 0 || request.tp <= 0)
-         {
-            Print("❌ CRITICAL ERROR: TP/SL calculation produced invalid prices!");
-            Print("   Entry: ", request.price);
-            Print("   TP: ", request.tp);
-            Print("   SL: ", request.sl);
-            Print("   ");
-            Print("🛑 YOUR LOT SIZE IS TOO SMALL FOR THIS BROKER!");
-            Print("   Current lot: ", LotSize);
-            Print("   Recommended lot: ", DoubleToString(neededLotForTP, 2));
-            Print("   ");
-            Print("💡 TWO OPTIONS:");
-            Print("   1. Increase LotSize to ", DoubleToString(neededLotForTP, 2));
-            Print("   2. Switch to standard Gold contract (XAUUSDc not XAUUSDc.M)");
-            Print("   ");
-            Print("⚠️ Trading without TP/SL to prevent Error 10016");
-            Print("   EA will use Global TP/SL only");
-            
-            // Clear TP/SL and continue
-            request.tp = 0;
-            request.sl = 0;
-         }
-         
-         Print("   Entry: ", request.price);
-         Print("   TP: ", request.tp);
-         Print("   SL: ", request.sl);
       }
-      else
+      else // SELL
       {
-         Print("❌ ERROR: Profit calculation returned zero!");
-         Print("   Cannot calculate TP/SL distances");
-         return false;
+         if(request.tp > 0 && request.price - request.tp < minStopLevel)
+         {
+            Print("⚠️ Adjusting TP to meet minimum stop level");
+            request.tp = request.price - minStopLevel;
+         }
+         if(request.sl > 0 && request.sl - request.price < minStopLevel)
+         {
+            Print("⚠️ Adjusting SL to meet minimum stop level");
+            request.sl = request.price + minStopLevel;
+         }
       }
    }
-   else
-   {
-      Print("❌ ERROR: OrderCalcProfit failed!");
-      Print("   Falling back to NO TP/SL");
-      request.tp = 0;
-      request.sl = 0;
-   }
    
+   // Normalize prices
+   // Normalize prices
    int digits = (int)SymbolInfoInteger(_Symbol, SYMBOL_DIGITS);
    request.price = NormalizeDouble(request.price, digits);
    request.tp = NormalizeDouble(request.tp, digits);
