@@ -19,17 +19,17 @@
 
 input group "=== TRADING MODE ==="
 input bool     TradeBuyOnly = true;              // Trade BUY ONLY (false = SELL ONLY)
-input bool     EnableSRSwitch = false;           // Auto-switch mode at Support/Resistance
+input bool     EnableSRSwitch = true;           // Auto-switch mode at Support/Resistance
 
 input group "=== GRID SETTINGS ==="
-input double   GridSpacingPercent = 0.30;        // Grid spacing % (0.2-0.5 recommended)
+input double   GridSpacingPercent = 0.01;        // Grid spacing % (0.2-0.5 recommended)
 input int      MaxPositions = 30;                // Maximum grid positions
 input double   LotSize = 0.1;                    // Lot size per position
 
 input group "=== PROFIT & RISK ==="
-input double   IndividualTPDollars = 50.0;       // Take Profit per position ($)
+input double   IndividualTPDollars = 20.0;       // Take Profit per position ($)
 input double   IndividualSLDollars = 5000.0;     // Stop Loss per position ($)
-input double   GlobalTPDollars = 500.0;          // Global profit target ($)
+input double   GlobalTPDollars = 100.0;          // Global profit target ($)
 input double   MaxDrawdownPercent = 20.0;        // Max drawdown % (emergency stop)
 
 input group "=== SUPPORT/RESISTANCE ==="
