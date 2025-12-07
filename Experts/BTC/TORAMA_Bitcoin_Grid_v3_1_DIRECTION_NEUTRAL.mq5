@@ -20,6 +20,7 @@
 
 input group "=== TREND ADAPTIVE MODE ==="
 input int      LevelsBeforeFlip = 2;             // Levels against trend before flip (2-5 recommended)
+input bool     CloseOnFlip = false;              // Close positions when flipping direction (default: NO)
 
 input group "=== GRID SETTINGS ==="
 input double   GridSpacingPercent = 0.30;        // Grid spacing % (0.2-0.5 recommended)
@@ -31,6 +32,7 @@ input double   IndividualTPPercent = 300.0;      // Individual TP as % of gap (3
 input double   IndividualSLPercent = 0.0;        // Individual SL as % of gap (0 = disabled)
 input double   GlobalTPPercent = 500.0;          // Global TP as % of gap (500 = 5x gap)
 input double   GlobalSLPercent = 0.0;            // Global SL as % of gap (0 = disabled)
+input int      AutoCloseProfitableCount = 5;    // Auto-close when X positions profitable (0 = OFF)
 input double   SessionProfitPercent = 100.0;     // Session/Daily profit target (% of starting balance)
 input bool     ResetSessionDaily = true;         // Reset session profit daily (false = per session)
 input double   MaxDrawdownPercent = 20.0;        // Max drawdown % (emergency stop)
@@ -142,11 +144,13 @@ int OnInit()
    Print("Starting Mode: NEUTRAL (waiting for market move)");
    Print("Will follow first movement: UP→BUY, DOWN→SELL");
    Print("Auto-Flip After: ", LevelsBeforeFlip, " levels against trend");
+   Print("Close On Flip: ", CloseOnFlip ? "YES (closes opposite positions)" : "NO (keeps all positions)");
    Print("Grid Spacing: ", GridSpacingPercent, "% = $", DoubleToString(currentGapSize, 2));
    Print("Individual TP: ", IndividualTPPercent, "% of gap = $", DoubleToString(individualTPDollars, 2));
    Print("Individual SL: ", IndividualSLPercent > 0 ? DoubleToString(IndividualSLPercent, 0) + "% of gap = $" + DoubleToString(individualSLDollars, 2) : "DISABLED");
    Print("Global TP: ", GlobalTPPercent, "% of gap = $", DoubleToString(globalTPDollars, 2));
    Print("Global SL: ", GlobalSLPercent > 0 ? DoubleToString(GlobalSLPercent, 0) + "% of gap = $" + DoubleToString(globalSLDollars, 2) : "DISABLED");
+   Print("Auto-Close Profitable: ", AutoCloseProfitableCount > 0 ? IntegerToString(AutoCloseProfitableCount) + " positions" : "DISABLED");
    Print("Session Target: ", SessionProfitPercent, "% = $", DoubleToString(sessionProfitTarget, 2));
    Print("Reset Mode: ", ResetSessionDaily ? "DAILY" : "PER SESSION");
    Print("═══════════════════════════════════════");
@@ -271,6 +275,13 @@ void OnTick()
       Print("EMERGENCY STOP ACTIVATED!");
       Print("═══════════════════════════════════════════════════════════════");
       UpdatePanel();
+      return;
+   }
+   
+   // Check auto-close profitable positions
+   if(CheckAutoCloseProfitable())
+   {
+      // Positions closed, continue trading
       return;
    }
    
@@ -846,6 +857,18 @@ void FlipTrendDirection(string trendDirection)
       Print("High Water Mark: $", DoubleToString(highWaterMark, 2));
    Print("═══════════════════════════════════════════════════════════════");
    
+   // Close opposite positions if CloseOnFlip is enabled
+   if(CloseOnFlip)
+   {
+      CloseOppositePositions(oldMode);
+      Print("💡 CloseOnFlip ENABLED: Closed all ", oldMode, " positions");
+   }
+   else
+   {
+      Print("💡 CloseOnFlip DISABLED: Keeping old ", oldMode, " positions open");
+      Print("   They will close by TP/SL or other methods");
+   }
+   
    // Reset tracking for new direction
    trendStartPrice = currentPrice;
    highWaterMark = currentPrice;
@@ -919,6 +942,97 @@ bool CheckSessionProfit()
    }
    
    return false;
+}
+
+//+------------------------------------------------------------------+
+//| AUTO-CLOSE MULTIPLE PROFITABLE POSITIONS                         |
+//+------------------------------------------------------------------+
+bool CheckAutoCloseProfitable()
+{
+   if(AutoCloseProfitableCount <= 0) return false;  // Feature disabled
+   
+   int profitableCount = 0;
+   int totalPositions = ArraySize(positions);
+   
+   // Count profitable positions
+   for(int i = 0; i < totalPositions; i++)
+   {
+      if(!PositionSelectByTicket(positions[i].ticket)) continue;
+      
+      double profit = PositionGetDouble(POSITION_PROFIT);
+      double swap = PositionGetDouble(POSITION_SWAP);
+      double totalPL = profit + swap;  // Commission removed (deprecated in newer MT5)
+      
+      if(totalPL > 0)
+      {
+         profitableCount++;
+      }
+   }
+   
+   // Check if we should close profitable positions
+   if(profitableCount >= AutoCloseProfitableCount)
+   {
+      Print("╔════════════════════════════════════════════════════════════════╗");
+      Print("║     💰 AUTO-CLOSING PROFITABLE POSITIONS                       ║");
+      Print("╚════════════════════════════════════════════════════════════════╝");
+      Print("Profitable Positions: ", profitableCount, " >= ", AutoCloseProfitableCount);
+      Print("Closing all profitable positions now...");
+      Print("═══════════════════════════════════════════════════════════════");
+      
+      CloseAllProfitablePositions();
+      UpdatePanel();
+      return true;
+   }
+   
+   return false;
+}
+
+//+------------------------------------------------------------------+
+//| CLOSE OPPOSITE DIRECTION POSITIONS (for flip)                    |
+//+------------------------------------------------------------------+
+void CloseOppositePositions(string oppositeMode)
+{
+   int closed = 0;
+   ENUM_POSITION_TYPE targetType = (oppositeMode == "BUY") ? POSITION_TYPE_BUY : POSITION_TYPE_SELL;
+   
+   Print("🔄 Closing opposite positions (", oppositeMode, ")...");
+   
+   // Loop through all positions backwards
+   for(int i = ArraySize(positions) - 1; i >= 0; i--)
+   {
+      if(!PositionSelectByTicket(positions[i].ticket)) continue;
+      
+      // Check if this position is the opposite type
+      if(PositionGetInteger(POSITION_TYPE) == targetType)
+      {
+         MqlTradeRequest request = {};
+         MqlTradeResult result = {};
+         
+         request.action = TRADE_ACTION_DEAL;
+         request.position = positions[i].ticket;
+         request.symbol = _Symbol;
+         request.volume = PositionGetDouble(POSITION_VOLUME);
+         request.deviation = 10;
+         request.magic = MagicNumber;
+         
+         // Close buy with sell, sell with buy
+         request.type = (targetType == POSITION_TYPE_BUY) ? ORDER_TYPE_SELL : ORDER_TYPE_BUY;
+         request.price = (request.type == ORDER_TYPE_SELL) ? SymbolInfoDouble(_Symbol, SYMBOL_BID) : SymbolInfoDouble(_Symbol, SYMBOL_ASK);
+         
+         if(OrderSend(request, result))
+         {
+            if(result.retcode == TRADE_RETCODE_DONE)
+            {
+               closed++;
+            }
+         }
+      }
+   }
+   
+   Print("✅ Closed ", closed, " ", oppositeMode, " position(s) due to flip");
+   
+   // Re-sync positions after closing
+   SyncPositions();
 }
 
 //+------------------------------------------------------------------+
