@@ -1,9 +1,9 @@
 //+------------------------------------------------------------------+
-//|                                     GapTrader Pro EA v13.24      |
-//|        MOMENTUM OPTIMIZED - TP/SL % of Gap v13.24                 |
+//|                                     GapTrader Pro EA v13.25      |
+//|        MOMENTUM OPTIMIZED - All TP/SL % of Gap v13.25            |
 //+------------------------------------------------------------------+
-#property copyright "GapTrader Pro v13.24 MOMENTUM - TORAMA CAPITAL (TP/SL % Gap)"
-#property version   "13.24"
+#property copyright "GapTrader Pro v13.25 MOMENTUM - TORAMA CAPITAL (All TP/SL % Gap)"
+#property version   "13.25"
 #property strict
 
 #include <Trade\Trade.mqh>
@@ -17,7 +17,8 @@ input ENUM_TRADE_DIRECTION TradeDirection = TRADE_BUY;
 input double GapSize = 30.0;  // Gap size in dollars
 input double TakeProfitPercent = 300.0;  // TP as % of Gap (e.g., 300 = 3x gap) - 0 to disable
 input double StopLossPercent = 200.0;    // SL as % of Gap (e.g., 200 = 2x gap) - 0 to disable
-input double GlobalTakeProfit = 500.0, GlobalSL = 0.0;
+input double GlobalTakeProfitPercent = 500.0;  // Global TP as % of Gap (e.g., 500 = 5x gap) - 0 to disable
+input double GlobalSLPercent = 0.0;  // Global SL as % of Gap - 0 to disable
 input int MaxPositions = 5, TradingHours = 0, MagicNumber = 66616;
 input bool UseAutoLotSize = false;
 input double AutoLotSize = 0.01;
@@ -185,8 +186,11 @@ int OnInit() {
    double initSLDollars = GapSize * StopLossPercent / 100.0;
    Print("Take Profit: ", DoubleToString(TakeProfitPercent, 0), "% of gap = $", DoubleToString(initTPDollars, 2), TakeProfitPercent <= 0 ? " (DISABLED)" : "");
    Print("Stop Loss: ", DoubleToString(StopLossPercent, 0), "% of gap = $", DoubleToString(initSLDollars, 2), StopLossPercent <= 0 ? " (DISABLED)" : "");
-   Print("Global TP: $", DoubleToString(GlobalTakeProfit, 2), GlobalTakeProfit <= 0 ? " (DISABLED)" : "");
-   Print("Global SL: $", DoubleToString(GlobalSL, 2), GlobalSL <= 0 ? " (DISABLED)" : "");
+   
+   double initGlobalTPDollars = GapSize * GlobalTakeProfitPercent / 100.0;
+   double initGlobalSLDollars = GapSize * GlobalSLPercent / 100.0;
+   Print("Global TP: ", DoubleToString(GlobalTakeProfitPercent, 0), "% of gap = $", DoubleToString(initGlobalTPDollars, 2), GlobalTakeProfitPercent <= 0 ? " (DISABLED)" : "");
+   Print("Global SL: ", DoubleToString(GlobalSLPercent, 0), "% of gap = $", DoubleToString(initGlobalSLDollars, 2), GlobalSLPercent <= 0 ? " (DISABLED)" : "");
    Print("");
    Print("=== TRADING MODE ===");
    Print("Default Mode: MOMENTUM (OPTIMIZED for trending markets)");
@@ -482,18 +486,17 @@ void CheckGapTrades() {
 bool OpenBuy() {
    double price = SymbolInfoDouble(_Symbol, SYMBOL_ASK), lot = GetLotSize(true), tp = 0, sl = 0;
    
-   // Calculate TP/SL as percentage of current gap size (in dollars)
-   double tpDollars = (TakeProfitPercent > 0) ? (ti.currentGapSize * TakeProfitPercent / 100.0) : 0;
-   double slDollars = (StopLossPercent > 0) ? (ti.currentGapSize * StopLossPercent / 100.0) : 0;
+   // Calculate TP/SL as percentage of current gap size (in PRICE DISTANCE, not profit)
+   double tpDistance = (TakeProfitPercent > 0) ? (ti.currentGapSize * TakeProfitPercent / 100.0) : 0;
+   double slDistance = (StopLossPercent > 0) ? (ti.currentGapSize * StopLossPercent / 100.0) : 0;
    
-   if(tpDollars > 0) {
-      double tpPoints = tpDollars / (lot * SymbolInfoDouble(_Symbol, SYMBOL_TRADE_TICK_VALUE));
-      tp = price + tpPoints * _Point;
+   // For dollar-quoted instruments (BTCUSD, XAUUSD), gap size IS the price distance
+   if(tpDistance > 0) {
+      tp = price + tpDistance;
    }
    
-   if(slDollars > 0) {
-      double slPoints = slDollars / (lot * SymbolInfoDouble(_Symbol, SYMBOL_TRADE_TICK_VALUE));
-      sl = price - slPoints * _Point;
+   if(slDistance > 0) {
+      sl = price - slDistance;
    }
    
    return trade.Buy(lot, _Symbol, price, sl, tp, "GT18-Buy");
@@ -502,18 +505,17 @@ bool OpenBuy() {
 bool OpenSell() {
    double price = SymbolInfoDouble(_Symbol, SYMBOL_BID), lot = GetLotSize(false), tp = 0, sl = 0;
    
-   // Calculate TP/SL as percentage of current gap size (in dollars)
-   double tpDollars = (TakeProfitPercent > 0) ? (ti.currentGapSize * TakeProfitPercent / 100.0) : 0;
-   double slDollars = (StopLossPercent > 0) ? (ti.currentGapSize * StopLossPercent / 100.0) : 0;
+   // Calculate TP/SL as percentage of current gap size (in PRICE DISTANCE, not profit)
+   double tpDistance = (TakeProfitPercent > 0) ? (ti.currentGapSize * TakeProfitPercent / 100.0) : 0;
+   double slDistance = (StopLossPercent > 0) ? (ti.currentGapSize * StopLossPercent / 100.0) : 0;
    
-   if(tpDollars > 0) {
-      double tpPoints = tpDollars / (lot * SymbolInfoDouble(_Symbol, SYMBOL_TRADE_TICK_VALUE));
-      tp = price - tpPoints * _Point;
+   // For dollar-quoted instruments (BTCUSD, XAUUSD), gap size IS the price distance
+   if(tpDistance > 0) {
+      tp = price - tpDistance;
    }
    
-   if(slDollars > 0) {
-      double slPoints = slDollars / (lot * SymbolInfoDouble(_Symbol, SYMBOL_TRADE_TICK_VALUE));
-      sl = price + slPoints * _Point;
+   if(slDistance > 0) {
+      sl = price + slDistance;
    }
    
    return trade.Sell(lot, _Symbol, price, sl, tp, "GT18-Sell");
@@ -535,7 +537,11 @@ void CalcTotalPL() {
 }
 
 bool CheckGlobalTPSL() {
-   return (GlobalTakeProfit > 0 && ti.totalProfit >= GlobalTakeProfit) || (GlobalSL > 0 && ti.totalProfit <= -GlobalSL);
+   // Calculate Global TP/SL as percentage of gap size (in dollars)
+   double globalTPDollars = (GlobalTakeProfitPercent > 0) ? (ti.currentGapSize * GlobalTakeProfitPercent / 100.0) : 0;
+   double globalSLDollars = (GlobalSLPercent > 0) ? (ti.currentGapSize * GlobalSLPercent / 100.0) : 0;
+   
+   return (globalTPDollars > 0 && ti.totalProfit >= globalTPDollars) || (globalSLDollars > 0 && ti.totalProfit <= -globalSLDollars);
 }
 
 //+------------------------------------------------------------------+
@@ -1105,7 +1111,13 @@ void UpdatePanel() {
    string tpText = (TakeProfitPercent > 0) ? DoubleToString(TakeProfitPercent, 0) + "% = $" + DoubleToString(tpDollars, 2) : "OFF";
    string slText = (StopLossPercent > 0) ? DoubleToString(StopLossPercent, 0) + "% = $" + DoubleToString(slDollars, 2) : "OFF";
    ObjectSetString(0, "GT_TakeProfit", OBJPROP_TEXT, "TP: " + tpText + " | SL: " + slText);
-   ObjectSetString(0, "GT_GlobalTP", OBJPROP_TEXT, "Global TP: $" + DoubleToString(GlobalTakeProfit, 2) + " | SL: $" + DoubleToString(GlobalSL, 2));
+   
+   // Global TP/SL section - also show percentage and calculated dollar value
+   double globalTPDollars = (GlobalTakeProfitPercent > 0) ? (ti.currentGapSize * GlobalTakeProfitPercent / 100.0) : 0;
+   double globalSLDollars = (GlobalSLPercent > 0) ? (ti.currentGapSize * GlobalSLPercent / 100.0) : 0;
+   string globalTPText = (GlobalTakeProfitPercent > 0) ? DoubleToString(GlobalTakeProfitPercent, 0) + "% = $" + DoubleToString(globalTPDollars, 2) : "OFF";
+   string globalSLText = (GlobalSLPercent > 0) ? DoubleToString(GlobalSLPercent, 0) + "% = $" + DoubleToString(globalSLDollars, 2) : "OFF";
+   ObjectSetString(0, "GT_GlobalTP", OBJPROP_TEXT, "Global TP: " + globalTPText + " | SL: " + globalSLText);
    
    // Account section
    double balance = AccountInfoDouble(ACCOUNT_BALANCE), equity = AccountInfoDouble(ACCOUNT_EQUITY);
