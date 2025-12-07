@@ -1,16 +1,16 @@
 //+------------------------------------------------------------------+
-//|                    TORAMA Bitcoin Grid EA v2.0 STREAMLINED       |
+//|                    TORAMA Bitcoin Grid EA v2.1 CORRECTED         |
 //|                                           TORAMA CAPITAL          |
 //|                                      https://www.torama.money     |
 //+------------------------------------------------------------------+
 #property copyright "TORAMA CAPITAL"
 #property link      "https://www.torama.money"
-#property version   "2.00"
-#property description "Bitcoin Grid EA - Streamlined & Optimized"
-#property description "BUY ONLY or SELL ONLY modes | Replaceable grid levels"
-#property description "Auto-switch at S/R levels | Clean & Efficient"
+#property version   "2.10"
+#property description "Bitcoin Grid EA - PROFIT-BASED TP/SL CALCULATION"
+#property description "v2.1: FIXED - TP/SL now based on actual PROFIT, not price distance"
+#property description "Works on ANY broker, ANY contract size, ANY lot size"
 
-#define EA_VERSION "2.0"
+#define EA_VERSION "2.1"
 #define EA_NAME "BTC GRID"
 
 //+------------------------------------------------------------------+
@@ -311,7 +311,57 @@ void ManageGrid()
 }
 
 //+------------------------------------------------------------------+
-//| OPEN POSITION - Simplified TP/SL Calculation                     |
+//| CALCULATE TP/SL DISTANCE BASED ON DESIRED PROFIT                 |
+//| This is the CORRECT way to handle micro/mini contracts          |
+//+------------------------------------------------------------------+
+double CalculateTPSLDistance(double desiredProfitDollars, double lotSize, string direction)
+{
+   // If desired profit is 0, return 0
+   if(desiredProfitDollars <= 0) return 0;
+   
+   // Get current price for testing
+   double currentPrice = (direction == "BUY") ? 
+                         SymbolInfoDouble(_Symbol, SYMBOL_ASK) : 
+                         SymbolInfoDouble(_Symbol, SYMBOL_BID);
+   
+   // Test with $100 price movement to find profit ratio
+   double testDistance = 100.0;
+   double testPriceTo = currentPrice + testDistance;
+   double testProfit = 0;
+   
+   ENUM_ORDER_TYPE orderType = (direction == "BUY") ? ORDER_TYPE_BUY : ORDER_TYPE_SELL;
+   
+   // Calculate what profit $100 movement gives with current lot size
+   if(OrderCalcProfit(orderType, _Symbol, lotSize, currentPrice, testPriceTo, testProfit))
+   {
+      testProfit = MathAbs(testProfit);  // Ensure positive
+      
+      if(testProfit > 0.0001)  // Avoid division by zero
+      {
+         // Calculate profit per $1 price movement
+         double profitPerDollar = testProfit / testDistance;
+         
+         // Calculate price distance needed for desired profit
+         double neededDistance = desiredProfitDollars / profitPerDollar;
+         
+         Print("💡 TP/SL Calculation:");
+         Print("   Desired profit: $", DoubleToString(desiredProfitDollars, 2));
+         Print("   Test: $", testDistance, " movement = $", DoubleToString(testProfit, 2), " profit");
+         Print("   Profit per $1: $", DoubleToString(profitPerDollar, 4));
+         Print("   Needed distance: $", DoubleToString(neededDistance, 2));
+         
+         return neededDistance;
+      }
+   }
+   
+   // Fallback: if OrderCalcProfit fails, use simple distance
+   // This works for standard contracts where 1 lot = 1 unit
+   Print("⚠️ OrderCalcProfit failed, using simple distance");
+   return desiredProfitDollars;
+}
+
+//+------------------------------------------------------------------+
+//| OPEN POSITION - PROFIT-BASED TP/SL Calculation                   |
 //+------------------------------------------------------------------+
 bool OpenPosition(double price)
 {
@@ -328,16 +378,71 @@ bool OpenPosition(double price)
    request.comment = EA_NAME + " v" + EA_VERSION;
    request.type_filling = ORDER_FILLING_IOC;
    
-   // SIMPLE TP/SL CALCULATION - Direct dollar distance
+   // ==================================================================
+   // PROFIT-BASED TP/SL CALCULATION v2.1 - THE CORRECT WAY!
+   // Calculates price distance needed to achieve desired PROFIT
+   // Works on ANY broker, ANY contract size, ANY lot size
+   // ==================================================================
+   
+   string direction = currentlyBuyMode ? "BUY" : "SELL";
+   
+   Print("📊 Opening ", direction, " position:");
+   Print("   Entry price: $", DoubleToString(request.price, 2));
+   Print("   Lot size: ", LotSize);
+   
+   // Calculate TP and SL distances based on DESIRED PROFIT
+   double tpDistance = CalculateTPSLDistance(IndividualTPDollars, LotSize, direction);
+   double slDistance = CalculateTPSLDistance(IndividualSLDollars, LotSize, direction);
+   
+   // Set TP and SL prices
    if(currentlyBuyMode)
    {
-      request.tp = (IndividualTPDollars > 0) ? request.price + IndividualTPDollars : 0;
-      request.sl = (IndividualSLDollars > 0) ? request.price - IndividualSLDollars : 0;
+      // BUY: TP above entry, SL below entry
+      request.tp = (tpDistance > 0) ? request.price + tpDistance : 0;
+      request.sl = (slDistance > 0) ? request.price - slDistance : 0;
    }
-   else
+   else  // SELL
    {
-      request.tp = (IndividualTPDollars > 0) ? request.price - IndividualTPDollars : 0;
-      request.sl = (IndividualSLDollars > 0) ? request.price + IndividualSLDollars : 0;
+      // SELL: TP below entry, SL above entry
+      request.tp = (tpDistance > 0) ? request.price - tpDistance : 0;
+      request.sl = (slDistance > 0) ? request.price + slDistance : 0;
+   }
+   
+   Print("   TP distance: $", DoubleToString(tpDistance, 2), " → TP price: $", DoubleToString(request.tp, 2));
+   Print("   SL distance: $", DoubleToString(slDistance, 2), " → SL price: $", DoubleToString(request.sl, 2));
+   
+   // Verify minimum stop distance (broker requirements)
+   double point = SymbolInfoDouble(_Symbol, SYMBOL_POINT);
+   double minStopLevel = SymbolInfoInteger(_Symbol, SYMBOL_TRADE_STOPS_LEVEL) * point;
+   
+   if(minStopLevel > 0)
+   {
+      if(currentlyBuyMode)
+      {
+         if(request.tp > 0 && request.tp - request.price < minStopLevel)
+         {
+            Print("⚠️ Adjusting TP to meet minimum stop level");
+            request.tp = request.price + minStopLevel;
+         }
+         if(request.sl > 0 && request.price - request.sl < minStopLevel)
+         {
+            Print("⚠️ Adjusting SL to meet minimum stop level");
+            request.sl = request.price - minStopLevel;
+         }
+      }
+      else // SELL
+      {
+         if(request.tp > 0 && request.price - request.tp < minStopLevel)
+         {
+            Print("⚠️ Adjusting TP to meet minimum stop level");
+            request.tp = request.price - minStopLevel;
+         }
+         if(request.sl > 0 && request.sl - request.price < minStopLevel)
+         {
+            Print("⚠️ Adjusting SL to meet minimum stop level");
+            request.sl = request.price + minStopLevel;
+         }
+      }
    }
    
    // Normalize prices
@@ -701,9 +806,9 @@ void CreatePanel()
    
    // Positions and P/L on same line
    CreateLabel(panelPrefix + "PositionsLabel", x + 10, y + 165, "Positions:", clrGray, 9, "Arial");
-   CreateLabel(panelPrefix + "Positions", x + 80, y + 165, "0/30", clrWhite, 10, "Arial Bold");
-   CreateLabel(panelPrefix + "PnLLabel", x + 180, y + 165, "P/L:", clrGray, 9, "Arial");
-   CreateLabel(panelPrefix + "PnL", x + 215, y + 165, "$0.00", clrWhite, 10, "Arial Bold");
+   CreateLabel(panelPrefix + "Positions", x + 80, y + 165, "0/30", clrWhite, 11, "Arial Bold");
+   CreateLabel(panelPrefix + "PnLLabel", x + 180, y + 165, "P/L:", clrGray, 10, "Arial Bold");
+   CreateLabel(panelPrefix + "PnL", x + 215, y + 165, "$0.00", clrWhite, 13, "Arial Black");  // LARGER for visibility
    
    // Equity and DD on same line
    CreateLabel(panelPrefix + "EquityLabel", x + 10, y + 190, "Equity:", clrGray, 9, "Arial");
