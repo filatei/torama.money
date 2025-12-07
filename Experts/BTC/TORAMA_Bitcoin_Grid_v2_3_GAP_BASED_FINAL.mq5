@@ -1,17 +1,17 @@
 //+------------------------------------------------------------------+
-//|                    TORAMA Bitcoin Grid EA v2.2                   |
+//|                    TORAMA Bitcoin Grid EA v2.3                   |
 //|                                           TORAMA CAPITAL          |
 //|                                      https://www.torama.money     |
 //+------------------------------------------------------------------+
 #property copyright "TORAMA CAPITAL"
 #property link      "https://www.torama.money"
-#property version   "2.20"
-#property description "Bitcoin Grid EA - PROFIT-BASED TP/SL + SESSION PROFIT"
+#property version   "2.30"
+#property description "Bitcoin Grid EA - GAP-BASED TP/SL PERCENTAGES"
+#property description "v2.3: All TP/SL now as % of gap (300% TP, 500% Global TP default)"
 #property description "v2.2: Added Session/Daily Profit Target"
 #property description "v2.1: FIXED - TP/SL now based on actual PROFIT, not price distance"
-#property description "Works on ANY broker, ANY contract size, ANY lot size"
 
-#define EA_VERSION "2.2"
+#define EA_VERSION "2.3"
 #define EA_NAME "BTC GRID"
 
 //+------------------------------------------------------------------+
@@ -27,10 +27,11 @@ input double   GridSpacingPercent = 0.30;        // Grid spacing % (0.2-0.5 reco
 input int      MaxPositions = 30;                // Maximum grid positions
 input double   LotSize = 0.1;                    // Lot size per position
 
-input group "=== PROFIT & RISK ==="
-input double   IndividualTPDollars = 50.0;       // Take Profit per position ($)
-input double   IndividualSLDollars = 5000.0;     // Stop Loss per position ($)
-input double   GlobalTPDollars = 500.0;          // Global profit target ($)
+input group "=== PROFIT & RISK (% of Gap) ==="
+input double   IndividualTPPercent = 300.0;      // Individual TP as % of gap (300 = 3x gap)
+input double   IndividualSLPercent = 0.0;        // Individual SL as % of gap (0 = disabled)
+input double   GlobalTPPercent = 500.0;          // Global TP as % of gap (500 = 5x gap)
+input double   GlobalSLPercent = 0.0;            // Global SL as % of gap (0 = disabled)
 input double   SessionProfitPercent = 100.0;     // Session/Daily profit target (% of starting balance)
 input bool     ResetSessionDaily = true;         // Reset session profit daily (false = per session)
 input double   MaxDrawdownPercent = 20.0;        // Max drawdown % (emergency stop)
@@ -62,6 +63,7 @@ bool currentlyBuyMode = true;      // Current trading direction
 double referencePrice = 0;         // Reference for grid
 double highestLevel = 0;           // Highest grid level
 double lowestLevel = 0;            // Lowest grid level
+double currentGapSize = 0;         // Current grid spacing in dollars
 
 // Support/Resistance
 double currentSupport = 0;
@@ -101,6 +103,16 @@ int OnInit()
    currentlyBuyMode = TradeBuyOnly;
    peakEquity = AccountInfoDouble(ACCOUNT_EQUITY);
    
+   // Calculate current gap size
+   double currentPrice = (SymbolInfoDouble(_Symbol, SYMBOL_ASK) + SymbolInfoDouble(_Symbol, SYMBOL_BID)) / 2.0;
+   currentGapSize = currentPrice * GridSpacingPercent / 100.0;
+   
+   // Calculate TP/SL values as % of gap
+   double individualTPDollars = currentGapSize * IndividualTPPercent / 100.0;
+   double individualSLDollars = (IndividualSLPercent > 0) ? (currentGapSize * IndividualSLPercent / 100.0) : 0;
+   double globalTPDollars = currentGapSize * GlobalTPPercent / 100.0;
+   double globalSLDollars = (GlobalSLPercent > 0) ? (currentGapSize * GlobalSLPercent / 100.0) : 0;
+   
    // Initialize session profit tracking
    sessionStartBalance = AccountInfoDouble(ACCOUNT_BALANCE);
    sessionProfitTarget = sessionStartBalance * SessionProfitPercent / 100.0;
@@ -113,10 +125,11 @@ int OnInit()
    currentDay = time.day;
    
    Print("Mode: ", currentlyBuyMode ? "BUY ONLY" : "SELL ONLY");
-   Print("Grid Spacing: ", GridSpacingPercent, "%");
-   Print("Individual TP: $", IndividualTPDollars);
-   Print("Individual SL: $", IndividualSLDollars);
-   Print("Global TP: $", GlobalTPDollars);
+   Print("Grid Spacing: ", GridSpacingPercent, "% = $", DoubleToString(currentGapSize, 2));
+   Print("Individual TP: ", IndividualTPPercent, "% of gap = $", DoubleToString(individualTPDollars, 2));
+   Print("Individual SL: ", IndividualSLPercent > 0 ? DoubleToString(IndividualSLPercent, 0) + "% of gap = $" + DoubleToString(individualSLDollars, 2) : "DISABLED");
+   Print("Global TP: ", GlobalTPPercent, "% of gap = $", DoubleToString(globalTPDollars, 2));
+   Print("Global SL: ", GlobalSLPercent > 0 ? DoubleToString(GlobalSLPercent, 0) + "% of gap = $" + DoubleToString(globalSLDollars, 2) : "DISABLED");
    Print("Session Target: ", SessionProfitPercent, "% = $", DoubleToString(sessionProfitTarget, 2));
    Print("Reset Mode: ", ResetSessionDaily ? "DAILY" : "PER SESSION");
    Print("S/R Auto-Switch: ", EnableSRSwitch ? "ENABLED" : "DISABLED");
@@ -198,13 +211,34 @@ void OnTick()
       return;
    }
    
-   // Check global TP
+   // Check global TP/SL (calculate from gap)
    CalculateTotalProfit();
-   if(GlobalTPDollars > 0 && totalProfit >= GlobalTPDollars)
+   
+   // Update current gap size
+   double currentPrice = (SymbolInfoDouble(_Symbol, SYMBOL_ASK) + SymbolInfoDouble(_Symbol, SYMBOL_BID)) / 2.0;
+   currentGapSize = currentPrice * GridSpacingPercent / 100.0;
+   
+   double globalTPDollars = currentGapSize * GlobalTPPercent / 100.0;
+   double globalSLDollars = (GlobalSLPercent > 0) ? (currentGapSize * GlobalSLPercent / 100.0) : 0;
+   
+   // Check Global TP
+   if(GlobalTPPercent > 0 && totalProfit >= globalTPDollars)
    {
-      Print("✅ GLOBAL TP HIT: $", DoubleToString(totalProfit, 2));
+      Print("✅ GLOBAL TP HIT: $", DoubleToString(totalProfit, 2), " (Target: $", DoubleToString(globalTPDollars, 2), ")");
       CloseAllPositions();
       ResetGrid();
+      UpdatePanel();
+      return;
+   }
+   
+   // Check Global SL
+   if(GlobalSLPercent > 0 && totalProfit <= -globalSLDollars)
+   {
+      Print("🛑 GLOBAL SL HIT: $", DoubleToString(totalProfit, 2), " (Limit: $", DoubleToString(globalSLDollars, 2), ")");
+      CloseAllPositions();
+      emergencyStop = true;
+      emergencyReason = "Global SL Reached";
+      Alert("🛑 EA STOPPED: Global SL reached!");
       UpdatePanel();
       return;
    }
@@ -430,20 +464,32 @@ bool OpenPosition(double price)
    request.type_filling = ORDER_FILLING_IOC;
    
    // ==================================================================
-   // PROFIT-BASED TP/SL CALCULATION v2.1 - THE CORRECT WAY!
+   // GAP-BASED TP/SL CALCULATION v2.3 - Using % of Grid Spacing
+   // TP/SL calculated as percentage of current gap size
    // Calculates price distance needed to achieve desired PROFIT
    // Works on ANY broker, ANY contract size, ANY lot size
    // ==================================================================
    
    string direction = currentlyBuyMode ? "BUY" : "SELL";
    
+   // Update current gap size
+   currentGapSize = request.price * GridSpacingPercent / 100.0;
+   
+   // Calculate TP/SL dollar amounts from gap percentages
+   double individualTPDollars = currentGapSize * IndividualTPPercent / 100.0;
+   double individualSLDollars = (IndividualSLPercent > 0) ? (currentGapSize * IndividualSLPercent / 100.0) : 0;
+   
    Print("📊 Opening ", direction, " position:");
    Print("   Entry price: $", DoubleToString(request.price, 2));
+   Print("   Gap size: $", DoubleToString(currentGapSize, 2));
+   Print("   TP Target: ", IndividualTPPercent, "% of gap = $", DoubleToString(individualTPDollars, 2), " profit");
+   if(IndividualSLPercent > 0)
+      Print("   SL Limit: ", IndividualSLPercent, "% of gap = $", DoubleToString(individualSLDollars, 2), " loss");
    Print("   Lot size: ", LotSize);
    
    // Calculate TP and SL distances based on DESIRED PROFIT
-   double tpDistance = CalculateTPSLDistance(IndividualTPDollars, LotSize, direction);
-   double slDistance = CalculateTPSLDistance(IndividualSLDollars, LotSize, direction);
+   double tpDistance = CalculateTPSLDistance(individualTPDollars, LotSize, direction);
+   double slDistance = (individualSLDollars > 0) ? CalculateTPSLDistance(individualSLDollars, LotSize, direction) : 0;
    
    // Set TP and SL prices
    if(currentlyBuyMode)
@@ -460,7 +506,8 @@ bool OpenPosition(double price)
    }
    
    Print("   TP distance: $", DoubleToString(tpDistance, 2), " → TP price: $", DoubleToString(request.tp, 2));
-   Print("   SL distance: $", DoubleToString(slDistance, 2), " → SL price: $", DoubleToString(request.sl, 2));
+   if(slDistance > 0)
+      Print("   SL distance: $", DoubleToString(slDistance, 2), " → SL price: $", DoubleToString(request.sl, 2));
    
    // Verify minimum stop distance (broker requirements)
    double point = SymbolInfoDouble(_Symbol, SYMBOL_POINT);
@@ -520,8 +567,13 @@ bool OpenPosition(double price)
       
       totalTrades++;
       
+      // Calculate actual TP/SL for display
+      double displayTPDollars = currentGapSize * IndividualTPPercent / 100.0;
+      double displaySLDollars = (IndividualSLPercent > 0) ? (currentGapSize * IndividualSLPercent / 100.0) : 0;
+      
       Print("✅ ", currentlyBuyMode ? "BUY" : "SELL", " @ ", DoubleToString(result.price, digits), 
-            " | TP: $", IndividualTPDollars, " | SL: $", IndividualSLDollars,
+            " | TP: ", IndividualTPPercent, "% ($", DoubleToString(displayTPDollars, 2), ")",
+            " | SL: ", IndividualSLPercent > 0 ? DoubleToString(IndividualSLPercent, 0) + "% ($" + DoubleToString(displaySLDollars, 2) + ")" : "OFF",
             " | Positions: ", newSize, "/", MaxPositions);
       
       return true;
@@ -933,9 +985,8 @@ void CreatePanel()
    CreateLabel(panelPrefix + "TargetLabel", x + 180, y + 210, "Target:", clrGray, 9, "Arial");
    CreateLabel(panelPrefix + "SessionTarget", x + 230, y + 210, "$0", clrGray, 9, "Arial");
    
-   // TORAMA CAPITAL - BOLD and BIG on bottom right
-   CreateLabel(panelPrefix + "Brand", x + 215, y + 235, "TORAMA CAPITAL", clrGold, 11, "Arial Black");
-   CreateLabel(panelPrefix + "Brand", x + 215, y + 215, "TORAMA CAPITAL", clrGold, 11, "Arial Black");
+   // TORAMA CAPITAL - BOLD and BIG on bottom right (moved down to avoid overlap)
+   CreateLabel(panelPrefix + "Brand", x + 215, y + 240, "TORAMA CAPITAL", clrGold, 11, "Arial Black");
 }
 
 //+------------------------------------------------------------------+
