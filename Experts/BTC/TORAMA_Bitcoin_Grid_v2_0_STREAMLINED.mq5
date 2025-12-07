@@ -653,7 +653,7 @@ void CheckSRSwitch()
 void CreatePanel()
 {
    int x = 10, y = 20;
-   int width = 350, height = 380;
+   int width = 380, height = 240;  // REDUCED height from 380 to 240
    
    // Background
    ObjectCreate(0, panelPrefix + "BG", OBJ_RECTANGLE_LABEL, 0, 0, 0);
@@ -669,38 +669,50 @@ void CreatePanel()
    ObjectSetInteger(0, panelPrefix + "BG", OBJPROP_SELECTABLE, false);
    ObjectSetInteger(0, panelPrefix + "BG", OBJPROP_ZORDER, 0);  // Highest priority
    
-   // Header
+   // Header - Title and Status on same line
    CreateLabel(panelPrefix + "Title", x + 10, y + 10, EA_NAME + " v" + EA_VERSION, clrGold, 12, "Arial Bold");
-   CreateLabel(panelPrefix + "Status", x + 10, y + 35, "Status: ACTIVE", clrLimeGreen, 10, "Arial Bold");
+   CreateLabel(panelPrefix + "Status", x + 250, y + 10, "ACTIVE", clrLimeGreen, 10, "Arial Bold");
    
    // Mode indicator
-   CreateLabel(panelPrefix + "Mode", x + 10, y + 60, "Mode: BUY ONLY", clrDodgerBlue, 11, "Arial Bold");
+   CreateLabel(panelPrefix + "Mode", x + 10, y + 35, "Mode:", clrWhite, 10, "Arial");
+   CreateLabel(panelPrefix + "ModeValue", x + 70, y + 35, "BUY ONLY", clrDodgerBlue, 11, "Arial Bold");
    
-   // Buttons
-   CreateButton(panelPrefix + "SwitchBtn", x + 10, y + 85, 100, 30, "SWITCH MODE", clrGold, clrBlack);
-   CreateButton(panelPrefix + "CloseProfitsBtn", x + 120, y + 85, 100, 30, "CLOSE +P/L", clrGreen, clrBlack);
-   CreateButton(panelPrefix + "PauseBtn", x + 230, y + 85, 100, 30, "PAUSE", clrOrange, clrBlack);
-   CreateButton(panelPrefix + "CloseAllBtn", x + 10, y + 125, 100, 30, "CLOSE ALL", clrRed, clrWhite);
+   // Buttons - all in two rows
+   CreateButton(panelPrefix + "SwitchBtn", x + 10, y + 60, 90, 28, "SWITCH", clrGold, clrBlack);
+   CreateButton(panelPrefix + "CloseProfitsBtn", x + 105, y + 60, 90, 28, "CLOSE +P/L", clrGreen, clrBlack);
+   CreateButton(panelPrefix + "PauseBtn", x + 200, y + 60, 80, 28, "PAUSE", clrOrange, clrBlack);
+   CreateButton(panelPrefix + "CloseAllBtn", x + 285, y + 60, 85, 28, "CLOSE ALL", clrRed, clrWhite);
    
-   // Price & Grid
-   CreateLabel(panelPrefix + "Price", x + 10, y + 170, "Price: $0", clrWhite, 10, "Arial");
-   CreateLabel(panelPrefix + "GridSpacing", x + 10, y + 190, "Grid: 0.30%", clrWhite, 9, "Arial");
+   // Price, Grid, and S/R on compact lines
+   CreateLabel(panelPrefix + "PriceLabel", x + 10, y + 100, "Price:", clrGray, 9, "Arial");
+   CreateLabel(panelPrefix + "Price", x + 55, y + 100, "$0", clrWhite, 10, "Arial Bold");
+   CreateLabel(panelPrefix + "GridLabel", x + 180, y + 100, "Grid:", clrGray, 9, "Arial");
+   CreateLabel(panelPrefix + "GridSpacing", x + 220, y + 100, "0.30%", clrWhite, 9, "Arial");
    
-   // S/R Levels
-   CreateLabel(panelPrefix + "Support", x + 10, y + 215, "Support: $0", clrDodgerBlue, 9, "Arial Bold");
-   CreateLabel(panelPrefix + "Resistance", x + 10, y + 235, "Resistance: $0", clrOrangeRed, 9, "Arial Bold");
-   CreateLabel(panelPrefix + "SRSwitch", x + 10, y + 255, "S/R Switch: OFF", clrGray, 9, "Arial");
+   // S/R Levels - compact
+   CreateLabel(panelPrefix + "SupportLabel", x + 10, y + 120, "Support:", clrGray, 9, "Arial");
+   CreateLabel(panelPrefix + "Support", x + 70, y + 120, "$0", clrDodgerBlue, 9, "Arial Bold");
+   CreateLabel(panelPrefix + "ResistanceLabel", x + 180, y + 120, "Resist:", clrGray, 9, "Arial");
+   CreateLabel(panelPrefix + "Resistance", x + 235, y + 120, "$0", clrOrangeRed, 9, "Arial Bold");
    
-   // Positions
-   CreateLabel(panelPrefix + "Positions", x + 10, y + 280, "Positions: 0/30", clrWhite, 10, "Arial Bold");
-   CreateLabel(panelPrefix + "PnL", x + 10, y + 300, "P/L: $0.00", clrWhite, 10, "Arial Bold");
+   // S/R Switch status
+   CreateLabel(panelPrefix + "SRSwitchLabel", x + 10, y + 140, "S/R Switch:", clrGray, 9, "Arial");
+   CreateLabel(panelPrefix + "SRSwitch", x + 85, y + 140, "OFF", clrGray, 9, "Arial Bold");
    
-   // Account
-   CreateLabel(panelPrefix + "Equity", x + 10, y + 325, "Equity: $0", clrWhite, 9, "Arial");
-   CreateLabel(panelPrefix + "DD", x + 10, y + 345, "DD: 0.0%", clrLimeGreen, 9, "Arial");
+   // Positions and P/L on same line
+   CreateLabel(panelPrefix + "PositionsLabel", x + 10, y + 165, "Positions:", clrGray, 9, "Arial");
+   CreateLabel(panelPrefix + "Positions", x + 80, y + 165, "0/30", clrWhite, 10, "Arial Bold");
+   CreateLabel(panelPrefix + "PnLLabel", x + 180, y + 165, "P/L:", clrGray, 9, "Arial");
+   CreateLabel(panelPrefix + "PnL", x + 215, y + 165, "$0.00", clrWhite, 10, "Arial Bold");
    
-   // Brand
-   CreateLabel(panelPrefix + "Brand", x + 10, y + 365, "TORAMA CAPITAL", clrGold, 8, "Arial Bold");
+   // Equity and DD on same line
+   CreateLabel(panelPrefix + "EquityLabel", x + 10, y + 190, "Equity:", clrGray, 9, "Arial");
+   CreateLabel(panelPrefix + "Equity", x + 65, y + 190, "$0", clrWhite, 9, "Arial");
+   CreateLabel(panelPrefix + "DDLabel", x + 180, y + 190, "DD:", clrGray, 9, "Arial");
+   CreateLabel(panelPrefix + "DD", x + 210, y + 190, "0.0%", clrLimeGreen, 9, "Arial");
+   
+   // TORAMA CAPITAL - BOLD and BIG on bottom right
+   CreateLabel(panelPrefix + "Brand", x + 215, y + 215, "TORAMA CAPITAL", clrGold, 11, "Arial Black");
 }
 
 //+------------------------------------------------------------------+
@@ -713,75 +725,76 @@ void UpdatePanel()
    double currentPrice = (SymbolInfoDouble(_Symbol, SYMBOL_ASK) + SymbolInfoDouble(_Symbol, SYMBOL_BID)) / 2.0;
    int digits = (int)SymbolInfoInteger(_Symbol, SYMBOL_DIGITS);
    
-   // Status
+   // Status (now just shows status without "Status:" label)
    if(emergencyStop)
    {
-      ObjectSetString(0, panelPrefix + "Status", OBJPROP_TEXT, "Status: 🛑 EMERGENCY STOP");
+      ObjectSetString(0, panelPrefix + "Status", OBJPROP_TEXT, "🛑 STOP");
       ObjectSetInteger(0, panelPrefix + "Status", OBJPROP_COLOR, clrRed);
    }
    else if(isPaused)
    {
-      ObjectSetString(0, panelPrefix + "Status", OBJPROP_TEXT, "Status: ⏸️ PAUSED");
+      ObjectSetString(0, panelPrefix + "Status", OBJPROP_TEXT, "⏸️ PAUSED");
       ObjectSetInteger(0, panelPrefix + "Status", OBJPROP_COLOR, clrOrange);
    }
    else
    {
-      ObjectSetString(0, panelPrefix + "Status", OBJPROP_TEXT, "Status: ✅ ACTIVE");
+      ObjectSetString(0, panelPrefix + "Status", OBJPROP_TEXT, "✅ ACTIVE");
       ObjectSetInteger(0, panelPrefix + "Status", OBJPROP_COLOR, clrLimeGreen);
    }
    
-   // Mode
-   ObjectSetString(0, panelPrefix + "Mode", OBJPROP_TEXT, 
-                   "Mode: " + (currentlyBuyMode ? "🔵 BUY ONLY" : "🔴 SELL ONLY"));
-   ObjectSetInteger(0, panelPrefix + "Mode", OBJPROP_COLOR, currentlyBuyMode ? clrDodgerBlue : clrOrangeRed);
+   // Mode (update value only)
+   ObjectSetString(0, panelPrefix + "ModeValue", OBJPROP_TEXT, 
+                   currentlyBuyMode ? "🔵 BUY ONLY" : "🔴 SELL ONLY");
+   ObjectSetInteger(0, panelPrefix + "ModeValue", OBJPROP_COLOR, currentlyBuyMode ? clrDodgerBlue : clrOrangeRed);
    
    // Pause button text
    ObjectSetString(0, panelPrefix + "PauseBtn", OBJPROP_TEXT, isPaused ? "RESUME" : "PAUSE");
    ObjectSetInteger(0, panelPrefix + "PauseBtn", OBJPROP_BGCOLOR, isPaused ? clrGreen : clrOrange);
    
-   // Price
+   // Price (value only)
    ObjectSetString(0, panelPrefix + "Price", OBJPROP_TEXT, 
-                   "Price: $" + DoubleToString(currentPrice, digits));
+                   "$" + DoubleToString(currentPrice, digits));
    
-   // Grid
+   // Grid (value only)
    ObjectSetString(0, panelPrefix + "GridSpacing", OBJPROP_TEXT,
-                   "Grid: " + DoubleToString(GridSpacingPercent, 2) + "% ($" + 
+                   DoubleToString(GridSpacingPercent, 2) + "% ($" + 
                    DoubleToString(currentPrice * GridSpacingPercent / 100.0, 2) + ")");
    
-   // S/R
+   // S/R (values only)
    if(currentSupport > 0)
       ObjectSetString(0, panelPrefix + "Support", OBJPROP_TEXT,
-                      "Support: $" + DoubleToString(currentSupport, digits));
+                      "$" + DoubleToString(currentSupport, digits));
    
    if(currentResistance > 0)
       ObjectSetString(0, panelPrefix + "Resistance", OBJPROP_TEXT,
-                      "Resistance: $" + DoubleToString(currentResistance, digits));
+                      "$" + DoubleToString(currentResistance, digits));
    
+   // S/R Switch (value only)
    ObjectSetString(0, panelPrefix + "SRSwitch", OBJPROP_TEXT,
-                   "S/R Switch: " + (EnableSRSwitch ? "ON" : "OFF"));
+                   EnableSRSwitch ? "ON" : "OFF");
    ObjectSetInteger(0, panelPrefix + "SRSwitch", OBJPROP_COLOR, EnableSRSwitch ? clrLimeGreen : clrGray);
    
-   // Positions
+   // Positions (value only)
    ObjectSetString(0, panelPrefix + "Positions", OBJPROP_TEXT,
-                   "Positions: " + IntegerToString(ArraySize(positions)) + "/" + IntegerToString(MaxPositions));
+                   IntegerToString(ArraySize(positions)) + "/" + IntegerToString(MaxPositions));
    
-   // P/L
+   // P/L (value only)
    CalculateTotalProfit();
    color pnlColor = (totalProfit >= 0) ? clrLimeGreen : clrRed;
    ObjectSetString(0, panelPrefix + "PnL", OBJPROP_TEXT,
-                   "P/L: " + (totalProfit >= 0 ? "+" : "") + "$" + DoubleToString(totalProfit, 2));
+                   (totalProfit >= 0 ? "+" : "") + "$" + DoubleToString(totalProfit, 2));
    ObjectSetInteger(0, panelPrefix + "PnL", OBJPROP_COLOR, pnlColor);
    
-   // Account
+   // Equity (value only)
    double equity = AccountInfoDouble(ACCOUNT_EQUITY);
    ObjectSetString(0, panelPrefix + "Equity", OBJPROP_TEXT,
-                   "Equity: $" + DoubleToString(equity, 2));
+                   "$" + DoubleToString(equity, 2));
    
-   // Drawdown
+   // Drawdown (value only)
    double dd = (peakEquity > 0) ? ((equity - peakEquity) / peakEquity * 100) : 0;
    color ddColor = (dd >= -5) ? clrLimeGreen : (dd >= -10) ? clrYellow : clrRed;
    ObjectSetString(0, panelPrefix + "DD", OBJPROP_TEXT,
-                   "DD: " + DoubleToString(dd, 1) + "%");
+                   DoubleToString(dd, 1) + "%");
    ObjectSetInteger(0, panelPrefix + "DD", OBJPROP_COLOR, ddColor);
 }
 
