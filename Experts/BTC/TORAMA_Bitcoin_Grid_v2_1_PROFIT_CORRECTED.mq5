@@ -326,7 +326,14 @@ double CalculateTPSLDistance(double desiredProfitDollars, double lotSize, string
    
    // Test with $100 price movement to find profit ratio
    double testDistance = 100.0;
-   double testPriceTo = currentPrice + testDistance;
+   
+   // CRITICAL: Test movement must be in PROFIT direction!
+   // BUY: profit when price goes UP (+100)
+   // SELL: profit when price goes DOWN (-100)
+   double testPriceTo = (direction == "BUY") ? 
+                        currentPrice + testDistance :   // BUY: test price above
+                        currentPrice - testDistance;    // SELL: test price below
+   
    double testProfit = 0;
    
    ENUM_ORDER_TYPE orderType = (direction == "BUY") ? ORDER_TYPE_BUY : ORDER_TYPE_SELL;
