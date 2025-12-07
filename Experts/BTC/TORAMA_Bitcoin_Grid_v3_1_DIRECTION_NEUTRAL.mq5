@@ -204,7 +204,12 @@ void OnTick()
    {
       sessionTargetReached = true;
       CloseAllPositions();
-      Alert("🎯 SESSION TARGET REACHED: $", DoubleToString(sessionProfit, 2), " profit!");
+      Print("╔════════════════════════════════════════════════════════════════╗");
+      Print("║          🎯 SESSION TARGET REACHED!                            ║");
+      Print("╚════════════════════════════════════════════════════════════════╝");
+      Print("Session Profit: $", DoubleToString(sessionProfit, 2));
+      Print("Session Target: $", DoubleToString(sessionProfitTarget, 2));
+      Print("═══════════════════════════════════════════════════════════════");
       UpdatePanel();
       return;
    }
@@ -215,7 +220,18 @@ void OnTick()
       emergencyStop = true;
       emergencyReason = "Max Drawdown Exceeded";
       CloseAllPositions();
-      Alert("🛑 EA STOPPED: Max Drawdown ", MaxDrawdownPercent, "% exceeded!");
+      
+      // Calculate current drawdown for display
+      double equity = AccountInfoDouble(ACCOUNT_EQUITY);
+      double currentDrawdown = -((equity - peakEquity) / peakEquity) * 100.0;
+      
+      Print("╔════════════════════════════════════════════════════════════════╗");
+      Print("║          🛑 EA STOPPED - MAX DRAWDOWN EXCEEDED!                ║");
+      Print("╚════════════════════════════════════════════════════════════════╝");
+      Print("Max Drawdown Limit: ", MaxDrawdownPercent, "%");
+      Print("Current Drawdown: ", DoubleToString(currentDrawdown, 2), "%");
+      Print("EMERGENCY STOP ACTIVATED!");
+      Print("═══════════════════════════════════════════════════════════════");
       UpdatePanel();
       return;
    }
@@ -247,7 +263,13 @@ void OnTick()
       CloseAllPositions();
       emergencyStop = true;
       emergencyReason = "Global SL Reached";
-      Alert("🛑 EA STOPPED: Global SL reached!");
+      Print("╔════════════════════════════════════════════════════════════════╗");
+      Print("║          🛑 EA STOPPED - GLOBAL SL REACHED!                    ║");
+      Print("╚════════════════════════════════════════════════════════════════╝");
+      Print("Global SL Limit: ", GlobalSLPercent, "% of gap");
+      Print("Total Loss Exceeded Global SL");
+      Print("EMERGENCY STOP ACTIVATED!");
+      Print("═══════════════════════════════════════════════════════════════");
       UpdatePanel();
       return;
    }
@@ -701,7 +723,9 @@ void CheckTrendFlip()
             levelsAgainstTrend = 0;
             lastProcessedLevel = currentPrice;
             
-            Alert("📈 FIRST MOVE: UP → BUY MODE ACTIVATED");
+            Print("═══════════════════════════════════════════════════════════════");
+            Print("📈 FIRST MOVE: UP → BUY MODE ACTIVATED");
+            Print("═══════════════════════════════════════════════════════════════");
             UpdatePanel();
          }
          else
@@ -722,7 +746,9 @@ void CheckTrendFlip()
             levelsAgainstTrend = 0;
             lastProcessedLevel = currentPrice;
             
-            Alert("📉 FIRST MOVE: DOWN → SELL MODE ACTIVATED");
+            Print("═══════════════════════════════════════════════════════════════");
+            Print("📉 FIRST MOVE: DOWN → SELL MODE ACTIVATED");
+            Print("═══════════════════════════════════════════════════════════════");
             UpdatePanel();
          }
       }
@@ -828,7 +854,9 @@ void FlipTrendDirection(string trendDirection)
    lastProcessedLevel = currentPrice;
    
    // Alert user
-   Alert("🔄 TREND FLIP: ", oldMode, " → ", newMode, " | Levels: ", levelsAgainstTrend);
+   Print("═══════════════════════════════════════════════════════════════");
+   Print("🔄 TREND FLIP: ", oldMode, " → ", newMode, " | Levels: ", levelsAgainstTrend);
+   Print("═══════════════════════════════════════════════════════════════");
    
    UpdatePanel();
 }
