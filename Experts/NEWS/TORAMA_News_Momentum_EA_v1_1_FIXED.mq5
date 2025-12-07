@@ -1,17 +1,18 @@
 //+------------------------------------------------------------------+
-//|                                   TORAMA_News_Momentum_EA_v1.0.mq5|
+//|                                   TORAMA_News_Momentum_EA_v1.1.mq5|
 //|                                      Copyright 2025, TORAMA CAPITAL|
 //|                                            https://money.torama.biz|
 //+------------------------------------------------------------------+
 #property copyright "Copyright 2025, TORAMA CAPITAL"
 #property link      "https://money.torama.biz"
-#property version   "1.00"
-#property description "NEWS MOMENTUM EA - Gold & Bitcoin Specialist"
+#property version   "1.10"
+#property description "NEWS MOMENTUM EA - Gold & Bitcoin Specialist (FIXED v1.1)"
 #property description "Trades BOTH directions with fast SL on wrong side"
 #property description "Rides momentum with replaceable grid levels"
+#property description "FIXES: TP/SL calculations, grid recalculation, reference price tracking"
 #property description "Contact: ea@torama.biz"
 
-#define EA_VERSION "1.0"
+#define EA_VERSION "1.1"
 #define EA_NAME "NEWS MOMENTUM"
 
 //+------------------------------------------------------------------+
@@ -434,8 +435,11 @@ void OnTick()
    double bid = SymbolInfoDouble(_Symbol, SYMBOL_BID);
    double currentPrice = (ask + bid) / 2.0;
    
-   //--- Calculate grid spacing
+   //--- RECALCULATE grid spacing and TP/SL based on current price (critical for news trading)
    gridSpacing = currentPrice * (GridSpacingPercent / 100.0);
+   double gridGapDollars = gridSpacing; // Grid gap in dollars
+   calculatedTPDollars = gridGapDollars * (IndividualTPPercent / 100.0);
+   calculatedSLDollars = gridGapDollars * (IndividualSLPercent / 100.0);
    
    //--- Check global TP
    double globalPnL = CalculateGlobalPnL();
@@ -519,7 +523,11 @@ void OnTick()
          double highestBuyPrice = GetHighestBuyPrice();
          if(ask >= highestBuyPrice + gridSpacing && ArraySize(buyPositions) < MaxPositionsPerSide)
          {
-            OpenPosition("BUY", ask);
+            if(OpenPosition("BUY", ask))
+            {
+               // Update reference price to track from this new level
+               referencePrice = ask;
+            }
          }
       }
    }
@@ -540,7 +548,11 @@ void OnTick()
          double lowestSellPrice = GetLowestSellPrice();
          if(bid <= lowestSellPrice - gridSpacing && ArraySize(sellPositions) < MaxPositionsPerSide)
          {
-            OpenPosition("SELL", bid);
+            if(OpenPosition("SELL", bid))
+            {
+               // Update reference price to track from this new level
+               referencePrice = bid;
+            }
          }
       }
    }
@@ -603,80 +615,30 @@ bool OpenPosition(string direction, double price)
 }
 
 //+------------------------------------------------------------------+
-//| Calculate TP/SL prices using OrderCalcProfit                     |
+//| Calculate TP/SL prices - FIXED for dollar-quoted instruments     |
 //+------------------------------------------------------------------+
 void CalculateTPSL(string direction, double entryPrice, double &tp, double &sl)
 {
-   double testPrice;
-   double profit;
-   int digits = (int)SymbolInfoInteger(_Symbol, SYMBOL_DIGITS);
-   double point = SymbolInfoDouble(_Symbol, SYMBOL_POINT);
-   double tickSize = SymbolInfoDouble(_Symbol, SYMBOL_TRADE_TICK_SIZE);
+   // For dollar-quoted instruments (XAUUSD, BTCUSD), TP/SL are simply price distances
+   // TP/SL dollars are already calculated from grid gap percentages in OnInit
    
-   // Find TP price
-   double tpDistance = entryPrice * 0.001; // Start with 0.1% distance
-   for(int i = 0; i < 1000; i++)
+   if(direction == "BUY")
    {
-      if(direction == "BUY")
-         testPrice = entryPrice + tpDistance;
-      else
-         testPrice = entryPrice - tpDistance;
-      
-      // Normalize price
-      testPrice = NormalizeDouble(testPrice / tickSize, 0) * tickSize;
-      testPrice = NormalizeDouble(testPrice, digits);
-      
-      if(OrderCalcProfit(
-         direction == "BUY" ? ORDER_TYPE_BUY : ORDER_TYPE_SELL,
-         _Symbol,
-         LotSize,
-         entryPrice,
-         testPrice,
-         profit))
-      {
-         if(profit >= calculatedTPDollars)
-         {
-            tp = testPrice;
-            break;
-         }
-      }
-      
-      tpDistance += point * 10;
+      // BUY: TP above entry, SL below entry
+      tp = (calculatedTPDollars > 0) ? entryPrice + calculatedTPDollars : 0;
+      sl = (calculatedSLDollars > 0) ? entryPrice - calculatedSLDollars : 0;
    }
-   
-   // Find SL price
-   double slDistance = entryPrice * 0.001;
-   for(int i = 0; i < 1000; i++)
+   else // SELL
    {
-      if(direction == "BUY")
-         testPrice = entryPrice - slDistance;
-      else
-         testPrice = entryPrice + slDistance;
-      
-      // Normalize price
-      testPrice = NormalizeDouble(testPrice / tickSize, 0) * tickSize;
-      testPrice = NormalizeDouble(testPrice, digits);
-      
-      if(OrderCalcProfit(
-         direction == "BUY" ? ORDER_TYPE_BUY : ORDER_TYPE_SELL,
-         _Symbol,
-         LotSize,
-         entryPrice,
-         testPrice,
-         profit))
-      {
-         if(profit <= -calculatedSLDollars)
-         {
-            sl = testPrice;
-            break;
-         }
-      }
-      
-      slDistance += point * 10;
+      // SELL: TP below entry, SL above entry
+      tp = (calculatedTPDollars > 0) ? entryPrice - calculatedTPDollars : 0;
+      sl = (calculatedSLDollars > 0) ? entryPrice + calculatedSLDollars : 0;
    }
    
    // Verify minimum stop distance
+   double point = SymbolInfoDouble(_Symbol, SYMBOL_POINT);
    double minStopLevel = SymbolInfoInteger(_Symbol, SYMBOL_TRADE_STOPS_LEVEL) * point;
+   
    if(minStopLevel > 0)
    {
       if(direction == "BUY")
