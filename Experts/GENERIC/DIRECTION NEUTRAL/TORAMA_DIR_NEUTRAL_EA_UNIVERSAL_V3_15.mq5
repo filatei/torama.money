@@ -1,17 +1,18 @@
 //+------------------------------------------------------------------+
-//|                    TORAMA Universal Grid EA v3.11                |
+//|                    TORAMA Universal Grid EA v3.15                |
 //|                                           TORAMA CAPITAL          |
 //|                                      https://www.torama.money     |
 //+------------------------------------------------------------------+
 #property copyright "TORAMA CAPITAL"
 #property link      "https://www.torama.money"
-#property version   "3.11"
+#property version   "3.15"
 #property description "Universal Grid EA - Works on BTC, Gold, Forex, Indices & More"
-#property description "v3.11: Universal lot size validation for all instruments"
-#property description "v3.1: DIRECTION NEUTRAL - Follows first market move"
-#property description "v3.0: Auto-flip trend detection with water marks"
+#property description "v3.15: Enhanced debugging + ReturnToNeutral default FALSE"
+#property description "v3.14: Return to NEUTRAL option when all positions close"
+#property description "v3.13: Lot multiplier (martingale on winning side)"
+#property description "v3.12: Static reference price + simplified grid logic"
 
-#define EA_VERSION "3.11"
+#define EA_VERSION "3.15"
 #define EA_NAME "TORAMA GRID"
 
 //+------------------------------------------------------------------+
@@ -21,6 +22,7 @@
 input group "=== TREND ADAPTIVE MODE ==="
 input int      LevelsBeforeFlip = 2;             // Levels against trend before flip (2-5 recommended)
 input bool     CloseOnFlip = false;              // Close positions when flipping direction (default: NO)
+input bool     ReturnToNeutralOnAllClose = false; // Return to NEUTRAL when all positions close
 
 input group "=== GRID SETTINGS ==="
 input double   GridSpacingPercent = 0.30;        // Grid spacing % (0.2-0.5 recommended)
@@ -114,6 +116,11 @@ double validatedLotSize = 0;
 double minLot = 0;
 double maxLot = 0;
 double lotStep = 0;
+
+// v3.15: Enhanced debugging
+datetime lastDebugTime = 0;
+int debugTickCounter = 0;
+bool debugVerbose = true;  // Set to false to reduce log spam
 
 //+------------------------------------------------------------------+
 //| VALIDATE AND NORMALIZE LOT SIZE                                  |
@@ -221,6 +228,7 @@ int OnInit()
    Print("UP by 1 grid → BUY mode | DOWN by 1 grid → SELL mode");
    Print("Auto-Flip After: ", LevelsBeforeFlip, " levels against trend");
    Print("Close On Flip: ", CloseOnFlip ? "YES (closes opposite positions)" : "NO (keeps all positions)");
+   Print("Return to NEUTRAL on All Close: ", ReturnToNeutralOnAllClose ? "YES (fresh direction signal)" : "NO (continues same mode)");
    Print("Grid Spacing: ", GridSpacingPercent, "% = $", DoubleToString(currentGapSize, 2));
    Print("Base Lot Size: ", DoubleToString(validatedLotSize, 2));
    if(UseLotMultiplier)
@@ -244,6 +252,12 @@ int OnInit()
    Print("Auto-Close Profitable: ", AutoCloseProfitableCount > 0 ? IntegerToString(AutoCloseProfitableCount) + " positions" : "DISABLED");
    Print("Session Target: ", SessionProfitPercent, "% = $", DoubleToString(sessionProfitTarget, 2));
    Print("Reset Mode: ", ResetSessionDaily ? "DAILY" : "PER SESSION");
+   Print("═══════════════════════════════════════");
+   Print("🔍 v3.15 DEBUG FEATURES:");
+   Print("   Press 'H' key: Toggle panel visibility");
+   Print("   Press 'D' key: Print detailed debug status");
+   Print("   Enhanced logging: Every 50 ticks or 30 seconds");
+   Print("   ReturnToNeutral: ", ReturnToNeutralOnAllClose ? "TRUE (waits in NEUTRAL)" : "FALSE (keeps trading) ✅");
    Print("═══════════════════════════════════════");
    
    // Create panel
@@ -274,6 +288,24 @@ void OnDeinit(const int reason)
 //+------------------------------------------------------------------+
 void OnTick()
 {
+   // v3.15: Enhanced debugging - log every 50 ticks or every 30 seconds
+   debugTickCounter++;
+   datetime currentTime = TimeCurrent();
+   bool shouldDebug = (debugTickCounter % 50 == 0) || (currentTime - lastDebugTime >= 30);
+   
+   if(debugVerbose && shouldDebug)
+   {
+      lastDebugTime = currentTime;
+      string modeStr = (currentMode == MODE_NEUTRAL) ? "NEUTRAL" : (currentMode == MODE_BUY) ? "BUY" : "SELL";
+      Print("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
+      Print("🔍 DEBUG TICK #", debugTickCounter);
+      Print("Time: ", TimeToString(currentTime, TIME_DATE|TIME_SECONDS));
+      Print("Mode: ", modeStr, " | Positions: ", ArraySize(positions), "/", MaxPositions);
+      Print("Status: ", isPaused ? "PAUSED" : (emergencyStop ? "STOPPED" : (sessionTargetReached ? "TARGET" : "ACTIVE")));
+      if(emergencyStop) Print("Stop Reason: ", emergencyReason);
+      Print("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
+   }
+   
    // Update panel
    if(ShowPanel) UpdatePanel();
    
@@ -294,12 +326,25 @@ void OnTick()
    
    // Check if paused
    if(isPaused)
+   {
+      if(debugVerbose && debugTickCounter % 200 == 0)
+      {
+         Print("⏸️ EA PAUSED - Not trading (press RESUME button or restart EA)");
+         if(sessionTargetReached)
+            Print("   Reason: Session profit target reached ($", DoubleToString(sessionProfit, 2), ")");
+      }
       return;
+   }
    
    // Check emergency stop
    if(emergencyStop)
    {
-      Print("⛔ Emergency stop active: ", emergencyReason);
+      if(debugVerbose && debugTickCounter % 200 == 0)
+      {
+         Print("🛑 EMERGENCY STOP ACTIVE - Trading permanently stopped!");
+         Print("   Reason: ", emergencyReason);
+         Print("   To resume: Restart EA or remove from chart");
+      }
       return;
    }
    
@@ -342,6 +387,10 @@ void OnTick()
    long spreadPoints = SymbolInfoInteger(_Symbol, SYMBOL_SPREAD);
    if(spreadPoints > MaxSpread)
    {
+      if(debugVerbose && debugTickCounter % 100 == 0)
+      {
+         Print("⚠️ HIGH SPREAD WARNING: ", spreadPoints, " points (max: ", MaxSpread, ") - Waiting for better spread");
+      }
       return; // Wait for better spread
    }
    
@@ -356,7 +405,7 @@ void OnTick()
    // Sync positions
    SyncPositions();
    
-   // Check if all positions closed - reset multiplier
+   // Check if all positions closed - reset multiplier and optionally return to NEUTRAL
    static int lastPositionCount = 0;
    int currentPositionCount = ArraySize(positions);
    
@@ -364,7 +413,37 @@ void OnTick()
    {
       // All positions just closed
       ResetMultiplierLevel();
-      Print("🔄 ALL POSITIONS CLOSED → Multiplier reset to base level");
+      Print("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
+      Print("🔄 ALL POSITIONS CLOSED EVENT");
+      Print("   Previous count: ", lastPositionCount, " → Current: 0");
+      Print("   Multiplier reset to base level");
+      
+      // Optionally return to NEUTRAL mode to wait for fresh direction signal
+      if(ReturnToNeutralOnAllClose && currentMode != MODE_NEUTRAL)
+      {
+         string previousMode = (currentMode == MODE_BUY) ? "BUY" : "SELL";
+         currentMode = MODE_NEUTRAL;
+         referencePrice = currentPrice;
+         highWaterMark = currentPrice;
+         lowWaterMark = currentPrice;
+         levelsAgainstTrend = 0;
+         lastProcessedLevel = currentPrice;
+         
+         Print("⚪ RETURNED TO NEUTRAL MODE");
+         Print("   Previous: ", previousMode, " mode");
+         Print("   New reference: $", DoubleToString(referencePrice, 2));
+         Print("   Grid gap: $", DoubleToString(currentGapSize, 2));
+         Print("   ⚠️ WAITING for price to move ±1 FULL gap to resume trading!");
+         Print("   Need: UP≥$", DoubleToString(referencePrice + currentGapSize, 2),
+               " OR DOWN≤$", DoubleToString(referencePrice - currentGapSize, 2));
+      }
+      else if(!ReturnToNeutralOnAllClose)
+      {
+         string currentModeStr = (currentMode == MODE_BUY) ? "BUY" : "SELL";
+         Print("✅ STAYING IN ", currentModeStr, " MODE (ReturnToNeutralOnAllClose = FALSE)");
+         Print("   Will continue trading ", currentModeStr, " positions on next grid level");
+      }
+      Print("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
    }
    lastPositionCount = currentPositionCount;
    
@@ -407,16 +486,24 @@ void OnTick()
    // NEUTRAL MODE: Wait for price to hit first grid level (full gap)
    if(currentMode == MODE_NEUTRAL && ArraySize(positions) == 0)
    {
-      // Debug logging every 100 ticks (reduce log spam)
+      // v3.15: Enhanced debug logging every 100 ticks
       static int tickCounter = 0;
       tickCounter++;
-      if(tickCounter % 100 == 0)
+      if(debugVerbose && tickCounter % 100 == 0)
       {
-         Print("⚪ NEUTRAL: Ref=$", DoubleToString(referencePrice, 2), 
-               " Current=$", DoubleToString(currentPrice, 2),
-               " Gap=$", DoubleToString(currentGapSize, 2),
-               " Need: Up≥$", DoubleToString(referencePrice + currentGapSize, 2),
-               " or Down≤$", DoubleToString(referencePrice - currentGapSize, 2));
+         double distanceToUp = referencePrice + currentGapSize - currentPrice;
+         double distanceToDown = currentPrice - (referencePrice - currentGapSize);
+         double distancePercent = (MathAbs(currentPrice - referencePrice) / referencePrice) * 100.0;
+         
+         Print("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
+         Print("⚪ NEUTRAL MODE - WAITING FOR FIRST GRID BREACH");
+         Print("   Reference: $", DoubleToString(referencePrice, 2));
+         Print("   Current:   $", DoubleToString(currentPrice, 2), " (", DoubleToString(distancePercent, 3), "% from ref)");
+         Print("   Gap Size:  $", DoubleToString(currentGapSize, 2), " (", DoubleToString(GridSpacingPercent, 2), "%)");
+         Print("   UP trigger:   $", DoubleToString(referencePrice + currentGapSize, 2), " (need $", DoubleToString(distanceToUp, 2), " more)");
+         Print("   DOWN trigger: $", DoubleToString(referencePrice - currentGapSize, 2), " (need $", DoubleToString(distanceToDown, 2), " more)");
+         Print("   ⏳ NO TRADING until price moves ±", DoubleToString(GridSpacingPercent, 2), "% from reference");
+         Print("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
       }
       
       // Price moved UP by one full grid level → Enter BUY mode
@@ -486,12 +573,21 @@ void OnTick()
          // Flip to SELL if dropped enough levels
          if(levelsAgainstTrend >= LevelsBeforeFlip)
          {
-            Print("🔄 FLIPPING TO SELL after ", levelsAgainstTrend, " levels down from high");
+            Print("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
+            Print("🔄 MODE FLIP: BUY → SELL");
+            Print("   Trigger: Dropped ", levelsAgainstTrend, " levels from high");
+            Print("   High was: $", DoubleToString(highWaterMark, 2));
+            Print("   Now at:   $", DoubleToString(currentPrice, 2));
+            Print("   Total drop: $", DoubleToString(highWaterMark - currentPrice, 2));
             
             if(CloseOnFlip)
             {
                Print("🔒 Closing all BUY positions before flip...");
                ClosePositionsByType(ORDER_TYPE_BUY);
+            }
+            else
+            {
+               Print("📌 Keeping existing BUY positions (CloseOnFlip = FALSE)");
             }
             
             currentMode = MODE_SELL;
@@ -500,6 +596,9 @@ void OnTick()
             lowWaterMark = currentPrice;
             levelsAgainstTrend = 0;
             lastProcessedLevel = currentPrice;
+            
+            Print("✅ Now in SELL mode - will place SELL positions");
+            Print("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
             
             // Reset multiplier on mode change
             if(ResetOnModeChange)
@@ -531,12 +630,21 @@ void OnTick()
          // Flip to BUY if rose enough levels
          if(levelsAgainstTrend >= LevelsBeforeFlip)
          {
-            Print("🔄 FLIPPING TO BUY after ", levelsAgainstTrend, " levels up from low");
+            Print("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
+            Print("🔄 MODE FLIP: SELL → BUY");
+            Print("   Trigger: Rose ", levelsAgainstTrend, " levels from low");
+            Print("   Low was: $", DoubleToString(lowWaterMark, 2));
+            Print("   Now at:  $", DoubleToString(currentPrice, 2));
+            Print("   Total rise: $", DoubleToString(currentPrice - lowWaterMark, 2));
             
             if(CloseOnFlip)
             {
                Print("🔒 Closing all SELL positions before flip...");
                ClosePositionsByType(ORDER_TYPE_SELL);
+            }
+            else
+            {
+               Print("📌 Keeping existing SELL positions (CloseOnFlip = FALSE)");
             }
             
             currentMode = MODE_BUY;
@@ -545,6 +653,9 @@ void OnTick()
             highWaterMark = currentPrice;
             levelsAgainstTrend = 0;
             lastProcessedLevel = currentPrice;
+            
+            Print("✅ Now in BUY mode - will place BUY positions");
+            Print("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
             
             // Reset multiplier on mode change
             if(ResetOnModeChange)
@@ -559,6 +670,14 @@ void OnTick()
    if(currentMode != MODE_NEUTRAL && ArraySize(positions) < MaxPositions)
    {
       CheckGridLevels();
+   }
+   else if(currentMode != MODE_NEUTRAL && ArraySize(positions) >= MaxPositions)
+   {
+      // v3.15: Debug when max positions reached
+      if(debugVerbose && debugTickCounter % 200 == 0)
+      {
+         Print("⚠️ MAX POSITIONS REACHED: ", ArraySize(positions), "/", MaxPositions, " - Waiting for positions to close");
+      }
    }
 }
 
@@ -1010,6 +1129,11 @@ void OnChartEvent(const int id, const long &lparam, const double &dparam, const 
          TogglePanelVisibility();
          Print(panelVisible ? "👁️ Panel shown" : "👁️ Panel hidden (Press H to show)");
       }
+      // D key = 68, d key = 100 - Debug status dump
+      else if(lparam == 68 || lparam == 100)
+      {
+         PrintDebugStatus();
+      }
    }
    
    if(id == CHARTEVENT_OBJECT_CLICK)
@@ -1084,6 +1208,92 @@ void OnChartEvent(const int id, const long &lparam, const double &dparam, const 
          }
       }
    }
+}
+
+//+------------------------------------------------------------------+
+//| PRINT DEBUG STATUS (Press 'D' key)                               |
+//+------------------------------------------------------------------+
+void PrintDebugStatus()
+{
+   double currentPrice = (SymbolInfoDouble(_Symbol, SYMBOL_ASK) + SymbolInfoDouble(_Symbol, SYMBOL_BID)) / 2.0;
+   double equity = AccountInfoDouble(ACCOUNT_EQUITY);
+   double balance = AccountInfoDouble(ACCOUNT_BALANCE);
+   double dd = (peakEquity > 0) ? ((equity - peakEquity) / peakEquity * 100) : 0;
+   string modeStr = (currentMode == MODE_NEUTRAL) ? "NEUTRAL" : (currentMode == MODE_BUY) ? "BUY" : "SELL";
+   
+   Print("╔══════════════════════════════════════════════════════════════╗");
+   Print("║              TORAMA GRID EA - DEBUG STATUS v3.15             ║");
+   Print("╠══════════════════════════════════════════════════════════════╣");
+   Print("║ TRADING STATUS                                               ║");
+   Print("╠══════════════════════════════════════════════════════════════╣");
+   Print("Current Mode:          ", modeStr);
+   Print("EA Status:             ", isPaused ? "PAUSED ⏸️" : (emergencyStop ? "STOPPED 🛑" : (sessionTargetReached ? "TARGET 🎯" : "ACTIVE ✅")));
+   if(emergencyStop) Print("Stop Reason:           ", emergencyReason);
+   if(sessionTargetReached) Print("Session Target:        REACHED ($", DoubleToString(sessionProfit, 2), ")");
+   Print("Positions:             ", ArraySize(positions), "/", MaxPositions);
+   Print("Total Trades:          ", totalTrades);
+   Print("╠══════════════════════════════════════════════════════════════╣");
+   Print("║ PRICE & GRID                                                 ║");
+   Print("╠══════════════════════════════════════════════════════════════╣");
+   Print("Current Price:         $", DoubleToString(currentPrice, (int)SymbolInfoInteger(_Symbol, SYMBOL_DIGITS)));
+   Print("Reference Price:       $", DoubleToString(referencePrice, (int)SymbolInfoInteger(_Symbol, SYMBOL_DIGITS)));
+   Print("Grid Gap Size:         $", DoubleToString(currentGapSize, 2), " (", DoubleToString(GridSpacingPercent, 2), "%)");
+   if(currentMode == MODE_BUY)
+      Print("High Water Mark:       $", DoubleToString(highWaterMark, (int)SymbolInfoInteger(_Symbol, SYMBOL_DIGITS)));
+   else if(currentMode == MODE_SELL)
+      Print("Low Water Mark:        $", DoubleToString(lowWaterMark, (int)SymbolInfoInteger(_Symbol, SYMBOL_DIGITS)));
+   Print("Levels vs Trend:       ", levelsAgainstTrend, "/", LevelsBeforeFlip, " (before flip)");
+   Print("╠══════════════════════════════════════════════════════════════╣");
+   Print("║ PROFIT & RISK                                                ║");
+   Print("╠══════════════════════════════════════════════════════════════╣");
+   Print("Floating P/L:          ", (totalProfit >= 0 ? "+" : ""), "$", DoubleToString(totalProfit, 2));
+   Print("Equity:                $", DoubleToString(equity, 2));
+   Print("Balance:               $", DoubleToString(balance, 2));
+   Print("Peak Equity:           $", DoubleToString(peakEquity, 2));
+   Print("Drawdown:              ", DoubleToString(dd, 2), "% (max: ", DoubleToString(MaxDrawdownPercent, 1), "%)");
+   if(SessionProfitPercent > 0)
+   {
+      Print("Session Profit:        ", (sessionProfit >= 0 ? "+" : ""), "$", DoubleToString(sessionProfit, 2));
+      Print("Session Target:        $", DoubleToString(sessionProfitTarget, 2), " (", DoubleToString(SessionProfitPercent, 0), "%)");
+   }
+   Print("╠══════════════════════════════════════════════════════════════╣");
+   Print("║ LOT SIZING                                                   ║");
+   Print("╠══════════════════════════════════════════════════════════════╣");
+   Print("Base Lot Size:         ", DoubleToString(validatedLotSize, 2));
+   if(UseLotMultiplier)
+   {
+      Print("Multiplier Level:      ", currentMultiplierLevel, "/", MaxMultiplierLevel);
+      Print("Current Lot Size:      ", DoubleToString(currentLotSize, 2), " (×", DoubleToString(MathPow(LotMultiplier, currentMultiplierLevel), 2), ")");
+   }
+   else
+   {
+      Print("Multiplier:            DISABLED");
+   }
+   Print("╠══════════════════════════════════════════════════════════════╣");
+   Print("║ SETTINGS                                                     ║");
+   Print("╠══════════════════════════════════════════════════════════════╣");
+   Print("ReturnToNeutral:       ", ReturnToNeutralOnAllClose ? "TRUE ⚪" : "FALSE ✅");
+   Print("Close On Flip:         ", CloseOnFlip ? "TRUE 🔒" : "FALSE 📌");
+   Print("Reset On Mode Change:  ", ResetOnModeChange ? "TRUE" : "FALSE");
+   Print("Max Spread:            ", MaxSpread, " points (current: ", SymbolInfoInteger(_Symbol, SYMBOL_SPREAD), ")");
+   Print("╠══════════════════════════════════════════════════════════════╣");
+   Print("║ NEUTRAL MODE STATUS                                          ║");
+   Print("╠══════════════════════════════════════════════════════════════╣");
+   if(currentMode == MODE_NEUTRAL && ArraySize(positions) == 0)
+   {
+      double distanceToUp = referencePrice + currentGapSize - currentPrice;
+      double distanceToDown = currentPrice - (referencePrice - currentGapSize);
+      Print("⚪ WAITING for first grid breach");
+      Print("UP Trigger:            $", DoubleToString(referencePrice + currentGapSize, 2), " (need $", DoubleToString(distanceToUp, 2), " more)");
+      Print("DOWN Trigger:          $", DoubleToString(referencePrice - currentGapSize, 2), " (need $", DoubleToString(distanceToDown, 2), " more)");
+      Print("Gap Required:          ", DoubleToString(GridSpacingPercent, 2), "% = $", DoubleToString(currentGapSize, 2));
+   }
+   else if(currentMode != MODE_NEUTRAL)
+   {
+      Print("✅ ACTIVE - Trading ", modeStr, " positions");
+   }
+   Print("╚══════════════════════════════════════════════════════════════╝");
+   Print("Press 'D' again anytime for status update");
 }
 
 //+------------------------------------------------------------------+
