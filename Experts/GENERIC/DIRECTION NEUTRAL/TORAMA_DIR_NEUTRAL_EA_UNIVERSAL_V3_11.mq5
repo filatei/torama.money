@@ -25,7 +25,13 @@ input bool     CloseOnFlip = false;              // Close positions when flippin
 input group "=== GRID SETTINGS ==="
 input double   GridSpacingPercent = 0.30;        // Grid spacing % (0.2-0.5 recommended)
 input int      MaxPositions = 30;                // Maximum grid positions
-input double   LotSize = 0.1;                    // Lot size per position
+input double   LotSize = 0.1;                    // Base lot size per position
+
+input group "=== LOT MULTIPLIER (Martingale) ==="
+input bool     UseLotMultiplier = false;         // Enable lot multiplier on winning side
+input double   LotMultiplier = 1.5;              // Multiply lot by this factor (1.5 = 50% increase)
+input int      MaxMultiplierLevel = 5;           // Max multiplier level (e.g., 5 = base×1.5^5)
+input bool     ResetOnModeChange = true;         // Reset multiplier when mode changes
 
 input group "=== PROFIT & RISK (% of Gap) ==="
 input double   IndividualTPPercent = 300.0;      // Individual TP as % of gap (300 = 3x gap)
@@ -76,6 +82,10 @@ double lowWaterMark = 0;           // Lowest price when in SELL mode
 double trendStartPrice = 0;        // Price when current trend started
 int levelsAgainstTrend = 0;        // Counter for levels moved against current mode
 double lastProcessedLevel = 0;     // Last grid level we processed for flip detection
+
+// LOT MULTIPLIER - Progressive position sizing
+int currentMultiplierLevel = 0;    // Current multiplier level (0 = base lot)
+double currentLotSize = 0;         // Actual lot size being used
 
 // Risk management
 bool emergencyStop = false;
@@ -212,6 +222,20 @@ int OnInit()
    Print("Auto-Flip After: ", LevelsBeforeFlip, " levels against trend");
    Print("Close On Flip: ", CloseOnFlip ? "YES (closes opposite positions)" : "NO (keeps all positions)");
    Print("Grid Spacing: ", GridSpacingPercent, "% = $", DoubleToString(currentGapSize, 2));
+   Print("Base Lot Size: ", DoubleToString(validatedLotSize, 2));
+   if(UseLotMultiplier)
+   {
+      Print("🔢 LOT MULTIPLIER: ENABLED");
+      Print("   Multiplier: ×", DoubleToString(LotMultiplier, 1), " per position");
+      Print("   Max Level: ", MaxMultiplierLevel, " (max lot: ", 
+            DoubleToString(validatedLotSize * MathPow(LotMultiplier, MaxMultiplierLevel), 2), ")");
+      Print("   Reset on Mode Change: ", ResetOnModeChange ? "YES" : "NO");
+      Print("   Reset on All Close: YES (automatic)");
+   }
+   else
+   {
+      Print("Lot Multiplier: DISABLED (fixed lot size)");
+   }
    Print("First Position Opens: When price moves ±1 full grid level");
    Print("Individual TP: ", IndividualTPPercent, "% of gap = $", DoubleToString(individualTPDollars, 2));
    Print("Individual SL: ", IndividualSLPercent > 0 ? DoubleToString(IndividualSLPercent, 0) + "% of gap = $" + DoubleToString(individualSLDollars, 2) : "DISABLED");
@@ -331,6 +355,18 @@ void OnTick()
    
    // Sync positions
    SyncPositions();
+   
+   // Check if all positions closed - reset multiplier
+   static int lastPositionCount = 0;
+   int currentPositionCount = ArraySize(positions);
+   
+   if(lastPositionCount > 0 && currentPositionCount == 0)
+   {
+      // All positions just closed
+      ResetMultiplierLevel();
+      Print("🔄 ALL POSITIONS CLOSED → Multiplier reset to base level");
+   }
+   lastPositionCount = currentPositionCount;
    
    // Calculate total profit
    CalculateTotalProfit();
@@ -464,6 +500,12 @@ void OnTick()
             lowWaterMark = currentPrice;
             levelsAgainstTrend = 0;
             lastProcessedLevel = currentPrice;
+            
+            // Reset multiplier on mode change
+            if(ResetOnModeChange)
+            {
+               ResetMultiplierLevel();
+            }
          }
       }
    }
@@ -503,6 +545,12 @@ void OnTick()
             highWaterMark = currentPrice;
             levelsAgainstTrend = 0;
             lastProcessedLevel = currentPrice;
+            
+            // Reset multiplier on mode change
+            if(ResetOnModeChange)
+            {
+               ResetMultiplierLevel();
+            }
          }
       }
    }
@@ -627,16 +675,94 @@ void CheckGridLevels()
 }
 
 //+------------------------------------------------------------------+
+//| CALCULATE PROGRESSIVE LOT SIZE                                    |
+//+------------------------------------------------------------------+
+double CalculateProgressiveLot()
+{
+   // If multiplier disabled, use base lot
+   if(!UseLotMultiplier)
+   {
+      currentLotSize = validatedLotSize;
+      return validatedLotSize;
+   }
+   
+   // Calculate multiplied lot: BaseLot × Multiplier^Level
+   double multipliedLot = validatedLotSize * MathPow(LotMultiplier, currentMultiplierLevel);
+   
+   // Get symbol volume limits
+   double volumeMin = SymbolInfoDouble(_Symbol, SYMBOL_VOLUME_MIN);
+   double volumeMax = SymbolInfoDouble(_Symbol, SYMBOL_VOLUME_MAX);
+   double volumeStep = SymbolInfoDouble(_Symbol, SYMBOL_VOLUME_STEP);
+   
+   // Ensure lot is within broker limits
+   if(multipliedLot < volumeMin) multipliedLot = volumeMin;
+   if(multipliedLot > volumeMax) multipliedLot = volumeMax;
+   
+   // Normalize to step
+   multipliedLot = MathFloor(multipliedLot / volumeStep) * volumeStep;
+   
+   // Round to proper decimal places
+   int lotDigits = 2;
+   if(volumeStep >= 1.0) lotDigits = 0;
+   else if(volumeStep >= 0.1) lotDigits = 1;
+   multipliedLot = NormalizeDouble(multipliedLot, lotDigits);
+   
+   currentLotSize = multipliedLot;
+   
+   return multipliedLot;
+}
+
+//+------------------------------------------------------------------+
+//| INCREMENT MULTIPLIER LEVEL                                        |
+//+------------------------------------------------------------------+
+void IncrementMultiplierLevel()
+{
+   if(!UseLotMultiplier) return;
+   
+   if(currentMultiplierLevel < MaxMultiplierLevel)
+   {
+      currentMultiplierLevel++;
+      Print("📈 MULTIPLIER UP: Level ", currentMultiplierLevel, "/", MaxMultiplierLevel,
+            " | Lot: ", DoubleToString(validatedLotSize, 2), " → ", 
+            DoubleToString(CalculateProgressiveLot(), 2));
+   }
+   else
+   {
+      Print("📊 MULTIPLIER MAX: Level ", currentMultiplierLevel, " | Lot: ", 
+            DoubleToString(currentLotSize, 2));
+   }
+}
+
+//+------------------------------------------------------------------+
+//| RESET MULTIPLIER LEVEL                                            |
+//+------------------------------------------------------------------+
+void ResetMultiplierLevel()
+{
+   if(!UseLotMultiplier) return;
+   
+   if(currentMultiplierLevel > 0)
+   {
+      Print("🔄 MULTIPLIER RESET: Level ", currentMultiplierLevel, " → 0 | Lot: ",
+            DoubleToString(currentLotSize, 2), " → ", DoubleToString(validatedLotSize, 2));
+      currentMultiplierLevel = 0;
+      currentLotSize = validatedLotSize;
+   }
+}
+
+//+------------------------------------------------------------------+
 //| OPEN POSITION                                                     |
 //+------------------------------------------------------------------+
 bool OpenPosition(ENUM_ORDER_TYPE type, double price)
 {
+   // Calculate current lot size based on multiplier level
+   double lotToUse = CalculateProgressiveLot();
+   
    MqlTradeRequest request = {};
    MqlTradeResult result = {};
    
    request.action = TRADE_ACTION_DEAL;
    request.symbol = _Symbol;
-   request.volume = validatedLotSize;  // v3.11: Use validated lot size
+   request.volume = lotToUse;  // Use progressive lot size
    request.type = type;
    request.price = (type == ORDER_TYPE_BUY) ? SymbolInfoDouble(_Symbol, SYMBOL_ASK) : SymbolInfoDouble(_Symbol, SYMBOL_BID);
    request.deviation = 10;
@@ -679,9 +805,22 @@ bool OpenPosition(ENUM_ORDER_TYPE type, double price)
    if(result.retcode == TRADE_RETCODE_DONE || result.retcode == TRADE_RETCODE_PLACED)
    {
       totalTrades++;
-      Print("✅ ", (type == ORDER_TYPE_BUY ? "BUY" : "SELL"), " #", result.order, " | Lots: ", validatedLotSize, 
+      
+      // Log with correct lot size
+      string multiplierInfo = "";
+      if(UseLotMultiplier && currentMultiplierLevel > 0)
+      {
+         multiplierInfo = StringFormat(" [×%.1f^%d]", LotMultiplier, currentMultiplierLevel);
+      }
+      
+      Print("✅ ", (type == ORDER_TYPE_BUY ? "BUY" : "SELL"), " #", result.order, 
+            " | Lots: ", DoubleToString(lotToUse, 2), multiplierInfo,
             " | Price: $", DoubleToString(request.price, digits), 
             " | TP: $", DoubleToString(request.tp, digits));
+      
+      // Increment multiplier for next position
+      IncrementMultiplierLevel();
+      
       return true;
    }
    
@@ -966,7 +1105,7 @@ void TogglePanelVisibility()
       "DDLabel", "DD",
       "SessionLabel", "SessionProfit",
       "TargetLabel", "SessionTarget",
-      "LotLabel", "LotSize",
+      "LotLabel", "LotSize", "MultiplierInfo",
       "Brand", "ToggleHint"
    };
    
@@ -1069,9 +1208,10 @@ void CreatePanel()
    CreateLabel(panelPrefix + "TargetLabel", x + 180, y + 200, "Target:", clrGray, 9, "Arial");
    CreateLabel(panelPrefix + "SessionTarget", x + 230, y + 200, "$0", clrGray, 9, "Arial");
    
-   // v3.11: LOT SIZE INDICATOR (bottom left area)
+   // v3.12: LOT SIZE with MULTIPLIER (bottom left area)
    CreateLabel(panelPrefix + "LotLabel", x + 10, y + 230, "Lot:", clrGray, 8, "Arial");
    CreateLabel(panelPrefix + "LotSize", x + 40, y + 230, DoubleToString(validatedLotSize, 2), clrLightBlue, 9, "Arial Bold");
+   CreateLabel(panelPrefix + "MultiplierInfo", x + 80, y + 230, "", clrYellow, 8, "Arial");
    
    // TORAMA CAPITAL - Bottom right corner inside panel with proper margin
    CreateLabel(panelPrefix + "Brand", x + width - 145, y + height - 30, "TORAMA CAPITAL", clrGold, 10, "Arial Black");
@@ -1218,8 +1358,23 @@ void UpdatePanel()
       ObjectSetString(0, panelPrefix + "SessionTarget", OBJPROP_TEXT, "OFF");
    }
    
-   // v3.11: Update lot size display
-   ObjectSetString(0, panelPrefix + "LotSize", OBJPROP_TEXT, DoubleToString(validatedLotSize, 2));
+   // v3.12: Update lot size and multiplier display
+   double displayLot = UseLotMultiplier ? currentLotSize : validatedLotSize;
+   ObjectSetString(0, panelPrefix + "LotSize", OBJPROP_TEXT, DoubleToString(displayLot, 2));
+   
+   // Show multiplier info if enabled and level > 0
+   string multiplierText = "";
+   if(UseLotMultiplier && currentMultiplierLevel > 0)
+   {
+      multiplierText = StringFormat("[×%.1f^%d]", LotMultiplier, currentMultiplierLevel);
+      ObjectSetInteger(0, panelPrefix + "MultiplierInfo", OBJPROP_COLOR, clrYellow);
+   }
+   else if(UseLotMultiplier)
+   {
+      multiplierText = "[Base]";
+      ObjectSetInteger(0, panelPrefix + "MultiplierInfo", OBJPROP_COLOR, clrGray);
+   }
+   ObjectSetString(0, panelPrefix + "MultiplierInfo", OBJPROP_TEXT, multiplierText);
 }
 
 //+------------------------------------------------------------------+
