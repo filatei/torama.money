@@ -45,6 +45,12 @@ input double   SessionProfitPercent = 100.0;     // Session profit target (% of 
 input bool     ResetSessionDaily = true;         // Reset session profit daily
 input double   MaxDrawdownPercent = 30.0;        // Max drawdown % (emergency stop)
 
+input group "=== TIME SCHEDULING ==="
+input bool     UseTimeSchedule = false;          // Enable time scheduling
+input string   StartTime = "09:00";              // Trading start time (HH:MM)
+input string   EndTime = "17:00";                // Trading end time (HH:MM)
+input bool     StartPaused = true;               // Start EA in paused state
+
 input group "=== SETTINGS ==="
 input int      MaxSpread = 2000;                 // Maximum spread (points)
 input int      MagicNumber = 88833;              // Magic number
@@ -87,6 +93,11 @@ string emergencyReason = "";
 bool isPaused = false;
 datetime lastResetDate = 0;
 
+// Time scheduling
+datetime startTimeSeconds = 0;
+datetime endTimeSeconds = 0;
+bool withinTradingHours = false;
+
 // Validation
 double validatedLotSize = 0;
 int digits = 2;
@@ -94,6 +105,12 @@ int digits = 2;
 // Panel
 string panelPrefix = "TORAMA_AGG_";
 bool panelVisible = true;
+
+// Button states
+bool buttonCloseAllPressed = false;
+bool buttonCloseProfitPressed = false;
+bool buttonPausePressed = false;
+bool buttonDirectionPressed = false;
 
 //+------------------------------------------------------------------+
 //| EXPERT INITIALIZATION                                             |
@@ -149,6 +166,54 @@ int OnInit()
    sessionProfitTarget = sessionStartBalance * SessionProfitPercent / 100.0;
    peakEquity = AccountInfoDouble(ACCOUNT_EQUITY);
    lastResetDate = TimeCurrent();
+   
+   // Initialize paused state
+   if(StartPaused)
+   {
+      isPaused = true;
+      Print("⏸️ EA STARTED IN PAUSED STATE");
+      Print("   Click ACTIVATE button or wait for scheduled start time");
+   }
+   
+   // Parse time schedule
+   if(UseTimeSchedule)
+   {
+      startTimeSeconds = StringToTime("1970.01.01 " + StartTime);
+      endTimeSeconds = StringToTime("1970.01.01 " + EndTime);
+      
+      if(startTimeSeconds == 0 || endTimeSeconds == 0)
+      {
+         Print("⚠️ Invalid time format! Use HH:MM format (e.g., 09:00)");
+         Print("   Time scheduling disabled");
+      }
+      else
+      {
+         Print("📅 TIME SCHEDULE ENABLED");
+         Print("   Trading Hours: ", StartTime, " to ", EndTime);
+         Print("   EA will activate/pause automatically");
+         
+         // Check if we're currently within trading hours
+         datetime currentTime = TimeCurrent();
+         MqlDateTime dt;
+         TimeToStruct(currentTime, dt);
+         datetime todaySeconds = dt.hour * 3600 + dt.min * 60 + dt.sec;
+         
+         if(startTimeSeconds <= endTimeSeconds)
+         {
+            withinTradingHours = (todaySeconds >= startTimeSeconds && todaySeconds < endTimeSeconds);
+         }
+         else  // Overnight session (e.g., 22:00 to 02:00)
+         {
+            withinTradingHours = (todaySeconds >= startTimeSeconds || todaySeconds < endTimeSeconds);
+         }
+         
+         if(withinTradingHours && StartPaused)
+         {
+            isPaused = false;  // Auto-activate if within trading hours
+            Print("✅ Within trading hours - EA ACTIVATED");
+         }
+      }
+   }
    
    Print("═══════════════════════════════════════");
    Print("🎯 AGGRESSIVE SINGLE-DIRECTION TRADER");
@@ -227,6 +292,12 @@ void OnTick()
 {
    // Update panel
    if(ShowPanel) UpdatePanel();
+   
+   // Check time schedule
+   if(UseTimeSchedule)
+   {
+      CheckTimeSchedule();
+   }
    
    // Check for emergency stop
    if(emergencyStop)
@@ -752,22 +823,22 @@ void CreatePanel()
    int x = 20;
    int y = 30;
    int width = 340;
-   int height = 250;
+   int height = 340;  // Increased for time display
    
-   // Background
+   // Solid Background
    ObjectCreate(0, panelPrefix + "Background", OBJ_RECTANGLE_LABEL, 0, 0, 0);
    ObjectSetInteger(0, panelPrefix + "Background", OBJPROP_XDISTANCE, x);
    ObjectSetInteger(0, panelPrefix + "Background", OBJPROP_YDISTANCE, y);
    ObjectSetInteger(0, panelPrefix + "Background", OBJPROP_XSIZE, width);
    ObjectSetInteger(0, panelPrefix + "Background", OBJPROP_YSIZE, height);
-   ObjectSetInteger(0, panelPrefix + "Background", OBJPROP_BGCOLOR, clrBlack);
+   ObjectSetInteger(0, panelPrefix + "Background", OBJPROP_BGCOLOR, clrBlack);  // Solid black
    ObjectSetInteger(0, panelPrefix + "Background", OBJPROP_BORDER_TYPE, BORDER_FLAT);
    ObjectSetInteger(0, panelPrefix + "Background", OBJPROP_COLOR, clrGold);
    ObjectSetInteger(0, panelPrefix + "Background", OBJPROP_WIDTH, 2);
-   ObjectSetInteger(0, panelPrefix + "Background", OBJPROP_BACK, false);
+   ObjectSetInteger(0, panelPrefix + "Background", OBJPROP_BACK, false);  // false = on top
    ObjectSetInteger(0, panelPrefix + "Background", OBJPROP_SELECTABLE, false);
    ObjectSetInteger(0, panelPrefix + "Background", OBJPROP_HIDDEN, false);
-   ObjectSetInteger(0, panelPrefix + "Background", OBJPROP_ZORDER, 0);
+   ObjectSetInteger(0, panelPrefix + "Background", OBJPROP_ZORDER, 0);  // Top layer
    
    // Header
    CreateLabel(panelPrefix + "Title", x + 10, y + 8, EA_NAME + " v" + EA_VERSION, clrGold, 12, "Arial Black");
@@ -775,51 +846,76 @@ void CreatePanel()
    // Status
    CreateLabel(panelPrefix + "Status", x + 240, y + 8, "ACTIVE", clrLimeGreen, 10, "Arial Bold");
    
+   // SERVER TIME (prominent display)
+   CreateLabel(panelPrefix + "TimeLabel", x + 10, y + 30, "Server Time:", clrGray, 8, "Arial");
+   CreateLabel(panelPrefix + "ServerTime", x + 90, y + 28, "00:00:00", clrCyan, 11, "Arial Bold");
+   
+   // Trading hours (if schedule enabled)
+   CreateLabel(panelPrefix + "TradingHours", x + 10, y + 50, "", clrYellow, 8, "Arial");
+   
    // Direction
-   CreateLabel(panelPrefix + "DirLabel", x + 10, y + 35, "Direction:", clrGray, 9, "Arial");
-   CreateLabel(panelPrefix + "Direction", x + 85, y + 35, "AUTO", clrYellow, 10, "Arial Bold");
+   CreateLabel(panelPrefix + "DirLabel", x + 10, y + 70, "Direction:", clrGray, 9, "Arial");
+   CreateLabel(panelPrefix + "Direction", x + 85, y + 70, "AUTO", clrYellow, 10, "Arial Bold");
    
    // Reference
-   CreateLabel(panelPrefix + "RefLabel", x + 10, y + 55, "Ref:", clrGray, 8, "Arial");
-   CreateLabel(panelPrefix + "RefPrice", x + 45, y + 55, "$0.00", clrCyan, 9, "Arial Bold");
+   CreateLabel(panelPrefix + "RefLabel", x + 10, y + 90, "Ref:", clrGray, 8, "Arial");
+   CreateLabel(panelPrefix + "RefPrice", x + 45, y + 90, "$0.00", clrCyan, 9, "Arial Bold");
    
    // Gap
-   CreateLabel(panelPrefix + "GapLabel", x + 160, y + 55, "Gap:", clrGray, 8, "Arial");
-   CreateLabel(panelPrefix + "Gap", x + 195, y + 55, "$0.00", clrWhite, 9, "Arial");
+   CreateLabel(panelPrefix + "GapLabel", x + 160, y + 90, "Gap:", clrGray, 8, "Arial");
+   CreateLabel(panelPrefix + "Gap", x + 195, y + 90, "$0.00", clrWhite, 9, "Arial");
    
    // Positions
-   CreateLabel(panelPrefix + "PosLabel", x + 10, y + 75, "Positions:", clrGray, 9, "Arial");
-   CreateLabel(panelPrefix + "Positions", x + 85, y + 75, "0", clrWhite, 10, "Arial Bold");
+   CreateLabel(panelPrefix + "PosLabel", x + 10, y + 110, "Positions:", clrGray, 9, "Arial");
+   CreateLabel(panelPrefix + "Positions", x + 85, y + 110, "0", clrWhite, 10, "Arial Bold");
    
    // Range
-   CreateLabel(panelPrefix + "HighLabel", x + 10, y + 95, "High:", clrGray, 8, "Arial");
-   CreateLabel(panelPrefix + "High", x + 50, y + 95, "$0.00", clrLime, 9, "Arial");
+   CreateLabel(panelPrefix + "HighLabel", x + 10, y + 130, "High:", clrGray, 8, "Arial");
+   CreateLabel(panelPrefix + "High", x + 50, y + 130, "$0.00", clrLime, 9, "Arial");
    
-   CreateLabel(panelPrefix + "LowLabel", x + 160, y + 95, "Low:", clrGray, 8, "Arial");
-   CreateLabel(panelPrefix + "Low", x + 195, y + 95, "$0.00", clrOrange, 9, "Arial");
+   CreateLabel(panelPrefix + "LowLabel", x + 160, y + 130, "Low:", clrGray, 8, "Arial");
+   CreateLabel(panelPrefix + "Low", x + 195, y + 130, "$0.00", clrOrange, 9, "Arial");
    
    // Profit
-   CreateLabel(panelPrefix + "ProfitLabel", x + 10, y + 115, "Profit:", clrGray, 9, "Arial");
-   CreateLabel(panelPrefix + "Profit", x + 60, y + 115, "$0.00", clrLime, 11, "Arial Bold");
+   CreateLabel(panelPrefix + "ProfitLabel", x + 10, y + 150, "Profit:", clrGray, 9, "Arial");
+   CreateLabel(panelPrefix + "Profit", x + 60, y + 150, "$0.00", clrLime, 11, "Arial Bold");
    
    // Account
-   CreateLabel(panelPrefix + "BalanceLabel", x + 10, y + 140, "Balance:", clrGray, 8, "Arial");
-   CreateLabel(panelPrefix + "Balance", x + 70, y + 140, "$0.00", clrWhite, 9, "Arial");
+   CreateLabel(panelPrefix + "BalanceLabel", x + 10, y + 175, "Balance:", clrGray, 8, "Arial");
+   CreateLabel(panelPrefix + "Balance", x + 70, y + 175, "$0.00", clrWhite, 9, "Arial");
    
-   CreateLabel(panelPrefix + "EquityLabel", x + 180, y + 140, "Equity:", clrGray, 8, "Arial");
-   CreateLabel(panelPrefix + "Equity", x + 230, y + 140, "$0.00", clrWhite, 9, "Arial");
+   CreateLabel(panelPrefix + "EquityLabel", x + 180, y + 175, "Equity:", clrGray, 8, "Arial");
+   CreateLabel(panelPrefix + "Equity", x + 230, y + 175, "$0.00", clrWhite, 9, "Arial");
    
    // Session
-   CreateLabel(panelPrefix + "SessionLabel", x + 10, y + 160, "Session:", clrGray, 8, "Arial");
-   CreateLabel(panelPrefix + "SessionProfit", x + 70, y + 160, "$0.00", clrYellow, 9, "Arial");
+   CreateLabel(panelPrefix + "SessionLabel", x + 10, y + 195, "Session:", clrGray, 8, "Arial");
+   CreateLabel(panelPrefix + "SessionProfit", x + 70, y + 195, "$0.00", clrYellow, 9, "Arial");
    
-   CreateLabel(panelPrefix + "TargetLabel", x + 180, y + 160, "Target:", clrGray, 8, "Arial");
-   CreateLabel(panelPrefix + "SessionTarget", x + 230, y + 160, "$0.00", clrGray, 9, "Arial");
+   CreateLabel(panelPrefix + "TargetLabel", x + 180, y + 195, "Target:", clrGray, 8, "Arial");
+   CreateLabel(panelPrefix + "SessionTarget", x + 230, y + 195, "$0.00", clrGray, 9, "Arial");
    
    // Lot
-   CreateLabel(panelPrefix + "LotLabel", x + 10, y + 185, "Lot:", clrGray, 8, "Arial");
-   CreateLabel(panelPrefix + "LotSize", x + 40, y + 185, DoubleToString(validatedLotSize, 2), clrLightBlue, 9, "Arial Bold");
-   CreateLabel(panelPrefix + "MultiplierInfo", x + 80, y + 185, "", clrYellow, 8, "Arial");
+   CreateLabel(panelPrefix + "LotLabel", x + 10, y + 220, "Lot:", clrGray, 8, "Arial");
+   CreateLabel(panelPrefix + "LotSize", x + 40, y + 220, DoubleToString(validatedLotSize, 2), clrLightBlue, 9, "Arial Bold");
+   CreateLabel(panelPrefix + "MultiplierInfo", x + 80, y + 220, "", clrYellow, 8, "Arial");
+   
+   // BUTTONS (4 buttons in 2 rows)
+   int buttonY = y + 245;
+   int buttonWidth = 155;
+   int buttonHeight = 30;
+   int buttonSpacing = 10;
+   
+   // Row 1: Close Profit & Close All
+   CreateButton(panelPrefix + "BtnCloseProfit", x + 10, buttonY, buttonWidth, buttonHeight, 
+                "CLOSE PROFIT", clrGreen, clrBlack, 9);
+   CreateButton(panelPrefix + "BtnCloseAll", x + 10 + buttonWidth + buttonSpacing, buttonY, buttonWidth, buttonHeight,
+                "CLOSE ALL", clrOrangeRed, clrBlack, 9);
+   
+   // Row 2: Change Direction & Activate (renamed from Pause)
+   CreateButton(panelPrefix + "BtnDirection", x + 10, buttonY + buttonHeight + 5, buttonWidth, buttonHeight,
+                "CHANGE DIR", clrDodgerBlue, clrBlack, 9);
+   CreateButton(panelPrefix + "BtnPause", x + 10 + buttonWidth + buttonSpacing, buttonY + buttonHeight + 5, buttonWidth, buttonHeight,
+                isPaused ? "ACTIVATE EA" : "PAUSE EA", clrGold, clrBlack, 9);
    
    // Brand
    CreateLabel(panelPrefix + "Brand", x + width - 145, y + height - 30, "TORAMA CAPITAL", clrGold, 10, "Arial Black");
@@ -829,11 +925,55 @@ void CreatePanel()
 }
 
 //+------------------------------------------------------------------+
+//| CREATE BUTTON                                                     |
+//+------------------------------------------------------------------+
+void CreateButton(string name, int x, int y, int width, int height, string text, color bgColor, color textColor, int fontSize)
+{
+   // Button background
+   ObjectCreate(0, name, OBJ_RECTANGLE_LABEL, 0, 0, 0);
+   ObjectSetInteger(0, name, OBJPROP_XDISTANCE, x);
+   ObjectSetInteger(0, name, OBJPROP_YDISTANCE, y);
+   ObjectSetInteger(0, name, OBJPROP_XSIZE, width);
+   ObjectSetInteger(0, name, OBJPROP_YSIZE, height);
+   ObjectSetInteger(0, name, OBJPROP_BGCOLOR, bgColor);
+   ObjectSetInteger(0, name, OBJPROP_BORDER_TYPE, BORDER_FLAT);
+   ObjectSetInteger(0, name, OBJPROP_COLOR, clrWhite);
+   ObjectSetInteger(0, name, OBJPROP_WIDTH, 1);
+   ObjectSetInteger(0, name, OBJPROP_BACK, false);
+   ObjectSetInteger(0, name, OBJPROP_SELECTABLE, false);
+   ObjectSetInteger(0, name, OBJPROP_HIDDEN, false);
+   
+   // Button text
+   string labelName = name + "_Label";
+   CreateLabel(labelName, x + width/2 - 40, y + height/2 - 7, text, textColor, fontSize, "Arial Bold");
+}
+
+//+------------------------------------------------------------------+
 //| UPDATE PANEL                                                      |
 //+------------------------------------------------------------------+
 void UpdatePanel()
 {
    if(!ShowPanel) return;
+   
+   // Update server time (prominent display)
+   datetime serverTime = TimeCurrent();
+   ObjectSetString(0, panelPrefix + "ServerTime", OBJPROP_TEXT, TimeToString(serverTime, TIME_SECONDS));
+   
+   // Update trading hours status
+   if(UseTimeSchedule)
+   {
+      string hoursText = StringFormat("Trading: %s - %s %s", 
+                                      StartTime, EndTime, 
+                                      withinTradingHours ? "[ACTIVE]" : "[CLOSED]");
+      ObjectSetString(0, panelPrefix + "TradingHours", OBJPROP_TEXT, hoursText);
+      ObjectSetInteger(0, panelPrefix + "TradingHours", OBJPROP_COLOR, 
+                       withinTradingHours ? clrLimeGreen : clrOrange);
+   }
+   else
+   {
+      ObjectSetString(0, panelPrefix + "TradingHours", OBJPROP_TEXT, "No schedule (24/7)");
+      ObjectSetInteger(0, panelPrefix + "TradingHours", OBJPROP_COLOR, clrGray);
+   }
    
    // Direction
    string dirText = "";
@@ -921,6 +1061,18 @@ void UpdatePanel()
       ObjectSetInteger(0, panelPrefix + "MultiplierInfo", OBJPROP_COLOR, clrGray);
    }
    ObjectSetString(0, panelPrefix + "MultiplierInfo", OBJPROP_TEXT, multiplierText);
+   
+   // Update Activate/Pause button text and color
+   if(isPaused)
+   {
+      ObjectSetString(0, panelPrefix + "BtnPause_Label", OBJPROP_TEXT, "ACTIVATE EA");
+      ObjectSetInteger(0, panelPrefix + "BtnPause", OBJPROP_BGCOLOR, clrLimeGreen);
+   }
+   else
+   {
+      ObjectSetString(0, panelPrefix + "BtnPause_Label", OBJPROP_TEXT, "PAUSE EA");
+      ObjectSetInteger(0, panelPrefix + "BtnPause", OBJPROP_BGCOLOR, clrGold);
+   }
 }
 
 //+------------------------------------------------------------------+
@@ -943,23 +1095,82 @@ void CreateLabel(string name, int x, int y, string text, color clr, int fontSize
 }
 
 //+------------------------------------------------------------------+
+//| CHECK TIME SCHEDULE                                               |
+//+------------------------------------------------------------------+
+void CheckTimeSchedule()
+{
+   // Skip if schedule not enabled or times invalid
+   if(!UseTimeSchedule || startTimeSeconds == 0 || endTimeSeconds == 0)
+      return;
+   
+   static bool wasWithinHours = withinTradingHours;
+   
+   datetime currentTime = TimeCurrent();
+   MqlDateTime dt;
+   TimeToStruct(currentTime, dt);
+   datetime todaySeconds = dt.hour * 3600 + dt.min * 60 + dt.sec;
+   
+   // Check if within trading hours
+   bool nowWithinHours = false;
+   if(startTimeSeconds <= endTimeSeconds)
+   {
+      nowWithinHours = (todaySeconds >= startTimeSeconds && todaySeconds < endTimeSeconds);
+   }
+   else  // Overnight session
+   {
+      nowWithinHours = (todaySeconds >= startTimeSeconds || todaySeconds < endTimeSeconds);
+   }
+   
+   // State change: entered trading hours
+   if(nowWithinHours && !wasWithinHours)
+   {
+      isPaused = false;
+      withinTradingHours = true;
+      Print("⏰ ", TimeToString(currentTime, TIME_DATE|TIME_MINUTES), " - Trading hours started - EA ACTIVATED");
+   }
+   
+   // State change: exited trading hours
+   if(!nowWithinHours && wasWithinHours)
+   {
+      isPaused = true;
+      withinTradingHours = false;
+      Print("⏰ ", TimeToString(currentTime, TIME_DATE|TIME_MINUTES), " - Trading hours ended - EA PAUSED");
+      
+      // Optionally close all positions at end of trading hours
+      // Uncomment next line if you want to close all positions when trading hours end
+      // CloseAllPositions();
+   }
+   
+   wasWithinHours = nowWithinHours;
+}
+
+//+------------------------------------------------------------------+
 //| CHART EVENT HANDLER                                               |
 //+------------------------------------------------------------------+
 void OnChartEvent(const int id, const long &lparam, const double &dparam, const string &sparam)
 {
+   // Handle keyboard events
    if(id == CHARTEVENT_KEYDOWN)
    {
+      // H key to toggle panel
       if(lparam == 'H' || lparam == 'h')
       {
          panelVisible = !panelVisible;
          
          string objects[] = {
-            "Background", "Title", "Status", "DirLabel", "Direction",
+            "Background", "Title", "Status", 
+            "TimeLabel", "ServerTime", "TradingHours",
+            "DirLabel", "Direction",
             "RefLabel", "RefPrice", "GapLabel", "Gap",
             "PosLabel", "Positions", "HighLabel", "High", "LowLabel", "Low",
             "ProfitLabel", "Profit", "BalanceLabel", "Balance", "EquityLabel", "Equity",
             "SessionLabel", "SessionProfit", "TargetLabel", "SessionTarget",
-            "LotLabel", "LotSize", "MultiplierInfo", "Brand", "ToggleHint"
+            "LotLabel", "LotSize", "MultiplierInfo",
+            "BtnCloseProfit", "BtnCloseProfit_Label",
+            "BtnCloseAll", "BtnCloseAll_Label",
+            "BtnDirection", "BtnDirection_Label",
+            "BtnPause", "BtnPause_Label",
+            "Brand", "ToggleHint"
          };
          
          for(int i = 0; i < ArraySize(objects); i++)
@@ -972,6 +1183,152 @@ void OnChartEvent(const int id, const long &lparam, const double &dparam, const 
          }
          
          ChartRedraw();
+      }
+   }
+   
+   // Handle mouse click events on buttons
+   if(id == CHARTEVENT_OBJECT_CLICK)
+   {
+      // CLOSE PROFIT button
+      if(sparam == panelPrefix + "BtnCloseProfit")
+      {
+         Print("🔘 CLOSE PROFIT button pressed");
+         CloseProfitablePositions();
+         ObjectSetInteger(0, panelPrefix + "BtnCloseProfit", OBJPROP_STATE, false);
+      }
+      
+      // CLOSE ALL button
+      else if(sparam == panelPrefix + "BtnCloseAll")
+      {
+         Print("🔘 CLOSE ALL button pressed");
+         CloseAllPositions();
+         ObjectSetInteger(0, panelPrefix + "BtnCloseAll", OBJPROP_STATE, false);
+      }
+      
+      // CHANGE DIRECTION button
+      else if(sparam == panelPrefix + "BtnDirection")
+      {
+         Print("🔘 CHANGE DIRECTION button pressed");
+         ChangeDirection();
+         ObjectSetInteger(0, panelPrefix + "BtnDirection", OBJPROP_STATE, false);
+      }
+      
+      // PAUSE/RESUME button
+      else if(sparam == panelPrefix + "BtnPause")
+      {
+         Print("🔘 PAUSE/RESUME button pressed");
+         TogglePause();
+         ObjectSetInteger(0, panelPrefix + "BtnPause", OBJPROP_STATE, false);
+      }
+      
+      ChartRedraw();
+   }
+}
+
+//+------------------------------------------------------------------+
+//| CLOSE PROFITABLE POSITIONS                                        |
+//+------------------------------------------------------------------+
+void CloseProfitablePositions()
+{
+   int closedCount = 0;
+   double totalProfitClosed = 0;
+   
+   Print("🔒 Closing profitable positions...");
+   
+   for(int i = ArraySize(positions) - 1; i >= 0; i--)
+   {
+      if(PositionSelectByTicket(positions[i].ticket))
+      {
+         double profit = PositionGetDouble(POSITION_PROFIT);
+         if(profit > 0)
+         {
+            totalProfitClosed += profit;
+            ClosePosition(positions[i].ticket);
+            closedCount++;
+         }
+      }
+   }
+   
+   if(closedCount > 0)
+   {
+      Print("✅ Closed ", closedCount, " profitable positions | Total profit: $", DoubleToString(totalProfitClosed, 2));
+   }
+   else
+   {
+      Print("⚠️ No profitable positions to close");
+   }
+}
+
+//+------------------------------------------------------------------+
+//| CHANGE DIRECTION (WITHOUT CLOSING POSITIONS)                     |
+//+------------------------------------------------------------------+
+void ChangeDirection()
+{
+   TradingDirection oldDirection = activeDirection;
+   
+   // Cycle through directions: AUTO → BUY → SELL → AUTO
+   if(activeDirection == AUTO_DETECT)
+   {
+      activeDirection = BUY_ONLY;
+   }
+   else if(activeDirection == BUY_ONLY)
+   {
+      activeDirection = SELL_ONLY;
+   }
+   else if(activeDirection == SELL_ONLY)
+   {
+      activeDirection = AUTO_DETECT;
+   }
+   
+   string oldDirText = (oldDirection == AUTO_DETECT ? "AUTO-DETECT" : 
+                        (oldDirection == BUY_ONLY ? "BUY ONLY" : "SELL ONLY"));
+   string newDirText = (activeDirection == AUTO_DETECT ? "AUTO-DETECT" : 
+                        (activeDirection == BUY_ONLY ? "BUY ONLY" : "SELL ONLY"));
+   
+   Print("🔄 DIRECTION CHANGED: ", oldDirText, " → ", newDirText);
+   Print("   Existing positions remain open");
+   Print("   New positions will follow new direction");
+   
+   // Reset reference for new direction
+   double currentPrice = (SymbolInfoDouble(_Symbol, SYMBOL_ASK) + SymbolInfoDouble(_Symbol, SYMBOL_BID)) / 2.0;
+   referencePrice = currentPrice;
+   
+   if(activeDirection == AUTO_DETECT)
+   {
+      Print("   Waiting for first grid breach to confirm direction");
+   }
+}
+
+//+------------------------------------------------------------------+
+//| TOGGLE PAUSE/RESUME                                               |
+//+------------------------------------------------------------------+
+void TogglePause()
+{
+   isPaused = !isPaused;
+   
+   if(isPaused)
+   {
+      Print("⏸️ EA PAUSED - No new positions will be opened");
+      Print("   Existing positions remain active");
+      Print("   Click ACTIVATE EA button to resume");
+   }
+   else
+   {
+      Print("▶️ EA ACTIVATED - Trading active");
+      
+      // Clear emergency stop if it was set
+      if(emergencyStop)
+      {
+         emergencyStop = false;
+         emergencyReason = "";
+         Print("   Emergency stop cleared");
+      }
+      
+      // Clear session target if it was reached
+      if(sessionTargetReached)
+      {
+         sessionTargetReached = false;
+         Print("   Session target flag cleared");
       }
    }
 }

@@ -69,6 +69,13 @@ bool sessionTargetReached = false;
 datetime lastSessionReset = 0;
 int currentDay = 0;
 
+// Grid rebuild control
+bool needsRebuild = false;
+int lastTotalPositions = 0;
+
+// EA control
+bool isPaused = false;
+
 // Panel
 string panelPrefix = "MeanRevPanel_";
 
@@ -180,8 +187,34 @@ void OnDeinit(const int reason)
 //+------------------------------------------------------------------+
 void OnTick()
 {
+   // Check if EA is paused
+   if(isPaused)
+   {
+      UpdatePanel(); // Still update panel to show current status
+      return;
+   }
+   
    // Sync positions
    SyncPositions();
+   
+   // Check for automatic grid rebuild (all positions closed)
+   int totalPositions = ArraySize(buyPositions) + ArraySize(sellPositions);
+   
+   if(totalPositions == 0 && lastTotalPositions > 0)
+   {
+      // All positions just closed - trigger rebuild
+      Print("🔄 All positions closed - Auto-rebuilding grid...");
+      needsRebuild = true;
+   }
+   
+   lastTotalPositions = totalPositions;
+   
+   // Execute rebuild if flagged
+   if(needsRebuild)
+   {
+      RebuildGrid();
+      needsRebuild = false;
+   }
    
    // Check session reset
    CheckSessionReset();
@@ -769,7 +802,7 @@ void CreatePanel()
    ObjectSetInteger(0, panelPrefix + "BG", OBJPROP_XDISTANCE, x);
    ObjectSetInteger(0, panelPrefix + "BG", OBJPROP_YDISTANCE, y);
    ObjectSetInteger(0, panelPrefix + "BG", OBJPROP_XSIZE, width);
-   ObjectSetInteger(0, panelPrefix + "BG", OBJPROP_YSIZE, 400);
+   ObjectSetInteger(0, panelPrefix + "BG", OBJPROP_YSIZE, 570);
    ObjectSetInteger(0, panelPrefix + "BG", OBJPROP_BGCOLOR, clrBlack);
    ObjectSetInteger(0, panelPrefix + "BG", OBJPROP_BORDER_TYPE, BORDER_FLAT);
    ObjectSetInteger(0, panelPrefix + "BG", OBJPROP_COLOR, clrWhite);
@@ -795,6 +828,11 @@ void CreatePanel()
    
    CreateLabel(panelPrefix + "Spread", "Spread: 0", x + 10, y + 10 + (row++ * rowHeight), clrWhite);
    CreateLabel(panelPrefix + "Drawdown", "Drawdown: 0.0%", x + 10, y + 10 + (row++ * rowHeight), clrWhite);
+   row++; // Skip row
+   
+   CreateLabel(panelPrefix + "Gap", "Gap: 0.00% ($0.00)", x + 10, y + 10 + (row++ * rowHeight), clrCyan);
+   CreateLabel(panelPrefix + "NextBuy", "Next BUY: 0.00000", x + 10, y + 10 + (row++ * rowHeight), clrLime);
+   CreateLabel(panelPrefix + "NextSell", "Next SELL: 0.00000", x + 10, y + 10 + (row++ * rowHeight), clrRed);
    
    // Buttons
    row++;
@@ -802,6 +840,14 @@ void CreatePanel()
    CreateButton(panelPrefix + "CloseSellBtn", "CLOSE SELLS", x + 150, y + 10 + (row * rowHeight), 120, 25);
    row++;
    CreateButton(panelPrefix + "CloseAllBtn", "CLOSE ALL", x + 10, y + 10 + (row++ * rowHeight), 260, 25);
+   CreateButton(panelPrefix + "RebuildBtn", "REBUILD GRID", x + 10, y + 10 + (row++ * rowHeight), 260, 25);
+   CreateButton(panelPrefix + "PauseBtn", "⏸ PAUSE EA", x + 10, y + 10 + (row++ * rowHeight), 260, 25);
+   
+   // Branding
+   row += 2;
+   CreateLabel(panelPrefix + "Brand", "TORAMA CAPITAL", x + width - 140, y + 10 + (row * rowHeight), clrGold);
+   ObjectSetInteger(0, panelPrefix + "Brand", OBJPROP_FONTSIZE, 11);
+   ObjectSetString(0, panelPrefix + "Brand", OBJPROP_FONT, "Arial Bold");
 }
 
 //+------------------------------------------------------------------+
@@ -888,6 +934,74 @@ void UpdatePanel()
    double drawdown = ((balance - equity) / balance) * 100.0;
    ObjectSetString(0, panelPrefix + "Drawdown", OBJPROP_TEXT, "Drawdown: " + DoubleToString(drawdown, 1) + "%");
    ObjectSetInteger(0, panelPrefix + "Drawdown", OBJPROP_COLOR, (drawdown > MaxDrawdownPercent * 0.8) ? clrRed : clrLime);
+   
+   // Calculate and display Gap
+   double currentPrice = (SymbolInfoDouble(_Symbol, SYMBOL_ASK) + SymbolInfoDouble(_Symbol, SYMBOL_BID)) / 2.0;
+   double gapSize = currentPrice * (GridSpacingPercent / 100.0);
+   ObjectSetString(0, panelPrefix + "Gap", OBJPROP_TEXT, "Gap: " + DoubleToString(GridSpacingPercent, 2) + "% ($" + DoubleToString(gapSize, 2) + ")");
+   
+   // Calculate next levels
+   double nextBuyLevel = 0;
+   double nextSellLevel = 0;
+   
+   double bid = SymbolInfoDouble(_Symbol, SYMBOL_BID);
+   double ask = SymbolInfoDouble(_Symbol, SYMBOL_ASK);
+   
+   int buyCount2 = ArraySize(buyPositions);
+   int sellCount2 = ArraySize(sellPositions);
+   
+   if(buyCount2 > 0)
+   {
+      // Find lowest buy level
+      double lowestBuy = buyPositions[0].openPrice;
+      for(int i = 1; i < buyCount2; i++)
+      {
+         if(buyPositions[i].openPrice < lowestBuy)
+            lowestBuy = buyPositions[i].openPrice;
+      }
+      nextBuyLevel = lowestBuy - gapSize;
+   }
+   else
+   {
+      // First buy will be one gap below current price
+      nextBuyLevel = bid - gapSize;
+   }
+   
+   if(sellCount2 > 0)
+   {
+      // Find highest sell level
+      double highestSell = sellPositions[0].openPrice;
+      for(int i = 1; i < sellCount2; i++)
+      {
+         if(sellPositions[i].openPrice > highestSell)
+            highestSell = sellPositions[i].openPrice;
+      }
+      nextSellLevel = highestSell + gapSize;
+   }
+   else
+   {
+      // First sell will be one gap above current price
+      nextSellLevel = ask + gapSize;
+   }
+   
+   ObjectSetString(0, panelPrefix + "NextBuy", OBJPROP_TEXT, "Next BUY: " + DoubleToString(nextBuyLevel, digits));
+   ObjectSetString(0, panelPrefix + "NextSell", OBJPROP_TEXT, "Next SELL: " + DoubleToString(nextSellLevel, digits));
+   
+   // Update pause button
+   if(isPaused)
+   {
+      ObjectSetString(0, panelPrefix + "PauseBtn", OBJPROP_TEXT, "▶ RESUME EA");
+      ObjectSetInteger(0, panelPrefix + "PauseBtn", OBJPROP_BGCOLOR, clrDarkGreen);
+      ObjectSetString(0, panelPrefix + "Title", OBJPROP_TEXT, "MEAN REVERSION GRID v1.0 [PAUSED]");
+      ObjectSetInteger(0, panelPrefix + "Title", OBJPROP_COLOR, clrOrange);
+   }
+   else
+   {
+      ObjectSetString(0, panelPrefix + "PauseBtn", OBJPROP_TEXT, "⏸ PAUSE EA");
+      ObjectSetInteger(0, panelPrefix + "PauseBtn", OBJPROP_BGCOLOR, clrDarkBlue);
+      ObjectSetString(0, panelPrefix + "Title", OBJPROP_TEXT, "MEAN REVERSION GRID v1.0");
+      ObjectSetInteger(0, panelPrefix + "Title", OBJPROP_COLOR, clrYellow);
+   }
 }
 
 //+------------------------------------------------------------------+
@@ -896,6 +1010,41 @@ void UpdatePanel()
 void DeletePanel()
 {
    ObjectsDeleteAll(0, panelPrefix);
+}
+
+//+------------------------------------------------------------------+
+//| REBUILD GRID                                                      |
+//+------------------------------------------------------------------+
+void RebuildGrid()
+{
+   Print("🔄 REBUILDING GRID...");
+   
+   // Clear all position tracking
+   ArrayResize(buyPositions, 0);
+   ArrayResize(sellPositions, 0);
+   
+   // Reset grid levels
+   lastBuyLevel = 0;
+   lastSellLevel = 0;
+   highestSellLevel = 0;
+   lowestBuyLevel = 0;
+   
+   // Recalculate gap based on current price
+   double currentPrice = (SymbolInfoDouble(_Symbol, SYMBOL_ASK) + SymbolInfoDouble(_Symbol, SYMBOL_BID)) / 2.0;
+   currentGapSize = currentPrice * (GridSpacingPercent / 100.0);
+   
+   // Recalculate profit/loss targets
+   individualTPDollars = currentGapSize * (IndividualTPPercent / 100.0);
+   individualSLDollars = (IndividualSLPercent > 0) ? currentGapSize * (IndividualSLPercent / 100.0) : 0;
+   globalTPDollars = currentGapSize * (GlobalTPPercent / 100.0);
+   globalSLDollars = (GlobalSLPercent > 0) ? currentGapSize * (GlobalSLPercent / 100.0) : 0;
+   
+   Print("✅ Grid rebuilt successfully!");
+   Print("   Current Price: ", DoubleToString(currentPrice, digits));
+   Print("   New Gap Size: $", DoubleToString(currentGapSize, 2));
+   Print("   Individual TP: $", DoubleToString(individualTPDollars, 2));
+   Print("   Global TP: $", DoubleToString(globalTPDollars, 2));
+   Print("   Waiting for price movement to place first orders...");
 }
 
 //+------------------------------------------------------------------+
@@ -921,6 +1070,24 @@ void OnChartEvent(const int id, const long &lparam, const double &dparam, const 
       {
          CloseAllPositions();
          ObjectSetInteger(0, panelPrefix + "CloseAllBtn", OBJPROP_STATE, false);
+         UpdatePanel();
+      }
+      else if(sparam == panelPrefix + "RebuildBtn")
+      {
+         RebuildGrid();
+         ObjectSetInteger(0, panelPrefix + "RebuildBtn", OBJPROP_STATE, false);
+         UpdatePanel();
+      }
+      else if(sparam == panelPrefix + "PauseBtn")
+      {
+         isPaused = !isPaused;
+         ObjectSetInteger(0, panelPrefix + "PauseBtn", OBJPROP_STATE, false);
+         
+         if(isPaused)
+            Print("⏸ EA PAUSED - No new positions will be opened");
+         else
+            Print("▶ EA RESUMED - Trading active");
+            
          UpdatePanel();
       }
    }
