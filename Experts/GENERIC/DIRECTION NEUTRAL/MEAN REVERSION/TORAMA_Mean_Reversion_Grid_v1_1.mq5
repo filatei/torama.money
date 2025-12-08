@@ -19,11 +19,11 @@ input double   GridSpacingPercent = 0.30;        // Grid spacing % of price
 input int      MaxPositionsPerSide = 30;         // Max positions per side (BUY or SELL)
 input double   LotSize = 0.01;                   // Lot size per position
 
-input group "=== PROFIT TARGETS (% of Account Balance) ==="
-input double   IndividualTPPercent = 0.50;       // Individual TP % of account balance (0.5 = 0.5%)
-input double   IndividualSLPercent = 0.0;        // Individual SL % of account balance (0 = disabled)
-input double   GlobalTPPercent = 2.0;            // Global TP % of account balance (2 = 2%)
-input double   GlobalSLPercent = 0.0;            // Global SL % of account balance (0 = disabled)
+input group "=== PROFIT TARGETS (Dollar Values) ==="
+input double   IndividualTPDollars = 50.0;       // Individual TP in dollars per position
+input double   IndividualSLDollars = 0.0;        // Individual SL in dollars per position (0 = disabled)
+input double   GlobalTPDollars = 200.0;          // Global TP in dollars for all positions
+input double   GlobalSLDollars = 0.0;            // Global SL in dollars for all positions (0 = disabled)
 
 input group "=== MEAN REVERSION LOGIC ==="
 input int      ProfitableCountToClose = 5;       // Close all when X positions profitable (per side)
@@ -95,10 +95,6 @@ double normalizedLotSize = 0;
 
 // Calculated values
 double currentGapSize = 0;
-double individualTPDollars = 0;
-double individualSLDollars = 0;
-double globalTPDollars = 0;
-double globalSLDollars = 0;
 
 //+------------------------------------------------------------------+
 //| EXPERT INITIALIZATION                                             |
@@ -130,13 +126,6 @@ int OnInit()
    double currentPrice = (SymbolInfoDouble(_Symbol, SYMBOL_ASK) + SymbolInfoDouble(_Symbol, SYMBOL_BID)) / 2.0;
    currentGapSize = currentPrice * (GridSpacingPercent / 100.0);
    
-   // Calculate profit/loss targets in dollars based on ACCOUNT BALANCE
-   double accountBalance = AccountInfoDouble(ACCOUNT_BALANCE);
-   individualTPDollars = accountBalance * (IndividualTPPercent / 100.0);
-   individualSLDollars = (IndividualSLPercent > 0) ? accountBalance * (IndividualSLPercent / 100.0) : 0;
-   globalTPDollars = accountBalance * (GlobalTPPercent / 100.0);
-   globalSLDollars = (GlobalSLPercent > 0) ? accountBalance * (GlobalSLPercent / 100.0) : 0;
-   
    // Validate and normalize lot size
    normalizedLotSize = NormalizeLotSize(LotSize);
    
@@ -156,10 +145,10 @@ int OnInit()
    Print("Grid Spacing: ", GridSpacingPercent, "% = $", DoubleToString(currentGapSize, 2));
    Print("Max Positions: ", MaxPositionsPerSide, " per side (", MaxPositionsPerSide * 2, " total)");
    Print("Lot Size: ", DoubleToString(normalizedLotSize, 2), " (normalized from ", DoubleToString(LotSize, 2), ")");
-   Print("Individual TP: ", IndividualTPPercent, "% of balance = $", DoubleToString(individualTPDollars, 2));
-   Print("Individual SL: ", IndividualSLPercent > 0 ? DoubleToString(IndividualSLPercent, 2) + "% of balance = $" + DoubleToString(individualSLDollars, 2) : "DISABLED");
-   Print("Global TP: ", GlobalTPPercent, "% of balance = $", DoubleToString(globalTPDollars, 2));
-   Print("Global SL: ", GlobalSLPercent > 0 ? DoubleToString(GlobalSLPercent, 2) + "% of balance = $" + DoubleToString(globalSLDollars, 2) : "DISABLED");
+   Print("Individual TP: $", DoubleToString(IndividualTPDollars, 2), " per position");
+   Print("Individual SL: ", IndividualSLDollars > 0 ? "$" + DoubleToString(IndividualSLDollars, 2) + " per position" : "DISABLED");
+   Print("Global TP: $", DoubleToString(GlobalTPDollars, 2), " total");
+   Print("Global SL: ", GlobalSLDollars > 0 ? "$" + DoubleToString(GlobalSLDollars, 2) + " total" : "DISABLED");
    Print("Session Target: ", SessionProfitPercent, "% = $", DoubleToString(sessionProfitTarget, 2));
    Print("Max Drawdown: ", MaxDrawdownPercent, "%");
    Print("═══════════════════════════════════════");
@@ -500,7 +489,7 @@ void CheckProfitablePositions()
       if(PositionSelectByTicket(buyPositions[i].ticket))
       {
          double profit = PositionGetDouble(POSITION_PROFIT);
-         if(profit >= individualTPDollars)
+         if(profit >= IndividualTPDollars)
             profitableBuys++;
       }
    }
@@ -511,7 +500,7 @@ void CheckProfitablePositions()
       if(PositionSelectByTicket(sellPositions[i].ticket))
       {
          double profit = PositionGetDouble(POSITION_PROFIT);
-         if(profit >= individualTPDollars)
+         if(profit >= IndividualTPDollars)
             profitableSells++;
       }
    }
@@ -561,14 +550,14 @@ void CheckGlobalTargets()
    }
    
    // Check global TP
-   if(GlobalTPPercent > 0 && totalProfit >= globalTPDollars)
+   if(GlobalTPDollars > 0 && totalProfit >= GlobalTPDollars)
    {
       Print("🎯 Global TP reached: $", DoubleToString(totalProfit, 2), " - Closing all positions");
       CloseAllPositions();
    }
    
    // Check global SL
-   if(GlobalSLPercent > 0 && totalLoss >= globalSLDollars)
+   if(GlobalSLDollars > 0 && totalLoss >= GlobalSLDollars)
    {
       Print("🛑 Global SL reached: -$", DoubleToString(totalLoss, 2), " - Closing all positions");
       CloseAllPositions();
@@ -1033,18 +1022,11 @@ void RebuildGrid()
    double currentPrice = (SymbolInfoDouble(_Symbol, SYMBOL_ASK) + SymbolInfoDouble(_Symbol, SYMBOL_BID)) / 2.0;
    currentGapSize = currentPrice * (GridSpacingPercent / 100.0);
    
-   // Recalculate profit/loss targets based on CURRENT ACCOUNT BALANCE
-   double accountBalance = AccountInfoDouble(ACCOUNT_BALANCE);
-   individualTPDollars = accountBalance * (IndividualTPPercent / 100.0);
-   individualSLDollars = (IndividualSLPercent > 0) ? accountBalance * (IndividualSLPercent / 100.0) : 0;
-   globalTPDollars = accountBalance * (GlobalTPPercent / 100.0);
-   globalSLDollars = (GlobalSLPercent > 0) ? accountBalance * (GlobalSLPercent / 100.0) : 0;
-   
    Print("✅ Grid rebuilt successfully!");
    Print("   Current Price: ", DoubleToString(currentPrice, digits));
    Print("   New Gap Size: $", DoubleToString(currentGapSize, 2));
-   Print("   Individual TP: $", DoubleToString(individualTPDollars, 2));
-   Print("   Global TP: $", DoubleToString(globalTPDollars, 2));
+   Print("   Individual TP: $", DoubleToString(IndividualTPDollars, 2));
+   Print("   Global TP: $", DoubleToString(GlobalTPDollars, 2));
    Print("   Waiting for price movement to place first orders...");
 }
 

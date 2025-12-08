@@ -19,11 +19,11 @@ input double   GridSpacingPercent = 0.30;        // Grid spacing % of price
 input int      MaxPositionsPerSide = 30;         // Max positions per side (BUY or SELL)
 input double   LotSize = 0.01;                   // Lot size per position
 
-input group "=== PROFIT TARGETS (% of Account Balance) ==="
-input double   IndividualTPPercent = 0.50;       // Individual TP % of account balance (0.5 = 0.5%)
-input double   IndividualSLPercent = 0.0;        // Individual SL % of account balance (0 = disabled)
-input double   GlobalTPPercent = 2.0;            // Global TP % of account balance (2 = 2%)
-input double   GlobalSLPercent = 0.0;            // Global SL % of account balance (0 = disabled)
+input group "=== PROFIT TARGETS (Dollar Values) ==="
+input double   IndividualTPDollars = 50.0;       // Individual TP in dollars per position
+input double   IndividualSLDollars = 0.0;        // Individual SL in dollars per position (0 = disabled)
+input double   GlobalTPDollars = 200.0;          // Global TP in dollars for all positions
+input double   GlobalSLDollars = 0.0;            // Global SL in dollars for all positions (0 = disabled)
 
 input group "=== MOMENTUM LOGIC ==="
 input int      ProfitableCountToClose = 5;       // Close all when X positions profitable (per side)
@@ -96,10 +96,6 @@ double normalizedLotSize = 0;
 
 // Calculated values
 double currentGapSize = 0;
-double individualTPDollars = 0;
-double individualSLDollars = 0;
-double globalTPDollars = 0;
-double globalSLDollars = 0;
 
 //+------------------------------------------------------------------+
 //| EXPERT INITIALIZATION                                             |
@@ -133,13 +129,6 @@ int OnInit()
    // Calculate gap-based values
    currentGapSize = referencePrice * (GridSpacingPercent / 100.0);
    
-   // Calculate profit/loss targets in dollars based on ACCOUNT BALANCE
-   double accountBalance = AccountInfoDouble(ACCOUNT_BALANCE);
-   individualTPDollars = accountBalance * (IndividualTPPercent / 100.0);
-   individualSLDollars = (IndividualSLPercent > 0) ? accountBalance * (IndividualSLPercent / 100.0) : 0;
-   globalTPDollars = accountBalance * (GlobalTPPercent / 100.0);
-   globalSLDollars = (GlobalSLPercent > 0) ? accountBalance * (GlobalSLPercent / 100.0) : 0;
-   
    // Validate and normalize lot size
    normalizedLotSize = NormalizeLotSize(LotSize);
    
@@ -160,10 +149,10 @@ int OnInit()
    Print("Grid Spacing: ", GridSpacingPercent, "% = $", DoubleToString(currentGapSize, 2));
    Print("Max Positions: ", MaxPositionsPerSide, " per side (", MaxPositionsPerSide * 2, " total)");
    Print("Lot Size: ", DoubleToString(normalizedLotSize, 2), " (normalized from ", DoubleToString(LotSize, 2), ")");
-   Print("Individual TP: ", IndividualTPPercent, "% of balance = $", DoubleToString(individualTPDollars, 2));
-   Print("Individual SL: ", IndividualSLPercent > 0 ? DoubleToString(IndividualSLPercent, 2) + "% of balance = $" + DoubleToString(individualSLDollars, 2) : "DISABLED");
-   Print("Global TP: ", GlobalTPPercent, "% of balance = $", DoubleToString(globalTPDollars, 2));
-   Print("Global SL: ", GlobalSLPercent > 0 ? DoubleToString(GlobalSLPercent, 2) + "% of balance = $" + DoubleToString(globalSLDollars, 2) : "DISABLED");
+   Print("Individual TP: $", DoubleToString(IndividualTPDollars, 2), " per position");
+   Print("Individual SL: ", IndividualSLDollars > 0 ? "$" + DoubleToString(IndividualSLDollars, 2) + " per position" : "DISABLED");
+   Print("Global TP: $", DoubleToString(GlobalTPDollars, 2), " total");
+   Print("Global SL: ", GlobalSLDollars > 0 ? "$" + DoubleToString(GlobalSLDollars, 2) + " total" : "DISABLED");
    Print("Session Target: ", SessionProfitPercent, "% = $", DoubleToString(sessionProfitTarget, 2));
    Print("Max Drawdown: ", MaxDrawdownPercent, "%");
    Print("═══════════════════════════════════════");
@@ -372,62 +361,81 @@ void PlaceMomentumOrders()
    
    double ask = SymbolInfoDouble(_Symbol, SYMBOL_ASK);
    double bid = SymbolInfoDouble(_Symbol, SYMBOL_BID);
+   double currentPrice = (ask + bid) / 2.0;
    
-   // MOMENTUM LOGIC: Buy when price rises above reference, Sell when price falls below reference
+   // MOMENTUM LOGIC: Only trade in the direction of movement from reference
    
-   // BUY LOGIC: Price is above reference and rising
-   if(ask > referencePrice)
+   // BUY LOGIC: Only when price is ABOVE reference (rising momentum)
+   if(currentPrice > referencePrice)
    {
-      // Calculate how many gaps above reference
-      double priceAboveRef = ask - referencePrice;
-      int gapsAbove = (int)MathFloor(priceAboveRef / currentGapSize);
-      
-      // Determine the next buy level
-      double nextBuyLevel = referencePrice + (gapsAbove + 1) * currentGapSize;
-      
-      // Check if we should place a buy order
+      // Place BUY positions as price rises
       if(ArraySize(buyPositions) < MaxPositionsPerSide)
       {
-         // If no buy positions yet, or price has moved past next level
-         if(ArraySize(buyPositions) == 0 || ask >= nextBuyLevel)
+         double nextBuyLevel = 0;
+         
+         if(ArraySize(buyPositions) == 0)
          {
-            if(lastBuyLevel == 0 || ask >= lastBuyLevel + currentGapSize)
+            // First buy when above reference
+            nextBuyLevel = referencePrice + currentGapSize;
+         }
+         else
+         {
+            // Find highest buy position and place next one above it
+            double highestBuy = buyPositions[0].openPrice;
+            for(int i = 1; i < ArraySize(buyPositions); i++)
             {
-               if(OpenPosition("BUY", ask))
-               {
-                  lastBuyLevel = ask;
-                  if(highestBuyLevel == 0 || ask > highestBuyLevel)
-                     highestBuyLevel = ask;
-               }
+               if(buyPositions[i].openPrice > highestBuy)
+                  highestBuy = buyPositions[i].openPrice;
+            }
+            nextBuyLevel = highestBuy + currentGapSize;
+         }
+         
+         // Place buy if price reached next level
+         if(ask >= nextBuyLevel && (lastBuyLevel == 0 || ask >= lastBuyLevel + currentGapSize))
+         {
+            if(OpenPosition("BUY", ask))
+            {
+               lastBuyLevel = ask;
+               if(highestBuyLevel == 0 || ask > highestBuyLevel)
+                  highestBuyLevel = ask;
             }
          }
       }
    }
    
-   // SELL LOGIC: Price is below reference and falling
-   if(bid < referencePrice)
+   // SELL LOGIC: Only when price is BELOW reference (falling momentum)
+   if(currentPrice < referencePrice)
    {
-      // Calculate how many gaps below reference
-      double priceBelowRef = referencePrice - bid;
-      int gapsBelow = (int)MathFloor(priceBelowRef / currentGapSize);
-      
-      // Determine the next sell level
-      double nextSellLevel = referencePrice - (gapsBelow + 1) * currentGapSize;
-      
-      // Check if we should place a sell order
+      // Place SELL positions as price falls
       if(ArraySize(sellPositions) < MaxPositionsPerSide)
       {
-         // If no sell positions yet, or price has moved past next level
-         if(ArraySize(sellPositions) == 0 || bid <= nextSellLevel)
+         double nextSellLevel = 0;
+         
+         if(ArraySize(sellPositions) == 0)
          {
-            if(lastSellLevel == 0 || bid <= lastSellLevel - currentGapSize)
+            // First sell when below reference
+            nextSellLevel = referencePrice - currentGapSize;
+         }
+         else
+         {
+            // Find lowest sell position and place next one below it
+            double lowestSell = sellPositions[0].openPrice;
+            for(int i = 1; i < ArraySize(sellPositions); i++)
             {
-               if(OpenPosition("SELL", bid))
-               {
-                  lastSellLevel = bid;
-                  if(lowestSellLevel == 0 || bid < lowestSellLevel)
-                     lowestSellLevel = bid;
-               }
+               if(sellPositions[i].openPrice < lowestSell)
+                  lowestSell = sellPositions[i].openPrice;
+            }
+            nextSellLevel = lowestSell - currentGapSize;
+         }
+         
+         // Place sell if price reached next level
+         if(bid <= nextSellLevel && (lastSellLevel == 0 || bid <= lastSellLevel - currentGapSize))
+         {
+            if(OpenPosition("SELL", bid))
+            {
+               lastSellLevel = bid;
+               if(lowestSellLevel == 0 || bid < lowestSellLevel)
+                  lowestSellLevel = bid;
             }
          }
       }
@@ -494,7 +502,7 @@ void CheckProfitablePositions()
       if(PositionSelectByTicket(buyPositions[i].ticket))
       {
          double profit = PositionGetDouble(POSITION_PROFIT);
-         if(profit >= individualTPDollars)
+         if(profit >= IndividualTPDollars)
             profitableBuys++;
       }
    }
@@ -505,7 +513,7 @@ void CheckProfitablePositions()
       if(PositionSelectByTicket(sellPositions[i].ticket))
       {
          double profit = PositionGetDouble(POSITION_PROFIT);
-         if(profit >= individualTPDollars)
+         if(profit >= IndividualTPDollars)
             profitableSells++;
       }
    }
@@ -555,14 +563,14 @@ void CheckGlobalTargets()
    }
    
    // Check global TP
-   if(GlobalTPPercent > 0 && totalProfit >= globalTPDollars)
+   if(GlobalTPDollars > 0 && totalProfit >= GlobalTPDollars)
    {
       Print("🎯 Global TP reached: $", DoubleToString(totalProfit, 2), " - Closing all positions");
       CloseAllPositions();
    }
    
    // Check global SL
-   if(GlobalSLPercent > 0 && totalLoss >= globalSLDollars)
+   if(GlobalSLDollars > 0 && totalLoss >= GlobalSLDollars)
    {
       Print("🛑 Global SL reached: -$", DoubleToString(totalLoss, 2), " - Closing all positions");
       CloseAllPositions();
@@ -1131,18 +1139,11 @@ void RebuildGrid()
    // Recalculate gap based on new reference price
    currentGapSize = referencePrice * (GridSpacingPercent / 100.0);
    
-   // Recalculate profit/loss targets based on CURRENT ACCOUNT BALANCE
-   double accountBalance = AccountInfoDouble(ACCOUNT_BALANCE);
-   individualTPDollars = accountBalance * (IndividualTPPercent / 100.0);
-   individualSLDollars = (IndividualSLPercent > 0) ? accountBalance * (IndividualSLPercent / 100.0) : 0;
-   globalTPDollars = accountBalance * (GlobalTPPercent / 100.0);
-   globalSLDollars = (GlobalSLPercent > 0) ? accountBalance * (GlobalSLPercent / 100.0) : 0;
-   
    Print("✅ Grid rebuilt successfully!");
    Print("   Reference Price: ", DoubleToString(referencePrice, digits));
    Print("   New Gap Size: $", DoubleToString(currentGapSize, 2));
-   Print("   Individual TP: $", DoubleToString(individualTPDollars, 2));
-   Print("   Global TP: $", DoubleToString(globalTPDollars, 2));
+   Print("   Individual TP: $", DoubleToString(IndividualTPDollars, 2));
+   Print("   Global TP: $", DoubleToString(GlobalTPDollars, 2));
    Print("   Waiting for price movement from reference...");
 }
 
