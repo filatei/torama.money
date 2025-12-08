@@ -1315,10 +1315,13 @@ void UpdatePanel()
    ObjectSetString(0, panelPrefix + "Balance", OBJPROP_TEXT, 
       "Balance: $" + DoubleToString(currentBalance, 2));
    
-   // Calculate next BUY level (MOMENTUM: Buy when above reference)
+   // Calculate next BUY level (MOMENTUM: Only buy when ABOVE reference)
    double nextBuyLevel = 0;
-   if(referencePrice > 0)
+   string nextBuyText = "Next BUY: Waiting...";
+   
+   if(referencePrice > 0 && currentPrice > referencePrice)
    {
+      // We're above reference, so BUY orders are active
       if(buyCount == 0)
       {
          // First buy at reference + 1 gap
@@ -1335,12 +1338,20 @@ void UpdatePanel()
          }
          nextBuyLevel = highestBuy + currentGapSize;
       }
+      nextBuyText = "Next BUY: " + DoubleToString(nextBuyLevel, digits);
+   }
+   else if(referencePrice > 0)
+   {
+      nextBuyText = "Next BUY: N/A (below ref)";
    }
    
-   // Calculate next SELL level (MOMENTUM: Sell when below reference)
+   // Calculate next SELL level (MOMENTUM: Only sell when BELOW reference)
    double nextSellLevel = 0;
-   if(referencePrice > 0)
+   string nextSellText = "Next SELL: Waiting...";
+   
+   if(referencePrice > 0 && currentPrice < referencePrice)
    {
+      // We're below reference, so SELL orders are active
       if(sellCount == 0)
       {
          // First sell at reference - 1 gap
@@ -1357,12 +1368,15 @@ void UpdatePanel()
          }
          nextSellLevel = lowestSell - currentGapSize;
       }
+      nextSellText = "Next SELL: " + DoubleToString(nextSellLevel, digits);
+   }
+   else if(referencePrice > 0)
+   {
+      nextSellText = "Next SELL: N/A (above ref)";
    }
    
-   ObjectSetString(0, panelPrefix + "NextBuy", OBJPROP_TEXT, 
-      "Next BUY: " + (nextBuyLevel > 0 ? DoubleToString(nextBuyLevel, digits) : "Waiting..."));
-   ObjectSetString(0, panelPrefix + "NextSell", OBJPROP_TEXT, 
-      "Next SELL: " + (nextSellLevel > 0 ? DoubleToString(nextSellLevel, digits) : "Waiting..."));
+   ObjectSetString(0, panelPrefix + "NextBuy", OBJPROP_TEXT, nextBuyText);
+   ObjectSetString(0, panelPrefix + "NextSell", OBJPROP_TEXT, nextSellText);
    
    // Update pause button
    if(isPaused)
