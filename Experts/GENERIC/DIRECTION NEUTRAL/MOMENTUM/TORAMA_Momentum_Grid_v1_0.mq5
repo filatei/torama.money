@@ -457,19 +457,48 @@ bool OpenPosition(string type, double price)
    request.magic = MagicNumber;
    request.comment = "TORAMA_Momentum";
    
+   double tp_price = 0;
+   double sl_price = 0;
+   
    if(type == "BUY")
    {
       request.type = ORDER_TYPE_BUY;
       request.price = SymbolInfoDouble(_Symbol, SYMBOL_ASK);
-      request.sl = 0;
-      request.tp = 0;
+      
+      // Calculate TP price based on dollar target
+      // TP dollars = price change * lot size * contract size (100 oz)
+      // Price change needed = TP dollars / (lot size * 100)
+      double tp_price_change = IndividualTPDollars / (normalizedLotSize * 100);
+      tp_price = request.price + tp_price_change;
+      
+      // Calculate SL price if enabled
+      if(IndividualSLDollars > 0)
+      {
+         double sl_price_change = IndividualSLDollars / (normalizedLotSize * 100);
+         sl_price = request.price - sl_price_change;
+      }
+      
+      request.tp = tp_price;
+      request.sl = sl_price;
    }
    else if(type == "SELL")
    {
       request.type = ORDER_TYPE_SELL;
       request.price = SymbolInfoDouble(_Symbol, SYMBOL_BID);
-      request.sl = 0;
-      request.tp = 0;
+      
+      // Calculate TP price
+      double tp_price_change = IndividualTPDollars / (normalizedLotSize * 100);
+      tp_price = request.price - tp_price_change;
+      
+      // Calculate SL price if enabled
+      if(IndividualSLDollars > 0)
+      {
+         double sl_price_change = IndividualSLDollars / (normalizedLotSize * 100);
+         sl_price = request.price + sl_price_change;
+      }
+      
+      request.tp = tp_price;
+      request.sl = sl_price;
    }
    
    bool success = OrderSend(request, result);
@@ -477,7 +506,9 @@ bool OpenPosition(string type, double price)
    if(success && result.retcode == TRADE_RETCODE_DONE)
    {
       Print("✅ ", type, " opened at ", DoubleToString(price, digits), 
-            " | Ticket: ", result.order, 
+            " | Ticket: ", result.order,
+            " | TP: ", DoubleToString(tp_price, digits),
+            (sl_price > 0 ? " | SL: " + DoubleToString(sl_price, digits) : ""),
             " | Gap from ref: $", DoubleToString(MathAbs(price - referencePrice), 2));
       return true;
    }
