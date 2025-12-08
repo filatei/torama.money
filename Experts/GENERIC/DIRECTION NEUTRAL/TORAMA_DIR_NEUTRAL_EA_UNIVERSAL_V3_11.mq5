@@ -344,15 +344,28 @@ void OnTick()
    // Check global TP/SL
    CheckGlobalTPSL();
    
-   // SIMPLIFIED DIRECTION LOGIC: First grid level = direction indicator
+   // SIMPLIFIED DIRECTION LOGIC: Initialize reference price ONCE when entering NEUTRAL
+   // Use a static variable to ensure it only sets once per NEUTRAL session
+   static bool referenceInitialized = false;
+   
    if(currentMode == MODE_NEUTRAL && ArraySize(positions) == 0)
    {
-      // Set reference price to current price
-      referencePrice = currentPrice;
-      highWaterMark = currentPrice;
-      lowWaterMark = currentPrice;
-      trendStartPrice = currentPrice;
-      lastProcessedLevel = currentPrice;
+      // Only set reference price ONCE when first entering NEUTRAL mode
+      if(!referenceInitialized)
+      {
+         referencePrice = currentPrice;
+         highWaterMark = currentPrice;
+         lowWaterMark = currentPrice;
+         trendStartPrice = currentPrice;
+         lastProcessedLevel = currentPrice;
+         referenceInitialized = true;
+         Print("📍 REFERENCE SET: $", DoubleToString(referencePrice, 2), " (Gap: $", DoubleToString(currentGapSize, 2), ")");
+      }
+   }
+   else
+   {
+      // Reset flag when we're not in NEUTRAL (so it can initialize again next time)
+      referenceInitialized = false;
    }
    
    // NEUTRAL MODE: Wait for price to hit first grid level (full gap)
@@ -568,8 +581,8 @@ void CheckGridLevels()
    
    if(ArraySize(positions) == 0)
    {
+      // First position in current mode - reference already set in mode entry
       shouldOpen = true;
-      referencePrice = currentPrice;
    }
    else
    {
