@@ -205,12 +205,14 @@ int OnInit()
    TimeToStruct(TimeCurrent(), time);
    currentDay = time.day;
    
-   Print("🎯 DIRECTION NEUTRAL MODE");
-   Print("Starting Mode: NEUTRAL (waiting for market move)");
-   Print("Will follow first movement: UP→BUY, DOWN→SELL");
+   Print("🎯 SIMPLIFIED GRID LOGIC");
+   Print("Starting Mode: NEUTRAL (waiting for first grid level)");
+   Print("Direction Signal: FIRST GRID BREACH (not half-movement)");
+   Print("UP by 1 grid → BUY mode | DOWN by 1 grid → SELL mode");
    Print("Auto-Flip After: ", LevelsBeforeFlip, " levels against trend");
    Print("Close On Flip: ", CloseOnFlip ? "YES (closes opposite positions)" : "NO (keeps all positions)");
    Print("Grid Spacing: ", GridSpacingPercent, "% = $", DoubleToString(currentGapSize, 2));
+   Print("First Position Opens: When price moves ±1 full grid level");
    Print("Individual TP: ", IndividualTPPercent, "% of gap = $", DoubleToString(individualTPDollars, 2));
    Print("Individual SL: ", IndividualSLPercent > 0 ? DoubleToString(IndividualSLPercent, 0) + "% of gap = $" + DoubleToString(individualSLDollars, 2) : "DISABLED");
    Print("Global TP: ", GlobalTPPercent, "% of gap = $", DoubleToString(globalTPDollars, 2));
@@ -342,7 +344,7 @@ void OnTick()
    // Check global TP/SL
    CheckGlobalTPSL();
    
-   // v3.1 DIRECTION NEUTRAL: Determine initial direction if still NEUTRAL
+   // SIMPLIFIED DIRECTION LOGIC: First grid level = direction indicator
    if(currentMode == MODE_NEUTRAL && ArraySize(positions) == 0)
    {
       // Set reference price to current price
@@ -353,75 +355,89 @@ void OnTick()
       lastProcessedLevel = currentPrice;
    }
    
-   // v3.1 NEUTRAL MODE: Detect first market move
+   // NEUTRAL MODE: Wait for price to hit first grid level (full gap)
    if(currentMode == MODE_NEUTRAL && ArraySize(positions) == 0)
    {
-      double moveThreshold = currentGapSize * 0.5; // Half a grid level movement
-      
-      if(currentPrice > referencePrice + moveThreshold)
+      // Debug logging every 100 ticks (reduce log spam)
+      static int tickCounter = 0;
+      tickCounter++;
+      if(tickCounter % 100 == 0)
       {
-         // Price moved UP significantly -> Enter BUY mode
+         Print("⚪ NEUTRAL: Ref=$", DoubleToString(referencePrice, 2), 
+               " Current=$", DoubleToString(currentPrice, 2),
+               " Gap=$", DoubleToString(currentGapSize, 2),
+               " Need: Up≥$", DoubleToString(referencePrice + currentGapSize, 2),
+               " or Down≤$", DoubleToString(referencePrice - currentGapSize, 2));
+      }
+      
+      // Price moved UP by one full grid level → Enter BUY mode
+      if(currentPrice >= referencePrice + currentGapSize)
+      {
          currentMode = MODE_BUY;
+         referencePrice = currentPrice; // New reference at entry
          trendStartPrice = currentPrice;
          highWaterMark = currentPrice;
          levelsAgainstTrend = 0;
          lastProcessedLevel = currentPrice;
-         Print("🔵 MARKET MOVED UP → Entering BUY MODE at $", DoubleToString(currentPrice, 2));
+         Print("🔵 FIRST GRID UP BREACHED → BUY MODE at $", DoubleToString(currentPrice, 2));
+         Print("   Ref was: $", DoubleToString(referencePrice - currentGapSize, 2), 
+               " | Moved: $", DoubleToString(currentGapSize, 2));
          
          // Open first BUY position
          if(OpenPosition(ORDER_TYPE_BUY, currentPrice))
          {
             Print("✅ First BUY position opened");
          }
+         return;
       }
-      else if(currentPrice < referencePrice - moveThreshold)
+      // Price moved DOWN by one full grid level → Enter SELL mode
+      else if(currentPrice <= referencePrice - currentGapSize)
       {
-         // Price moved DOWN significantly → Enter SELL mode
          currentMode = MODE_SELL;
+         referencePrice = currentPrice; // New reference at entry
          trendStartPrice = currentPrice;
          lowWaterMark = currentPrice;
          levelsAgainstTrend = 0;
          lastProcessedLevel = currentPrice;
-         Print("🔴 MARKET MOVED DOWN → Entering SELL MODE at $", DoubleToString(currentPrice, 2));
+         Print("🔴 FIRST GRID DOWN BREACHED → SELL MODE at $", DoubleToString(currentPrice, 2));
+         Print("   Ref was: $", DoubleToString(referencePrice + currentGapSize, 2),
+               " | Moved: $", DoubleToString(currentGapSize, 2));
          
          // Open first SELL position
          if(OpenPosition(ORDER_TYPE_SELL, currentPrice))
          {
             Print("✅ First SELL position opened");
          }
+         return;
       }
       
-      return; // Wait for next tick
+      return; // Still waiting for first grid level breach
    }
    
-   // v3.0 TREND ADAPTIVE: Update water marks and check for trend reversal
+   // SIMPLIFIED REVERSAL LOGIC: Track levels against current mode
    if(currentMode == MODE_BUY)
    {
-      // Update high water mark
+      // Update high water mark in BUY mode
       if(currentPrice > highWaterMark)
       {
          highWaterMark = currentPrice;
-         levelsAgainstTrend = 0; // Reset counter when moving with trend
+         levelsAgainstTrend = 0; // Reset when making new highs
          lastProcessedLevel = currentPrice;
       }
       
-      // Check if price moved DOWN by grid levels from high water mark
-      double distanceFromHigh = highWaterMark - currentPrice;
-      int currentLevelsDown = (int)MathFloor(distanceFromHigh / currentGapSize);
-      
-      // Only process new levels (not already counted)
+      // Check if price dropped from high by enough levels
       if(currentPrice < lastProcessedLevel - currentGapSize)
       {
          int newLevels = (int)MathFloor((lastProcessedLevel - currentPrice) / currentGapSize);
          levelsAgainstTrend += newLevels;
          lastProcessedLevel = currentPrice;
          
-         Print("📉 BUY mode: Price dropped ", newLevels, " level(s). Total levels against trend: ", levelsAgainstTrend);
+         Print("📉 BUY mode: Dropped ", newLevels, " level(s). Total against: ", levelsAgainstTrend, "/", LevelsBeforeFlip);
          
-         // Check if we should flip to SELL
+         // Flip to SELL if dropped enough levels
          if(levelsAgainstTrend >= LevelsBeforeFlip)
          {
-            Print("🔄 FLIPPING TO SELL MODE after ", levelsAgainstTrend, " levels against BUY trend");
+            Print("🔄 FLIPPING TO SELL after ", levelsAgainstTrend, " levels down from high");
             
             if(CloseOnFlip)
             {
@@ -430,6 +446,7 @@ void OnTick()
             }
             
             currentMode = MODE_SELL;
+            referencePrice = currentPrice;
             trendStartPrice = currentPrice;
             lowWaterMark = currentPrice;
             levelsAgainstTrend = 0;
@@ -439,31 +456,27 @@ void OnTick()
    }
    else if(currentMode == MODE_SELL)
    {
-      // Update low water mark
+      // Update low water mark in SELL mode
       if(currentPrice < lowWaterMark)
       {
          lowWaterMark = currentPrice;
-         levelsAgainstTrend = 0; // Reset counter when moving with trend
+         levelsAgainstTrend = 0; // Reset when making new lows
          lastProcessedLevel = currentPrice;
       }
       
-      // Check if price moved UP by grid levels from low water mark
-      double distanceFromLow = currentPrice - lowWaterMark;
-      int currentLevelsUp = (int)MathFloor(distanceFromLow / currentGapSize);
-      
-      // Only process new levels (not already counted)
+      // Check if price rose from low by enough levels
       if(currentPrice > lastProcessedLevel + currentGapSize)
       {
          int newLevels = (int)MathFloor((currentPrice - lastProcessedLevel) / currentGapSize);
          levelsAgainstTrend += newLevels;
          lastProcessedLevel = currentPrice;
          
-         Print("📈 SELL mode: Price rose ", newLevels, " level(s). Total levels against trend: ", levelsAgainstTrend);
+         Print("📈 SELL mode: Rose ", newLevels, " level(s). Total against: ", levelsAgainstTrend, "/", LevelsBeforeFlip);
          
-         // Check if we should flip to BUY
+         // Flip to BUY if rose enough levels
          if(levelsAgainstTrend >= LevelsBeforeFlip)
          {
-            Print("🔄 FLIPPING TO BUY MODE after ", levelsAgainstTrend, " levels against SELL trend");
+            Print("🔄 FLIPPING TO BUY after ", levelsAgainstTrend, " levels up from low");
             
             if(CloseOnFlip)
             {
@@ -472,6 +485,7 @@ void OnTick()
             }
             
             currentMode = MODE_BUY;
+            referencePrice = currentPrice;
             trendStartPrice = currentPrice;
             highWaterMark = currentPrice;
             levelsAgainstTrend = 0;
@@ -931,6 +945,7 @@ void TogglePanelVisibility()
       "SwitchBtn", "CloseBtn", "PauseBtn", "CloseAllBtn",
       "PriceLabel", "Price", "GridLabel", "GridSpacing",
       "WaterMark", "FlipLabel", "FlipLevel",
+      "GridRefLabel", "GridRef",
       "TrendLabel", "TrendInfo",
       "PositionsLabel", "Positions",
       "PnLLabel", "PnL",
@@ -1009,6 +1024,10 @@ void CreatePanel()
    CreateLabel(panelPrefix + "FlipLabel", x + 210, y + 85, "Flip@:", clrGray, 8, "Arial");
    CreateLabel(panelPrefix + "FlipLevel", x + 250, y + 85, "0 lvls", clrLimeGreen, 9, "Arial Bold");
    
+   // Grid Reference Price - Base price for all grid calculations
+   CreateLabel(panelPrefix + "GridRefLabel", x + 10, y + 107, "Ref:", clrGray, 8, "Arial");
+   CreateLabel(panelPrefix + "GridRef", x + 40, y + 107, "$0", clrCyan, 9, "Arial Bold");
+   
    // Trend counter
    CreateLabel(panelPrefix + "TrendLabel", x + 10, y + 140, "Trend:", clrGray, 9, "Arial");
    CreateLabel(panelPrefix + "TrendInfo", x + 60, y + 140, "0/2 levels", clrWhite, 9, "Arial");
@@ -1041,8 +1060,8 @@ void CreatePanel()
    CreateLabel(panelPrefix + "LotLabel", x + 10, y + 230, "Lot:", clrGray, 8, "Arial");
    CreateLabel(panelPrefix + "LotSize", x + 40, y + 230, DoubleToString(validatedLotSize, 2), clrLightBlue, 9, "Arial Bold");
    
-   // TORAMA CAPITAL - Bottom right corner inside panel
-   CreateLabel(panelPrefix + "Brand", x + width - 135, y + height - 30, "TORAMA CAPITAL", clrGold, 10, "Arial Black");
+   // TORAMA CAPITAL - Bottom right corner inside panel with proper margin
+   CreateLabel(panelPrefix + "Brand", x + width - 145, y + height - 30, "TORAMA CAPITAL", clrGold, 10, "Arial Black");
    
    // Toggle hint - Bottom left, small text
    CreateLabel(panelPrefix + "ToggleHint", x + 10, y + height - 15, "Press H to hide/show", clrDimGray, 7, "Arial");
@@ -1121,6 +1140,10 @@ void UpdatePanel()
    string waterMarkLabel = (currentMode == MODE_NEUTRAL) ? "Ref" : (currentMode == MODE_BUY) ? "High" : "Low";
    ObjectSetString(0, panelPrefix + "WaterMark", OBJPROP_TEXT,
                    waterMarkLabel + ": $" + DoubleToString(waterMark, digits));
+   
+   // Grid Reference Price - Shows the base price from which all grid levels are calculated
+   ObjectSetString(0, panelPrefix + "GridRef", OBJPROP_TEXT,
+                   "$" + DoubleToString(referencePrice, digits));
    
    // Flip level info
    int levelsToFlip = LevelsBeforeFlip - levelsAgainstTrend;
