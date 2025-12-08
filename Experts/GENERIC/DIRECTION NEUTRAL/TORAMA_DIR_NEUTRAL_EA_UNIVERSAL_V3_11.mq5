@@ -97,6 +97,7 @@ bool isPaused = false;
 
 // Panel
 string panelPrefix = "TORAMA_";
+bool panelVisible = true;  // Toggle with 'H' key
 
 // v3.11: Lot size validation
 double validatedLotSize = 0;
@@ -833,6 +834,18 @@ void ClosePosition(ulong ticket)
 //+------------------------------------------------------------------+
 void OnChartEvent(const int id, const long &lparam, const double &dparam, const string &sparam)
 {
+   // Handle keyboard events for panel toggle
+   if(id == CHARTEVENT_KEYDOWN)
+   {
+      // H key = 72, h key = 104
+      if(lparam == 72 || lparam == 104)
+      {
+         panelVisible = !panelVisible;
+         TogglePanelVisibility();
+         Print(panelVisible ? "👁️ Panel shown" : "👁️ Panel hidden (Press H to show)");
+      }
+   }
+   
    if(id == CHARTEVENT_OBJECT_CLICK)
    {
       if(sparam == panelPrefix + "SwitchBtn")
@@ -908,6 +921,41 @@ void OnChartEvent(const int id, const long &lparam, const double &dparam, const 
 }
 
 //+------------------------------------------------------------------+
+//| TOGGLE PANEL VISIBILITY                                          |
+//+------------------------------------------------------------------+
+void TogglePanelVisibility()
+{
+   // Get list of all panel objects
+   string objects[] = {
+      "Background", "Title", "Status", "ModeLabel", "ModeValue",
+      "SwitchBtn", "CloseBtn", "PauseBtn", "CloseAllBtn",
+      "PriceLabel", "Price", "GridLabel", "GridSpacing",
+      "WaterMark", "FlipLabel", "FlipLevel",
+      "TrendLabel", "TrendInfo",
+      "PositionsLabel", "Positions",
+      "PnLLabel", "PnL",
+      "EquityLabel", "Equity",
+      "DDLabel", "DD",
+      "SessionLabel", "SessionProfit",
+      "TargetLabel", "SessionTarget",
+      "LotLabel", "LotSize",
+      "Brand", "ToggleHint"
+   };
+   
+   // Toggle visibility for all panel objects
+   for(int i = 0; i < ArraySize(objects); i++)
+   {
+      string objName = panelPrefix + objects[i];
+      if(ObjectFind(0, objName) >= 0)
+      {
+         ObjectSetInteger(0, objName, OBJPROP_TIMEFRAMES, panelVisible ? OBJ_ALL_PERIODS : OBJ_NO_PERIODS);
+      }
+   }
+   
+   ChartRedraw();
+}
+
+//+------------------------------------------------------------------+
 //| CREATE PANEL                                                      |
 //+------------------------------------------------------------------+
 void CreatePanel()
@@ -917,7 +965,7 @@ void CreatePanel()
    int width = 320;
    int height = 270;
    
-   // Main panel background - DARKER for better contrast
+   // Main panel background - SOLID BLACK, on top of all chart elements
    ObjectCreate(0, panelPrefix + "Background", OBJ_RECTANGLE_LABEL, 0, 0, 0);
    ObjectSetInteger(0, panelPrefix + "Background", OBJPROP_XDISTANCE, x);
    ObjectSetInteger(0, panelPrefix + "Background", OBJPROP_YDISTANCE, y);
@@ -927,8 +975,10 @@ void CreatePanel()
    ObjectSetInteger(0, panelPrefix + "Background", OBJPROP_BORDER_TYPE, BORDER_FLAT);
    ObjectSetInteger(0, panelPrefix + "Background", OBJPROP_COLOR, clrGold);
    ObjectSetInteger(0, panelPrefix + "Background", OBJPROP_WIDTH, 2);
-   ObjectSetInteger(0, panelPrefix + "Background", OBJPROP_BACK, true);
+   ObjectSetInteger(0, panelPrefix + "Background", OBJPROP_BACK, false);  // false = on top of chart
    ObjectSetInteger(0, panelPrefix + "Background", OBJPROP_SELECTABLE, false);
+   ObjectSetInteger(0, panelPrefix + "Background", OBJPROP_HIDDEN, false);
+   ObjectSetInteger(0, panelPrefix + "Background", OBJPROP_ZORDER, 0);  // Top layer
    
    // Header - BIGGER and BOLDER
    CreateLabel(panelPrefix + "Title", x + 10, y + 8, EA_NAME + " v" + EA_VERSION, clrGold, 12, "Arial Black");
@@ -987,12 +1037,15 @@ void CreatePanel()
    CreateLabel(panelPrefix + "TargetLabel", x + 180, y + 200, "Target:", clrGray, 9, "Arial");
    CreateLabel(panelPrefix + "SessionTarget", x + 230, y + 200, "$0", clrGray, 9, "Arial");
    
-   // TORAMA CAPITAL - BOLD and BIG on bottom
-   CreateLabel(panelPrefix + "Brand", x + 215, y + 230, "TORAMA CAPITAL", clrGold, 11, "Arial Black");
-   
-   // v3.11: LOT SIZE INDICATOR
+   // v3.11: LOT SIZE INDICATOR (bottom left area)
    CreateLabel(panelPrefix + "LotLabel", x + 10, y + 230, "Lot:", clrGray, 8, "Arial");
    CreateLabel(panelPrefix + "LotSize", x + 40, y + 230, DoubleToString(validatedLotSize, 2), clrLightBlue, 9, "Arial Bold");
+   
+   // TORAMA CAPITAL - Bottom right corner inside panel
+   CreateLabel(panelPrefix + "Brand", x + width - 135, y + height - 30, "TORAMA CAPITAL", clrGold, 10, "Arial Black");
+   
+   // Toggle hint - Bottom left, small text
+   CreateLabel(panelPrefix + "ToggleHint", x + 10, y + height - 15, "Press H to hide/show", clrDimGray, 7, "Arial");
 }
 
 //+------------------------------------------------------------------+
