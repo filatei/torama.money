@@ -743,8 +743,8 @@ void CreatePanel()
    int width = 340;
    int height = 340;
    
-   // Background
-   CreateRectangle(panelPrefix + "Background", x, y, width, height, clrBlack, clrDarkSlateGray, 2);
+   // Background - solid dark background
+   CreateRectangle(panelPrefix + "Background", x, y, width, height, C'20,20,30', clrGold, 2);
    
    // Title bar
    CreateLabel(panelPrefix + "Title", x + 10, y + 10, "TORAMA AGGRESSIVE TRADER v" + EA_VERSION, clrGold, 11, "Arial Bold");
@@ -977,7 +977,7 @@ void CreateRectangle(string name, int x, int y, int width, int height, color bgC
    ObjectSetInteger(0, name, OBJPROP_WIDTH, borderWidth);
    ObjectSetInteger(0, name, OBJPROP_CORNER, CORNER_LEFT_UPPER);
    ObjectSetInteger(0, name, OBJPROP_SELECTABLE, false);
-   ObjectSetInteger(0, name, OBJPROP_BACK, true);
+   ObjectSetInteger(0, name, OBJPROP_BACK, false);  // Changed to false - panel on top
 }
 
 //+------------------------------------------------------------------+
