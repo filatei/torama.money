@@ -274,6 +274,46 @@ void OnTick()
 }
 
 //+------------------------------------------------------------------+
+//| SAFE HELPER FUNCTIONS - ERROR HANDLING                            |
+//+------------------------------------------------------------------+
+
+// Safe price retrieval with validation
+double GetSafePrice(ENUM_SYMBOL_INFO_DOUBLE price_type)
+{
+   double price = SymbolInfoDouble(_Symbol, price_type);
+   if(price <= 0)
+   {
+      Print("❌ ERROR: Invalid price retrieved for ", EnumToString(price_type));
+      return 0;
+   }
+   return price;
+}
+
+// Safe account info with validation
+double GetSafeAccountInfo(ENUM_ACCOUNT_INFO_DOUBLE info_type)
+{
+   double value = AccountInfoDouble(info_type);
+   if(value < 0)
+   {
+      Print("❌ ERROR: Invalid account info for ", EnumToString(info_type));
+      return 0;
+   }
+   return value;
+}
+
+// Safe position ticket retrieval
+ulong GetSafePositionTicket(int index)
+{
+   ulong ticket = PositionGetTicket(index);
+   if(ticket <= 0)
+   {
+      // Position already closed or invalid index
+      return 0;
+   }
+   return ticket;
+}
+
+//+------------------------------------------------------------------+
 //| INITIALIZE SYMBOL PROPERTIES                                      |
 //+------------------------------------------------------------------+
 bool InitializeSymbolProperties()
@@ -285,6 +325,37 @@ bool InitializeSymbolProperties()
    minLot = SymbolInfoDouble(_Symbol, SYMBOL_VOLUME_MIN);
    maxLot = SymbolInfoDouble(_Symbol, SYMBOL_VOLUME_MAX);
    lotStep = SymbolInfoDouble(_Symbol, SYMBOL_VOLUME_STEP);
+   
+   // CRITICAL VALIDATION
+   if(pointValue <= 0)
+   {
+      Print("❌ CRITICAL: Invalid SYMBOL_POINT value: ", pointValue);
+      return false;
+   }
+   
+   if(tickSize <= 0)
+   {
+      Print("❌ CRITICAL: Invalid SYMBOL_TRADE_TICK_SIZE: ", tickSize);
+      return false;
+   }
+   
+   if(minLot <= 0 || maxLot <= 0)
+   {
+      Print("❌ CRITICAL: Invalid lot size limits - Min: ", minLot, " Max: ", maxLot);
+      return false;
+   }
+   
+   if(lotStep <= 0)
+   {
+      Print("❌ CRITICAL: Invalid SYMBOL_VOLUME_STEP: ", lotStep, " - Setting to 0.01");
+      lotStep = 0.01; // Safe fallback
+   }
+   
+   if(digits < 0 || digits > 8)
+   {
+      Print("⚠️ WARNING: Unusual digits value: ", digits, " - Using 5");
+      digits = 5;
+   }
    
    Print("📊 Symbol Properties:");
    Print("   Point: ", pointValue);
@@ -303,9 +374,31 @@ bool InitializeSymbolProperties()
 //+------------------------------------------------------------------+
 double NormalizeLotSize(double lots)
 {
+   // Validate input
+   if(lots <= 0)
+   {
+      Print("❌ ERROR: Invalid lot size input: ", lots, " - Using minimum");
+      return minLot;
+   }
+   
+   // Protect against division by zero
+   if(lotStep <= 0)
+   {
+      Print("❌ CRITICAL: lotStep is zero or negative - Using default 0.01");
+      lotStep = 0.01;
+   }
+   
    double normalizedLot = MathFloor(lots / lotStep) * lotStep;
    normalizedLot = MathMax(normalizedLot, minLot);
    normalizedLot = MathMin(normalizedLot, maxLot);
+   
+   // Final validation
+   if(normalizedLot < minLot)
+   {
+      Print("⚠️ WARNING: Normalized lot ", normalizedLot, " below minimum - Using ", minLot);
+      normalizedLot = minLot;
+   }
+   
    return NormalizeDouble(normalizedLot, 2);
 }
 
@@ -317,18 +410,38 @@ void SyncPositions()
    ArrayResize(buyPositions, 0);
    ArrayResize(sellPositions, 0);
    
-   for(int i = PositionsTotal() - 1; i >= 0; i--)
+   int totalPositions = PositionsTotal();
+   if(totalPositions < 0)
    {
-      ulong ticket = PositionGetTicket(i);
-      if(ticket <= 0) continue;
+      Print("❌ ERROR: PositionsTotal returned negative value");
+      return;
+   }
+   
+   for(int i = totalPositions - 1; i >= 0; i--)
+   {
+      ulong ticket = GetSafePositionTicket(i);
+      if(ticket <= 0) continue; // Position already closed or invalid
       
+      // Validate symbol matches
       if(PositionGetString(POSITION_SYMBOL) != _Symbol) continue;
+      
+      // Validate magic number
       if(PositionGetInteger(POSITION_MAGIC) != MagicNumber) continue;
+      
+      // Get position details with validation
+      double openPrice = PositionGetDouble(POSITION_PRICE_OPEN);
+      double volume = PositionGetDouble(POSITION_VOLUME);
+      
+      if(openPrice <= 0 || volume <= 0)
+      {
+         Print("⚠️ WARNING: Invalid position data - Ticket: ", ticket);
+         continue;
+      }
       
       PositionInfo pos;
       pos.ticket = ticket;
-      pos.openPrice = PositionGetDouble(POSITION_PRICE_OPEN);
-      pos.lotSize = PositionGetDouble(POSITION_VOLUME);
+      pos.openPrice = openPrice;
+      pos.lotSize = volume;
       pos.type = (int)PositionGetInteger(POSITION_TYPE);
       
       if(pos.type == POSITION_TYPE_BUY)
@@ -447,6 +560,29 @@ void PlaceMomentumOrders()
 //+------------------------------------------------------------------+
 bool OpenPosition(string type, double price)
 {
+   // Validate inputs
+   if(type != "BUY" && type != "SELL")
+   {
+      Print("❌ ERROR: Invalid position type: ", type);
+      return false;
+   }
+   
+   if(normalizedLotSize <= 0)
+   {
+      Print("❌ ERROR: Invalid lot size: ", normalizedLotSize);
+      return false;
+   }
+   
+   // Get fresh prices with validation
+   double ask = GetSafePrice(SYMBOL_ASK);
+   double bid = GetSafePrice(SYMBOL_BID);
+   
+   if(ask <= 0 || bid <= 0)
+   {
+      Print("❌ ERROR: Invalid prices - Ask: ", ask, " Bid: ", bid);
+      return false;
+   }
+   
    MqlTradeRequest request = {};
    MqlTradeResult result = {};
    
@@ -456,67 +592,120 @@ bool OpenPosition(string type, double price)
    request.deviation = 50;
    request.magic = MagicNumber;
    request.comment = "TORAMA_Momentum";
+   request.type_filling = ORDER_FILLING_FOK; // Fill or Kill
    
    double tp_price = 0;
    double sl_price = 0;
+   double entry_price = 0;
    
    if(type == "BUY")
    {
       request.type = ORDER_TYPE_BUY;
-      request.price = SymbolInfoDouble(_Symbol, SYMBOL_ASK);
+      request.price = ask;
+      entry_price = ask;
       
-      // Calculate TP price based on dollar target
-      // TP dollars = price change * lot size * contract size (100 oz)
-      // Price change needed = TP dollars / (lot size * 100)
-      double tp_price_change = IndividualTPDollars / (normalizedLotSize * 100);
-      tp_price = request.price + tp_price_change;
-      
-      // Calculate SL price if enabled
-      if(IndividualSLDollars > 0)
+      // Calculate TP with validation
+      if(normalizedLotSize > 0 && IndividualTPDollars > 0)
       {
-         double sl_price_change = IndividualSLDollars / (normalizedLotSize * 100);
-         sl_price = request.price - sl_price_change;
+         double tp_price_change = IndividualTPDollars / (normalizedLotSize * 100);
+         tp_price = ask + tp_price_change;
       }
       
-      request.tp = tp_price;
-      request.sl = sl_price;
+      // Calculate SL if enabled
+      if(IndividualSLDollars > 0 && normalizedLotSize > 0)
+      {
+         double sl_price_change = IndividualSLDollars / (normalizedLotSize * 100);
+         sl_price = ask - sl_price_change;
+      }
    }
-   else if(type == "SELL")
+   else // SELL
    {
       request.type = ORDER_TYPE_SELL;
-      request.price = SymbolInfoDouble(_Symbol, SYMBOL_BID);
+      request.price = bid;
+      entry_price = bid;
       
-      // Calculate TP price
-      double tp_price_change = IndividualTPDollars / (normalizedLotSize * 100);
-      tp_price = request.price - tp_price_change;
-      
-      // Calculate SL price if enabled
-      if(IndividualSLDollars > 0)
+      // Calculate TP with validation
+      if(normalizedLotSize > 0 && IndividualTPDollars > 0)
       {
-         double sl_price_change = IndividualSLDollars / (normalizedLotSize * 100);
-         sl_price = request.price + sl_price_change;
+         double tp_price_change = IndividualTPDollars / (normalizedLotSize * 100);
+         tp_price = bid - tp_price_change;
       }
       
-      request.tp = tp_price;
-      request.sl = sl_price;
+      // Calculate SL if enabled
+      if(IndividualSLDollars > 0 && normalizedLotSize > 0)
+      {
+         double sl_price_change = IndividualSLDollars / (normalizedLotSize * 100);
+         sl_price = bid + sl_price_change;
+      }
    }
    
-   bool success = OrderSend(request, result);
+   // Validate TP/SL distances
+   double minDistance = SymbolInfoInteger(_Symbol, SYMBOL_TRADE_STOPS_LEVEL) * pointValue;
    
-   if(success && result.retcode == TRADE_RETCODE_DONE)
+   if(tp_price > 0)
    {
-      Print("✅ ", type, " opened at ", DoubleToString(price, digits), 
-            " | Ticket: ", result.order,
-            " | TP: ", DoubleToString(tp_price, digits),
-            (sl_price > 0 ? " | SL: " + DoubleToString(sl_price, digits) : ""),
-            " | Gap from ref: $", DoubleToString(MathAbs(price - referencePrice), 2));
-      return true;
+      double tp_distance = MathAbs(tp_price - entry_price);
+      if(tp_distance < minDistance)
+      {
+         Print("⚠️ WARNING: TP too close to entry. Distance: ", tp_distance, " Min: ", minDistance);
+         tp_price = 0; // Disable TP if too close
+      }
    }
-   else
+   
+   if(sl_price > 0)
    {
-      Print("❌ Failed to open ", type, " | Error: ", TradeRetcodeDescription(result.retcode));
+      double sl_distance = MathAbs(sl_price - entry_price);
+      if(sl_distance < minDistance)
+      {
+         Print("⚠️ WARNING: SL too close to entry. Distance: ", sl_distance, " Min: ", minDistance);
+         sl_price = 0; // Disable SL if too close
+      }
+   }
+   
+   request.tp = tp_price;
+   request.sl = sl_price;
+   
+   // Try to send order with retry logic
+   int maxRetries = 3;
+   for(int retry = 0; retry < maxRetries; retry++)
+   {
+      bool success = OrderSend(request, result);
+      
+      if(success && result.retcode == TRADE_RETCODE_DONE)
+      {
+         Print("✅ ", type, " opened at ", DoubleToString(entry_price, digits), 
+               " | Ticket: ", result.order,
+               " | TP: ", DoubleToString(tp_price, digits),
+               (sl_price > 0 ? " | SL: " + DoubleToString(sl_price, digits) : ""),
+               " | Gap from ref: $", DoubleToString(MathAbs(entry_price - referencePrice), 2));
+         return true;
+      }
+      
+      // Handle specific error cases
+      if(result.retcode == TRADE_RETCODE_REQUOTE || 
+         result.retcode == TRADE_RETCODE_PRICE_CHANGED ||
+         result.retcode == TRADE_RETCODE_PRICE_OFF)
+      {
+         Print("⚠️ RETRY ", retry + 1, "/", maxRetries, ": ", TradeRetcodeDescription(result.retcode));
+         
+         // Update price and retry
+         if(type == "BUY")
+            request.price = GetSafePrice(SYMBOL_ASK);
+         else
+            request.price = GetSafePrice(SYMBOL_BID);
+            
+         Sleep(100); // Small delay before retry
+         continue;
+      }
+      
+      // Non-retryable error
+      Print("❌ Failed to open ", type, " | Error: ", TradeRetcodeDescription(result.retcode), 
+            " | Retcode: ", result.retcode);
       return false;
    }
+   
+   Print("❌ Failed to open ", type, " after ", maxRetries, " retries");
+   return false;
 }
 
 //+------------------------------------------------------------------+
@@ -891,7 +1080,35 @@ void CreatePanel()
    ObjectSetInteger(0, panelPrefix + "Balance", OBJPROP_SELECTABLE, false);
    ObjectSetInteger(0, panelPrefix + "Balance", OBJPROP_HIDDEN, true);
    ObjectSetInteger(0, panelPrefix + "Balance", OBJPROP_ZORDER, 1);
-   yOffset += 30;
+   yOffset += 25;
+   
+   // Next BUY level
+   ObjectCreate(0, panelPrefix + "NextBuy", OBJ_LABEL, 0, 0, 0);
+   ObjectSetInteger(0, panelPrefix + "NextBuy", OBJPROP_XDISTANCE, panelX + 20);
+   ObjectSetInteger(0, panelPrefix + "NextBuy", OBJPROP_YDISTANCE, panelY + yOffset);
+   ObjectSetString(0, panelPrefix + "NextBuy", OBJPROP_TEXT, "Next BUY: 0.00000");
+   ObjectSetInteger(0, panelPrefix + "NextBuy", OBJPROP_COLOR, clrLime);
+   ObjectSetInteger(0, panelPrefix + "NextBuy", OBJPROP_FONTSIZE, 9);
+   ObjectSetString(0, panelPrefix + "NextBuy", OBJPROP_FONT, "Arial");
+   ObjectSetInteger(0, panelPrefix + "NextBuy", OBJPROP_CORNER, CORNER_LEFT_UPPER);
+   ObjectSetInteger(0, panelPrefix + "NextBuy", OBJPROP_SELECTABLE, false);
+   ObjectSetInteger(0, panelPrefix + "NextBuy", OBJPROP_HIDDEN, true);
+   ObjectSetInteger(0, panelPrefix + "NextBuy", OBJPROP_ZORDER, 1);
+   yOffset += 18;
+   
+   // Next SELL level
+   ObjectCreate(0, panelPrefix + "NextSell", OBJ_LABEL, 0, 0, 0);
+   ObjectSetInteger(0, panelPrefix + "NextSell", OBJPROP_XDISTANCE, panelX + 20);
+   ObjectSetInteger(0, panelPrefix + "NextSell", OBJPROP_YDISTANCE, panelY + yOffset);
+   ObjectSetString(0, panelPrefix + "NextSell", OBJPROP_TEXT, "Next SELL: 0.00000");
+   ObjectSetInteger(0, panelPrefix + "NextSell", OBJPROP_COLOR, clrRed);
+   ObjectSetInteger(0, panelPrefix + "NextSell", OBJPROP_FONTSIZE, 9);
+   ObjectSetString(0, panelPrefix + "NextSell", OBJPROP_FONT, "Arial");
+   ObjectSetInteger(0, panelPrefix + "NextSell", OBJPROP_CORNER, CORNER_LEFT_UPPER);
+   ObjectSetInteger(0, panelPrefix + "NextSell", OBJPROP_SELECTABLE, false);
+   ObjectSetInteger(0, panelPrefix + "NextSell", OBJPROP_HIDDEN, true);
+   ObjectSetInteger(0, panelPrefix + "NextSell", OBJPROP_ZORDER, 1);
+   yOffset += 25;
    
    // Separator line 2
    ObjectCreate(0, panelPrefix + "Sep2", OBJ_EDIT, 0, 0, 0);
@@ -1098,6 +1315,55 @@ void UpdatePanel()
    ObjectSetString(0, panelPrefix + "Balance", OBJPROP_TEXT, 
       "Balance: $" + DoubleToString(currentBalance, 2));
    
+   // Calculate next BUY level (MOMENTUM: Buy when above reference)
+   double nextBuyLevel = 0;
+   if(referencePrice > 0)
+   {
+      if(buyCount == 0)
+      {
+         // First buy at reference + 1 gap
+         nextBuyLevel = referencePrice + currentGapSize;
+      }
+      else
+      {
+         // Find highest buy position
+         double highestBuy = buyPositions[0].openPrice;
+         for(int i = 1; i < buyCount; i++)
+         {
+            if(buyPositions[i].openPrice > highestBuy)
+               highestBuy = buyPositions[i].openPrice;
+         }
+         nextBuyLevel = highestBuy + currentGapSize;
+      }
+   }
+   
+   // Calculate next SELL level (MOMENTUM: Sell when below reference)
+   double nextSellLevel = 0;
+   if(referencePrice > 0)
+   {
+      if(sellCount == 0)
+      {
+         // First sell at reference - 1 gap
+         nextSellLevel = referencePrice - currentGapSize;
+      }
+      else
+      {
+         // Find lowest sell position
+         double lowestSell = sellPositions[0].openPrice;
+         for(int i = 1; i < sellCount; i++)
+         {
+            if(sellPositions[i].openPrice < lowestSell)
+               lowestSell = sellPositions[i].openPrice;
+         }
+         nextSellLevel = lowestSell - currentGapSize;
+      }
+   }
+   
+   ObjectSetString(0, panelPrefix + "NextBuy", OBJPROP_TEXT, 
+      "Next BUY: " + (nextBuyLevel > 0 ? DoubleToString(nextBuyLevel, digits) : "Waiting..."));
+   ObjectSetString(0, panelPrefix + "NextSell", OBJPROP_TEXT, 
+      "Next SELL: " + (nextSellLevel > 0 ? DoubleToString(nextSellLevel, digits) : "Waiting..."));
+   
    // Update pause button
    if(isPaused)
    {
@@ -1163,12 +1429,35 @@ void RebuildGrid()
    highestBuyLevel = 0;
    lowestSellLevel = 0;
    
-   // Reset reference price to current
-   double currentPrice = (SymbolInfoDouble(_Symbol, SYMBOL_ASK) + SymbolInfoDouble(_Symbol, SYMBOL_BID)) / 2.0;
+   // Reset reference price to current with validation
+   double ask = GetSafePrice(SYMBOL_ASK);
+   double bid = GetSafePrice(SYMBOL_BID);
+   
+   if(ask <= 0 || bid <= 0)
+   {
+      Print("❌ ERROR: Cannot rebuild grid - Invalid prices");
+      return;
+   }
+   
+   double currentPrice = (ask + bid) / 2.0;
    referencePrice = currentPrice;
    
-   // Recalculate gap based on new reference price
+   // Recalculate gap based on new reference price with validation
+   if(GridSpacingPercent <= 0 || GridSpacingPercent > 100)
+   {
+      Print("❌ ERROR: Invalid GridSpacingPercent: ", GridSpacingPercent);
+      return;
+   }
+   
    currentGapSize = referencePrice * (GridSpacingPercent / 100.0);
+   
+   // Validate gap size
+   if(currentGapSize <= 0)
+   {
+      Print("❌ CRITICAL: Gap size calculated as zero or negative: ", currentGapSize);
+      currentGapSize = referencePrice * 0.001; // 0.1% fallback
+      Print("   Using fallback gap: ", currentGapSize);
+   }
    
    Print("✅ Grid rebuilt successfully!");
    Print("   Reference Price: ", DoubleToString(referencePrice, digits));
