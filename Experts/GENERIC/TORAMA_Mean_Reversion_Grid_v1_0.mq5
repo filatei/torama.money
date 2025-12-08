@@ -1198,7 +1198,7 @@ void CreatePanel()
    ObjectSetInteger(0, panelPrefix + "BG", OBJPROP_XDISTANCE, x);
    ObjectSetInteger(0, panelPrefix + "BG", OBJPROP_YDISTANCE, y);
    ObjectSetInteger(0, panelPrefix + "BG", OBJPROP_XSIZE, width);
-   ObjectSetInteger(0, panelPrefix + "BG", OBJPROP_YSIZE, 420);
+   ObjectSetInteger(0, panelPrefix + "BG", OBJPROP_YSIZE, 380);
    ObjectSetInteger(0, panelPrefix + "BG", OBJPROP_BGCOLOR, clrBlack);
    ObjectSetInteger(0, panelPrefix + "BG", OBJPROP_BORDER_TYPE, BORDER_FLAT);
    ObjectSetInteger(0, panelPrefix + "BG", OBJPROP_COLOR, clrWhite);
@@ -1218,19 +1218,20 @@ void CreatePanel()
    CreateLabel(panelPrefix + "BuyProfit", "BUY P/L: $0.00", x + 10, y + 10 + (row * rowHeight), clrWhite);
    CreateLabel(panelPrefix + "SellProfit", "SELL P/L: $0.00", x + 150, y + 10 + (row++ * rowHeight), clrWhite);
    CreateLabel(panelPrefix + "TotalProfit", "Total P/L: $0.00", x + 10, y + 10 + (row++ * rowHeight), clrAqua);
-   row++; // Skip row
    
-   // Session stats on same line
+   // Session and Current Price on same line
    CreateLabel(panelPrefix + "SessionProfit", "Session: $0.00", x + 10, y + 10 + (row * rowHeight), clrGold);
-   CreateLabel(panelPrefix + "SessionTarget", "Target: $0.00", x + 150, y + 10 + (row++ * rowHeight), clrWhite);
+   CreateLabel(panelPrefix + "CurrentPrice", "Price: $0.00", x + 150, y + 10 + (row++ * rowHeight), clrWhite);
    
-   // Spread and Drawdown on same line
-   CreateLabel(panelPrefix + "Spread", "Spread: 0", x + 10, y + 10 + (row * rowHeight), clrWhite);
-   CreateLabel(panelPrefix + "Drawdown", "DD: 0.0%", x + 150, y + 10 + (row++ * rowHeight), clrWhite);
-   row++; // Skip row
+   // Target and Spread on same line
+   CreateLabel(panelPrefix + "SessionTarget", "Target: $0.00", x + 10, y + 10 + (row * rowHeight), clrWhite);
+   CreateLabel(panelPrefix + "Spread", "Spread: 0", x + 150, y + 10 + (row++ * rowHeight), clrWhite);
    
-   // Gap and Next levels
-   CreateLabel(panelPrefix + "Gap", "Gap: 0.00% ($0.00)", x + 10, y + 10 + (row++ * rowHeight), clrCyan);
+   // Gap and Drawdown on same line
+   CreateLabel(panelPrefix + "Gap", "Gap: 0.00% ($0.00)", x + 10, y + 10 + (row * rowHeight), clrCyan);
+   CreateLabel(panelPrefix + "Drawdown", "DD: 0.0%", x + 175, y + 10 + (row++ * rowHeight), clrWhite);
+   
+   // Next levels
    CreateLabel(panelPrefix + "NextBuy", "Next BUY: 0.00000", x + 10, y + 10 + (row++ * rowHeight), clrLime);
    CreateLabel(panelPrefix + "NextSell", "Next SELL: 0.00000", x + 10, y + 10 + (row++ * rowHeight), clrRed);
    
@@ -1242,9 +1243,9 @@ void CreatePanel()
    CreateButton(panelPrefix + "PauseBtn", "⏸ PAUSE", x + 145, y + 10 + (row++ * rowHeight), 130, 25);
    CreateButton(panelPrefix + "CloseAllBtn", "CLOSE ALL", x + 10, y + 10 + (row++ * rowHeight), 265, 25);
    
-   // Branding - bold, chalk white
+   // Branding - bold, chalk white with proper right margin
    row++;
-   CreateLabel(panelPrefix + "Brand", "TORAMA CAPITAL", x + width - 150, y + 10 + (row * rowHeight), clrWhite);
+   CreateLabel(panelPrefix + "Brand", "TORAMA CAPITAL", x + width - 160, y + 10 + (row * rowHeight), clrWhite);
    ObjectSetInteger(0, panelPrefix + "Brand", OBJPROP_FONTSIZE, 12);
    ObjectSetString(0, panelPrefix + "Brand", OBJPROP_FONT, "Arial Black");
 }
@@ -1322,22 +1323,25 @@ void UpdatePanel()
    ObjectSetString(0, panelPrefix + "SessionProfit", OBJPROP_TEXT, "Session: $" + DoubleToString(sessionProfit, 2));
    ObjectSetInteger(0, panelPrefix + "SessionProfit", OBJPROP_COLOR, (sessionProfit >= 0) ? clrGold : clrRed);
    
+   // Calculate and display current price
+   double currentPrice = (SymbolInfoDouble(_Symbol, SYMBOL_ASK) + SymbolInfoDouble(_Symbol, SYMBOL_BID)) / 2.0;
+   ObjectSetString(0, panelPrefix + "CurrentPrice", OBJPROP_TEXT, "Price: $" + DoubleToString(currentPrice, digits));
+   
    ObjectSetString(0, panelPrefix + "SessionTarget", OBJPROP_TEXT, "Target: $" + DoubleToString(sessionProfitTarget, 2));
    
    long spread = SymbolInfoInteger(_Symbol, SYMBOL_SPREAD);
    ObjectSetString(0, panelPrefix + "Spread", OBJPROP_TEXT, "Spread: " + IntegerToString(spread));
    ObjectSetInteger(0, panelPrefix + "Spread", OBJPROP_COLOR, (spread > MaxSpread) ? clrRed : clrLime);
    
+   // Calculate and display Gap
+   double gapSize = currentPrice * (GridSpacingPercent / 100.0);
+   ObjectSetString(0, panelPrefix + "Gap", OBJPROP_TEXT, "Gap: " + DoubleToString(GridSpacingPercent, 2) + "% ($" + DoubleToString(gapSize, 2) + ")");
+   
    double equity = AccountInfoDouble(ACCOUNT_EQUITY);
    double balance = AccountInfoDouble(ACCOUNT_BALANCE);
    double drawdown = ((balance - equity) / balance) * 100.0;
    ObjectSetString(0, panelPrefix + "Drawdown", OBJPROP_TEXT, "DD: " + DoubleToString(drawdown, 1) + "%");
    ObjectSetInteger(0, panelPrefix + "Drawdown", OBJPROP_COLOR, (drawdown > MaxDrawdownPercent * 0.8) ? clrRed : clrLime);
-   
-   // Calculate and display Gap
-   double currentPrice = (SymbolInfoDouble(_Symbol, SYMBOL_ASK) + SymbolInfoDouble(_Symbol, SYMBOL_BID)) / 2.0;
-   double gapSize = currentPrice * (GridSpacingPercent / 100.0);
-   ObjectSetString(0, panelPrefix + "Gap", OBJPROP_TEXT, "Gap: " + DoubleToString(GridSpacingPercent, 2) + "% ($" + DoubleToString(gapSize, 2) + ")");
    
    // Calculate next levels
    double nextBuyLevel = 0;
