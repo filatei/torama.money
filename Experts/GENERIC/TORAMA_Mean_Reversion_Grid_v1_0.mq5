@@ -259,6 +259,12 @@ void OnTick()
    long spread = SymbolInfoInteger(_Symbol, SYMBOL_SPREAD);
    if(spread > MaxSpread)
    {
+      static datetime lastSpreadWarning = 0;
+      if(TimeCurrent() - lastSpreadWarning >= 300) // Warn every 5 minutes
+      {
+         Print("⚠️ SPREAD TOO HIGH: ", spread, " > ", MaxSpread, " - Trading blocked");
+         lastSpreadWarning = TimeCurrent();
+      }
       UpdatePanel();
       return;
    }
@@ -266,6 +272,12 @@ void OnTick()
    // Skip if session target reached
    if(sessionTargetReached)
    {
+      static datetime lastSessionWarning = 0;
+      if(TimeCurrent() - lastSessionWarning >= 300) // Warn every 5 minutes
+      {
+         Print("⚠️ SESSION TARGET REACHED - Trading blocked until reset");
+         lastSessionWarning = TimeCurrent();
+      }
       UpdatePanel();
       return;
    }
@@ -302,37 +314,153 @@ void OnTick()
 //+------------------------------------------------------------------+
 bool InitializeSymbolProperties()
 {
-   digits = (int)SymbolInfoInteger(_Symbol, SYMBOL_DIGITS);
+   Print("🔍 Probing broker properties for ", _Symbol, "...");
    
+   // Get symbol digits
+   digits = (int)SymbolInfoInteger(_Symbol, SYMBOL_DIGITS);
+   if(digits == 0)
+   {
+      Print("❌ ERROR: Could not get SYMBOL_DIGITS for ", _Symbol);
+      return false;
+   }
+   
+   // Get tick size
    tickSize = SymbolInfoDouble(_Symbol, SYMBOL_TRADE_TICK_SIZE);
    if(tickSize == 0)
    {
-      Print("❌ Error: SYMBOL_TRADE_TICK_SIZE is 0");
-      return false;
+      Print("⚠️ WARNING: SYMBOL_TRADE_TICK_SIZE is 0, using SYMBOL_POINT");
+      tickSize = SymbolInfoDouble(_Symbol, SYMBOL_POINT);
+      if(tickSize == 0)
+      {
+         Print("❌ ERROR: Both SYMBOL_TRADE_TICK_SIZE and SYMBOL_POINT are 0");
+         return false;
+      }
    }
    
+   // Get tick value
    tickValue = SymbolInfoDouble(_Symbol, SYMBOL_TRADE_TICK_VALUE);
    if(tickValue == 0)
    {
-      Print("❌ Error: SYMBOL_TRADE_TICK_VALUE is 0");
+      Print("⚠️ WARNING: SYMBOL_TRADE_TICK_VALUE is 0, calculating manually...");
+      // Try to calculate tick value for crypto/forex
+      double contractSize = SymbolInfoDouble(_Symbol, SYMBOL_TRADE_CONTRACT_SIZE);
+      if(contractSize > 0)
+      {
+         tickValue = tickSize * contractSize;
+         Print("   Calculated tick value from contract size: $", tickValue);
+      }
+      else
+      {
+         Print("❌ ERROR: Cannot calculate tick value - no contract size");
+         return false;
+      }
+   }
+   
+   // Get point value
+   pointValue = SymbolInfoDouble(_Symbol, SYMBOL_POINT);
+   if(pointValue == 0)
+   {
+      Print("❌ ERROR: SYMBOL_POINT is 0");
       return false;
    }
    
-   pointValue = SymbolInfoDouble(_Symbol, SYMBOL_POINT);
-   
+   // Get lot properties
    minLot = SymbolInfoDouble(_Symbol, SYMBOL_VOLUME_MIN);
    maxLot = SymbolInfoDouble(_Symbol, SYMBOL_VOLUME_MAX);
    lotStep = SymbolInfoDouble(_Symbol, SYMBOL_VOLUME_STEP);
    minVolume = SymbolInfoDouble(_Symbol, SYMBOL_VOLUME_MIN);
    
-   Print("📊 Symbol Properties:");
-   Print("   Digits: ", digits);
-   Print("   Tick Size: ", tickSize);
-   Print("   Tick Value: $", tickValue);
-   Print("   Point Value: ", pointValue);
-   Print("   Min Lot: ", minLot);
-   Print("   Max Lot: ", maxLot);
-   Print("   Lot Step: ", lotStep);
+   if(minLot == 0)
+   {
+      Print("⚠️ WARNING: SYMBOL_VOLUME_MIN is 0, defaulting to 0.01");
+      minLot = 0.01;
+      minVolume = 0.01;
+   }
+   
+   if(maxLot == 0)
+   {
+      Print("⚠️ WARNING: SYMBOL_VOLUME_MAX is 0, defaulting to 100");
+      maxLot = 100.0;
+   }
+   
+   if(lotStep == 0)
+   {
+      Print("⚠️ WARNING: SYMBOL_VOLUME_STEP is 0, defaulting to 0.01");
+      lotStep = 0.01;
+   }
+   
+   // Get filling mode
+   int fillingMode = (int)SymbolInfoInteger(_Symbol, SYMBOL_FILLING_MODE);
+   string fillingModeStr = "";
+   if((fillingMode & SYMBOL_FILLING_FOK) == SYMBOL_FILLING_FOK)
+      fillingModeStr += "FOK ";
+   if((fillingMode & SYMBOL_FILLING_IOC) == SYMBOL_FILLING_IOC)
+      fillingModeStr += "IOC ";
+   if((fillingMode & SYMBOL_FILLING_BOC) == SYMBOL_FILLING_BOC)
+      fillingModeStr += "BOC ";
+   if(fillingModeStr == "")
+      fillingModeStr = "NONE";
+   
+   // Get trade mode
+   ENUM_SYMBOL_TRADE_MODE tradeMode = (ENUM_SYMBOL_TRADE_MODE)SymbolInfoInteger(_Symbol, SYMBOL_TRADE_MODE);
+   string tradeModeStr = "";
+   switch(tradeMode)
+   {
+      case SYMBOL_TRADE_MODE_DISABLED: tradeModeStr = "DISABLED"; break;
+      case SYMBOL_TRADE_MODE_LONGONLY: tradeModeStr = "LONG ONLY"; break;
+      case SYMBOL_TRADE_MODE_SHORTONLY: tradeModeStr = "SHORT ONLY"; break;
+      case SYMBOL_TRADE_MODE_CLOSEONLY: tradeModeStr = "CLOSE ONLY"; break;
+      case SYMBOL_TRADE_MODE_FULL: tradeModeStr = "FULL"; break;
+      default: tradeModeStr = "UNKNOWN";
+   }
+   
+   if(tradeMode == SYMBOL_TRADE_MODE_DISABLED)
+   {
+      Print("❌ ERROR: Trading is DISABLED for ", _Symbol);
+      return false;
+   }
+   
+   // Check if symbol is custom (crypto, etc)
+   bool isCustom = SymbolInfoInteger(_Symbol, SYMBOL_CUSTOM);
+   
+   // Get contract size
+   double contractSize = SymbolInfoDouble(_Symbol, SYMBOL_TRADE_CONTRACT_SIZE);
+   
+   // Get margin requirements
+   double marginInitial = SymbolInfoDouble(_Symbol, SYMBOL_MARGIN_INITIAL);
+   double marginMaintenance = SymbolInfoDouble(_Symbol, SYMBOL_MARGIN_MAINTENANCE);
+   
+   // Get stop levels
+   int stopLevel = (int)SymbolInfoInteger(_Symbol, SYMBOL_TRADE_STOPS_LEVEL);
+   int freezeLevel = (int)SymbolInfoInteger(_Symbol, SYMBOL_TRADE_FREEZE_LEVEL);
+   
+   Print("╔════════════════════════════════════════════════════════════════╗");
+   Print("║ BROKER PROPERTIES FOR ", _Symbol);
+   Print("╠════════════════════════════════════════════════════════════════╣");
+   Print("║ Symbol Type: ", isCustom ? "CUSTOM (Crypto/CFD)" : "STANDARD (Forex)");
+   Print("║ Trade Mode: ", tradeModeStr);
+   Print("║ Filling Mode: ", fillingModeStr);
+   Print("╠════════════════════════════════════════════════════════════════╣");
+   Print("║ Price Properties:");
+   Print("║   Digits: ", digits);
+   Print("║   Tick Size: ", DoubleToString(tickSize, digits));
+   Print("║   Tick Value: $", DoubleToString(tickValue, 2));
+   Print("║   Point Value: ", DoubleToString(pointValue, digits));
+   Print("║   Contract Size: ", DoubleToString(contractSize, 2));
+   Print("╠════════════════════════════════════════════════════════════════╣");
+   Print("║ Volume Properties:");
+   Print("║   Min Lot: ", DoubleToString(minLot, 2));
+   Print("║   Max Lot: ", DoubleToString(maxLot, 2));
+   Print("║   Lot Step: ", DoubleToString(lotStep, 2));
+   Print("╠════════════════════════════════════════════════════════════════╣");
+   Print("║ Stop Levels:");
+   Print("║   Stop Level: ", stopLevel, " points");
+   Print("║   Freeze Level: ", freezeLevel, " points");
+   Print("╠════════════════════════════════════════════════════════════════╣");
+   Print("║ Margin:");
+   Print("║   Initial Margin: ", DoubleToString(marginInitial, 2));
+   Print("║   Maintenance Margin: ", DoubleToString(marginMaintenance, 2));
+   Print("╚════════════════════════════════════════════════════════════════╝");
    
    return true;
 }
@@ -353,20 +481,72 @@ double NormalizeLotSize(double lots)
 //+------------------------------------------------------------------+
 void ManageMeanReversionGrid()
 {
-   double currentPrice = (SymbolInfoDouble(_Symbol, SYMBOL_ASK) + SymbolInfoDouble(_Symbol, SYMBOL_BID)) / 2.0;
+   static datetime lastLogTime = 0;
+   datetime currentTime = TimeCurrent();
+   
+   // Validate prices
+   double ask = SymbolInfoDouble(_Symbol, SYMBOL_ASK);
+   double bid = SymbolInfoDouble(_Symbol, SYMBOL_BID);
+   
+   if(ask == 0 || bid == 0)
+   {
+      Print("⚠️ WARNING: Invalid prices (ASK=", ask, ", BID=", bid, "), skipping grid management");
+      return;
+   }
+   
+   if(ask < bid)
+   {
+      Print("⚠️ WARNING: ASK < BID (ASK=", ask, ", BID=", bid, "), skipping grid management");
+      return;
+   }
+   
+   double currentPrice = (ask + bid) / 2.0;
    double gridSpacing = currentPrice * (GridSpacingPercent / 100.0);
+   
+   // Validate grid spacing
+   if(gridSpacing <= 0)
+   {
+      Print("❌ ERROR: Invalid grid spacing: ", gridSpacing);
+      return;
+   }
    
    int buyCount = ArraySize(buyPositions);
    int sellCount = ArraySize(sellPositions);
    
-   // Initialize grid if no positions
+   // Periodic diagnostic logging (every 60 seconds)
+   if(currentTime - lastLogTime >= 60)
+   {
+      lastLogTime = currentTime;
+      Print("📊 Grid Status Check:");
+      Print("   Current Price: $", DoubleToString(currentPrice, digits));
+      Print("   Grid Spacing: $", DoubleToString(gridSpacing, 2), " (", GridSpacingPercent, "%)");
+      Print("   BUY Positions: ", buyCount, "/", MaxPositionsPerSide);
+      Print("   SELL Positions: ", sellCount, "/", MaxPositionsPerSide);
+      if(buyCount > 0)
+         Print("   Lowest BUY: $", DoubleToString(lowestBuyLevel, digits), " | Next: $", DoubleToString(lowestBuyLevel - gridSpacing, digits));
+      else if(lastBuyLevel > 0)
+         Print("   First BUY Level: $", DoubleToString(lastBuyLevel, digits), " | Current: $", DoubleToString(currentPrice, digits));
+      if(sellCount > 0)
+         Print("   Highest SELL: $", DoubleToString(highestSellLevel, digits), " | Next: $", DoubleToString(highestSellLevel + gridSpacing, digits));
+      else if(lastSellLevel > 0)
+         Print("   First SELL Level: $", DoubleToString(lastSellLevel, digits), " | Current: $", DoubleToString(currentPrice, digits));
+   }
+   
+   // Initialize grid if no positions - but DON'T return, let it place first trades
    if(buyCount == 0 && sellCount == 0)
    {
-      lastBuyLevel = currentPrice - gridSpacing;
-      lastSellLevel = currentPrice + gridSpacing;
-      lowestBuyLevel = lastBuyLevel;
-      highestSellLevel = lastSellLevel;
-      return;
+      // Only initialize if levels are not set
+      if(lastBuyLevel == 0 && lastSellLevel == 0)
+      {
+         lastBuyLevel = currentPrice - gridSpacing;
+         lastSellLevel = currentPrice + gridSpacing;
+         lowestBuyLevel = lastBuyLevel;
+         highestSellLevel = lastSellLevel;
+         Print("📍 Grid initialized - Waiting for price to cross levels:");
+         Print("   First BUY level: $", DoubleToString(lastBuyLevel, digits));
+         Print("   First SELL level: $", DoubleToString(lastSellLevel, digits));
+         Print("   Current price: $", DoubleToString(currentPrice, digits));
+      }
    }
    
    // MEAN REVERSION: Buy when falling
@@ -374,9 +554,11 @@ void ManageMeanReversionGrid()
    {
       if(buyCount == 0)
       {
-         // First BUY position - place below current price
-         if(currentPrice <= lastBuyLevel || lastBuyLevel == 0)
+         // First BUY position - place when price drops below level
+         if(currentPrice <= lastBuyLevel && lastBuyLevel > 0)
          {
+            Print("🎯 First BUY trigger: Price ", DoubleToString(currentPrice, digits), 
+                  " <= Level ", DoubleToString(lastBuyLevel, digits));
             if(OpenPosition("BUY", currentPrice))
             {
                lastBuyLevel = currentPrice;
@@ -389,6 +571,8 @@ void ManageMeanReversionGrid()
          // Add BUY when price drops another grid level
          if(currentPrice <= lowestBuyLevel - gridSpacing)
          {
+            Print("🎯 Additional BUY trigger: Price ", DoubleToString(currentPrice, digits), 
+                  " <= ", DoubleToString(lowestBuyLevel - gridSpacing, digits));
             if(OpenPosition("BUY", currentPrice))
             {
                lowestBuyLevel = currentPrice;
@@ -403,9 +587,11 @@ void ManageMeanReversionGrid()
    {
       if(sellCount == 0)
       {
-         // First SELL position - place above current price
-         if(currentPrice >= lastSellLevel || lastSellLevel == 0)
+         // First SELL position - place when price rises above level
+         if(currentPrice >= lastSellLevel && lastSellLevel > 0)
          {
+            Print("🎯 First SELL trigger: Price ", DoubleToString(currentPrice, digits), 
+                  " >= Level ", DoubleToString(lastSellLevel, digits));
             if(OpenPosition("SELL", currentPrice))
             {
                lastSellLevel = currentPrice;
@@ -418,6 +604,8 @@ void ManageMeanReversionGrid()
          // Add SELL when price rises another grid level
          if(currentPrice >= highestSellLevel + gridSpacing)
          {
+            Print("🎯 Additional SELL trigger: Price ", DoubleToString(currentPrice, digits), 
+                  " >= ", DoubleToString(highestSellLevel + gridSpacing, digits));
             if(OpenPosition("SELL", currentPrice))
             {
                highestSellLevel = currentPrice;
@@ -433,14 +621,44 @@ void ManageMeanReversionGrid()
 //+------------------------------------------------------------------+
 bool OpenPosition(string direction, double price)
 {
+   // Validate inputs
+   if(direction != "BUY" && direction != "SELL")
+   {
+      Print("❌ ERROR: Invalid direction: ", direction);
+      return false;
+   }
+   
    // Use the normalized lot size
    double lots = normalizedLotSize;
+   
+   // Validate lot size
+   if(lots < minLot)
+   {
+      Print("⚠️ WARNING: Lot size ", lots, " below minimum ", minLot, ", adjusting...");
+      lots = minLot;
+   }
+   
+   if(lots > maxLot)
+   {
+      Print("⚠️ WARNING: Lot size ", lots, " above maximum ", maxLot, ", adjusting...");
+      lots = maxLot;
+   }
    
    // Calculate TP and SL distances
    double tpDistance = CalculateTPSLDistance(individualTPDollars, lots, direction);
    double slDistance = (individualSLDollars > 0) ? CalculateTPSLDistance(individualSLDollars, lots, direction) : 0;
    
    ENUM_ORDER_TYPE orderType = (direction == "BUY") ? ORDER_TYPE_BUY : ORDER_TYPE_SELL;
+   
+   // Get current prices
+   double ask = SymbolInfoDouble(_Symbol, SYMBOL_ASK);
+   double bid = SymbolInfoDouble(_Symbol, SYMBOL_BID);
+   
+   if(ask == 0 || bid == 0)
+   {
+      Print("❌ ERROR: Cannot get prices (ASK=", ask, ", BID=", bid, ")");
+      return false;
+   }
    
    MqlTradeRequest request = {};
    MqlTradeResult result = {};
@@ -449,10 +667,20 @@ bool OpenPosition(string direction, double price)
    request.symbol = _Symbol;
    request.volume = lots;
    request.type = orderType;
-   request.price = (orderType == ORDER_TYPE_BUY) ? SymbolInfoDouble(_Symbol, SYMBOL_ASK) : SymbolInfoDouble(_Symbol, SYMBOL_BID);
-   request.deviation = 10;
+   request.price = (orderType == ORDER_TYPE_BUY) ? ask : bid;
+   request.deviation = 50; // Increased slippage tolerance for crypto/volatile markets
    request.magic = MagicNumber;
    request.comment = "MeanRev_" + direction;
+   request.type_time = ORDER_TIME_GTC;
+   
+   // Set appropriate filling mode
+   int fillingMode = (int)SymbolInfoInteger(_Symbol, SYMBOL_FILLING_MODE);
+   if((fillingMode & SYMBOL_FILLING_FOK) == SYMBOL_FILLING_FOK)
+      request.type_filling = ORDER_FILLING_FOK;
+   else if((fillingMode & SYMBOL_FILLING_IOC) == SYMBOL_FILLING_IOC)
+      request.type_filling = ORDER_FILLING_IOC;
+   else
+      request.type_filling = ORDER_FILLING_RETURN;
    
    // Set TP/SL if enabled
    if(tpDistance > 0)
@@ -471,28 +699,111 @@ bool OpenPosition(string direction, double price)
          request.sl = NormalizeDouble(request.price + slDistance, digits);
    }
    
-   if(!OrderSend(request, result))
+   // Retry logic for order sending
+   int maxRetries = 3;
+   int retryCount = 0;
+   
+   while(retryCount < maxRetries)
    {
-      Print("❌ OrderSend failed: ", GetLastError());
-      Print("   Direction: ", direction);
-      Print("   Price: ", request.price);
-      Print("   Volume: ", request.volume);
-      return false;
+      // Reset result
+      ZeroMemory(result);
+      
+      // Update price before each attempt
+      if(retryCount > 0)
+      {
+         ask = SymbolInfoDouble(_Symbol, SYMBOL_ASK);
+         bid = SymbolInfoDouble(_Symbol, SYMBOL_BID);
+         request.price = (orderType == ORDER_TYPE_BUY) ? ask : bid;
+         
+         // Recalculate TP/SL with new price
+         if(tpDistance > 0)
+         {
+            if(orderType == ORDER_TYPE_BUY)
+               request.tp = NormalizeDouble(request.price + tpDistance, digits);
+            else
+               request.tp = NormalizeDouble(request.price - tpDistance, digits);
+         }
+         
+         if(slDistance > 0)
+         {
+            if(orderType == ORDER_TYPE_BUY)
+               request.sl = NormalizeDouble(request.price - slDistance, digits);
+            else
+               request.sl = NormalizeDouble(request.price + slDistance, digits);
+         }
+      }
+      
+      if(!OrderSend(request, result))
+      {
+         int error = GetLastError();
+         Print("❌ OrderSend failed (Attempt ", retryCount + 1, "/", maxRetries, "): ", error);
+         Print("   Direction: ", direction);
+         Print("   Price: ", DoubleToString(request.price, digits));
+         Print("   Volume: ", DoubleToString(request.volume, 2));
+         Print("   Error Description: ", ErrorDescription(error));
+         
+         retryCount++;
+         if(retryCount < maxRetries)
+         {
+            Sleep(1000); // Wait 1 second before retry
+            continue;
+         }
+         return false;
+      }
+      
+      // Check result code
+      if(result.retcode == TRADE_RETCODE_DONE)
+      {
+         Print("✅ ", direction, " position opened successfully!");
+         Print("   Ticket: ", result.order);
+         Print("   Price: $", DoubleToString(result.price, digits));
+         Print("   Volume: ", DoubleToString(result.volume, 2));
+         if(tpDistance > 0)
+            Print("   TP: $", DoubleToString(request.tp, digits));
+         if(slDistance > 0)
+            Print("   SL: $", DoubleToString(request.sl, digits));
+         
+         return true;
+      }
+      else
+      {
+         Print("⚠️ Order not executed (Attempt ", retryCount + 1, "/", maxRetries, ")");
+         Print("   Return Code: ", result.retcode);
+         Print("   Description: ", TradeRetcodeDescription(result.retcode));
+         
+         // Handle specific return codes
+         if(result.retcode == TRADE_RETCODE_REQUOTE || 
+            result.retcode == TRADE_RETCODE_PRICE_OFF ||
+            result.retcode == TRADE_RETCODE_PRICE_CHANGED)
+         {
+            retryCount++;
+            if(retryCount < maxRetries)
+            {
+               Sleep(500);
+               continue;
+            }
+         }
+         else if(result.retcode == TRADE_RETCODE_INVALID_VOLUME)
+         {
+            Print("   Attempting to adjust volume...");
+            lots = NormalizeLotSize(lots);
+            request.volume = lots;
+            retryCount++;
+            if(retryCount < maxRetries)
+               continue;
+         }
+         else
+         {
+            // Other errors - don't retry
+            return false;
+         }
+      }
+      
+      retryCount++;
    }
    
-   if(result.retcode != TRADE_RETCODE_DONE)
-   {
-      Print("⚠️ Order not executed: ", result.retcode);
-      return false;
-   }
-   
-   Print("✅ ", direction, " position opened at $", DoubleToString(request.price, 2));
-   if(tpDistance > 0)
-      Print("   TP: $", DoubleToString(request.tp, 2));
-   if(slDistance > 0)
-      Print("   SL: $", DoubleToString(request.sl, 2));
-   
-   return true;
+   Print("❌ Failed to open position after ", maxRetries, " attempts");
+   return false;
 }
 
 //+------------------------------------------------------------------+
@@ -637,17 +948,43 @@ bool CheckProfitableCount(string side)
 //+------------------------------------------------------------------+
 void ClosePositionsSide(string side)
 {
+   if(side != "BUY" && side != "SELL")
+   {
+      Print("❌ ERROR: Invalid side: ", side);
+      return;
+   }
+   
    PositionInfo positions[];
    if(side == "BUY")
       ArrayCopy(positions, buyPositions);
    else
       ArrayCopy(positions, sellPositions);
    
+   int posCount = ArraySize(positions);
+   if(posCount == 0)
+   {
+      Print("ℹ️ No ", side, " positions to close");
+      return;
+   }
+   
+   Print("🔄 Closing ", posCount, " ", side, " position(s)...");
+   
    int closed = 0;
+   int failed = 0;
    
    for(int i = ArraySize(positions) - 1; i >= 0; i--)
    {
-      if(!PositionSelectByTicket(positions[i].ticket)) continue;
+      if(!PositionSelectByTicket(positions[i].ticket))
+      {
+         Print("⚠️ Position ", positions[i].ticket, " not found (already closed?)");
+         continue;
+      }
+      
+      // Get position details
+      ENUM_POSITION_TYPE posType = (ENUM_POSITION_TYPE)PositionGetInteger(POSITION_TYPE);
+      double volume = PositionGetDouble(POSITION_VOLUME);
+      double openPrice = PositionGetDouble(POSITION_PRICE_OPEN);
+      double profit = PositionGetDouble(POSITION_PROFIT);
       
       MqlTradeRequest request = {};
       MqlTradeResult result = {};
@@ -655,24 +992,83 @@ void ClosePositionsSide(string side)
       request.action = TRADE_ACTION_DEAL;
       request.position = positions[i].ticket;
       request.symbol = _Symbol;
-      request.volume = PositionGetDouble(POSITION_VOLUME);
-      request.deviation = 10;
+      request.volume = volume;
+      request.deviation = 50;
       request.magic = MagicNumber;
-      
-      ENUM_POSITION_TYPE posType = (ENUM_POSITION_TYPE)PositionGetInteger(POSITION_TYPE);
       request.type = (posType == POSITION_TYPE_BUY) ? ORDER_TYPE_SELL : ORDER_TYPE_BUY;
       request.price = (request.type == ORDER_TYPE_SELL) ? SymbolInfoDouble(_Symbol, SYMBOL_BID) : SymbolInfoDouble(_Symbol, SYMBOL_ASK);
       
-      if(OrderSend(request, result))
+      // Set filling mode
+      int fillingMode = (int)SymbolInfoInteger(_Symbol, SYMBOL_FILLING_MODE);
+      if((fillingMode & SYMBOL_FILLING_FOK) == SYMBOL_FILLING_FOK)
+         request.type_filling = ORDER_FILLING_FOK;
+      else if((fillingMode & SYMBOL_FILLING_IOC) == SYMBOL_FILLING_IOC)
+         request.type_filling = ORDER_FILLING_IOC;
+      else
+         request.type_filling = ORDER_FILLING_RETURN;
+      
+      // Retry logic for closing
+      int maxRetries = 3;
+      bool success = false;
+      
+      for(int retry = 0; retry < maxRetries; retry++)
       {
+         // Update price for retry
+         if(retry > 0)
+         {
+            Sleep(500);
+            request.price = (request.type == ORDER_TYPE_SELL) ? SymbolInfoDouble(_Symbol, SYMBOL_BID) : SymbolInfoDouble(_Symbol, SYMBOL_ASK);
+         }
+         
+         if(!OrderSend(request, result))
+         {
+            int error = GetLastError();
+            Print("❌ Close failed for ticket ", positions[i].ticket, " (Attempt ", retry + 1, "/", maxRetries, ")");
+            Print("   Error: ", ErrorDescription(error));
+            continue;
+         }
+         
          if(result.retcode == TRADE_RETCODE_DONE)
          {
+            Print("✅ Closed ticket ", positions[i].ticket, " | Volume: ", DoubleToString(volume, 2), 
+                  " | Entry: $", DoubleToString(openPrice, digits), 
+                  " | Exit: $", DoubleToString(result.price, digits),
+                  " | P/L: $", DoubleToString(profit, 2));
             closed++;
+            success = true;
+            break;
          }
+         else
+         {
+            Print("⚠️ Close attempt ", retry + 1, " failed for ticket ", positions[i].ticket);
+            Print("   Retcode: ", TradeRetcodeDescription(result.retcode));
+            
+            if(result.retcode == TRADE_RETCODE_REQUOTE || 
+               result.retcode == TRADE_RETCODE_PRICE_OFF ||
+               result.retcode == TRADE_RETCODE_PRICE_CHANGED)
+            {
+               continue; // Retry
+            }
+            else
+            {
+               break; // Don't retry for other errors
+            }
+         }
+      }
+      
+      if(!success)
+      {
+         failed++;
+         Print("❌ Failed to close ticket ", positions[i].ticket, " after ", maxRetries, " attempts");
       }
    }
    
-   Print("✅ Closed ", closed, " ", side, " position(s)");
+   Print("═══════════════════════════════════════");
+   Print("Close Summary for ", side, " positions:");
+   Print("   Closed: ", closed);
+   Print("   Failed: ", failed);
+   Print("   Total: ", posCount);
+   Print("═══════════════════════════════════════");
    
    // Reset levels for this side
    if(side == "BUY")
@@ -802,7 +1198,7 @@ void CreatePanel()
    ObjectSetInteger(0, panelPrefix + "BG", OBJPROP_XDISTANCE, x);
    ObjectSetInteger(0, panelPrefix + "BG", OBJPROP_YDISTANCE, y);
    ObjectSetInteger(0, panelPrefix + "BG", OBJPROP_XSIZE, width);
-   ObjectSetInteger(0, panelPrefix + "BG", OBJPROP_YSIZE, 570);
+   ObjectSetInteger(0, panelPrefix + "BG", OBJPROP_YSIZE, 420);
    ObjectSetInteger(0, panelPrefix + "BG", OBJPROP_BGCOLOR, clrBlack);
    ObjectSetInteger(0, panelPrefix + "BG", OBJPROP_BORDER_TYPE, BORDER_FLAT);
    ObjectSetInteger(0, panelPrefix + "BG", OBJPROP_COLOR, clrWhite);
@@ -814,40 +1210,43 @@ void CreatePanel()
    CreateLabel(panelPrefix + "Title", "MEAN REVERSION GRID v1.0", x + 10, y + 10 + (row++ * rowHeight), clrYellow);
    row++; // Skip row
    
-   // Stats
-   CreateLabel(panelPrefix + "BuyPos", "BUY Positions: 0", x + 10, y + 10 + (row++ * rowHeight), clrLime);
-   CreateLabel(panelPrefix + "SellPos", "SELL Positions: 0", x + 10, y + 10 + (row++ * rowHeight), clrRed);
-   CreateLabel(panelPrefix + "BuyProfit", "BUY P/L: $0.00", x + 10, y + 10 + (row++ * rowHeight), clrWhite);
-   CreateLabel(panelPrefix + "SellProfit", "SELL P/L: $0.00", x + 10, y + 10 + (row++ * rowHeight), clrWhite);
+   // Position counts on same line
+   CreateLabel(panelPrefix + "BuyPos", "BUY: 0", x + 10, y + 10 + (row * rowHeight), clrLime);
+   CreateLabel(panelPrefix + "SellPos", "SELL: 0", x + 100, y + 10 + (row++ * rowHeight), clrRed);
+   
+   // P/L on same line
+   CreateLabel(panelPrefix + "BuyProfit", "BUY P/L: $0.00", x + 10, y + 10 + (row * rowHeight), clrWhite);
+   CreateLabel(panelPrefix + "SellProfit", "SELL P/L: $0.00", x + 150, y + 10 + (row++ * rowHeight), clrWhite);
    CreateLabel(panelPrefix + "TotalProfit", "Total P/L: $0.00", x + 10, y + 10 + (row++ * rowHeight), clrAqua);
    row++; // Skip row
    
-   CreateLabel(panelPrefix + "SessionProfit", "Session: $0.00", x + 10, y + 10 + (row++ * rowHeight), clrGold);
-   CreateLabel(panelPrefix + "SessionTarget", "Target: $0.00", x + 10, y + 10 + (row++ * rowHeight), clrWhite);
+   // Session stats on same line
+   CreateLabel(panelPrefix + "SessionProfit", "Session: $0.00", x + 10, y + 10 + (row * rowHeight), clrGold);
+   CreateLabel(panelPrefix + "SessionTarget", "Target: $0.00", x + 150, y + 10 + (row++ * rowHeight), clrWhite);
+   
+   // Spread and Drawdown on same line
+   CreateLabel(panelPrefix + "Spread", "Spread: 0", x + 10, y + 10 + (row * rowHeight), clrWhite);
+   CreateLabel(panelPrefix + "Drawdown", "DD: 0.0%", x + 150, y + 10 + (row++ * rowHeight), clrWhite);
    row++; // Skip row
    
-   CreateLabel(panelPrefix + "Spread", "Spread: 0", x + 10, y + 10 + (row++ * rowHeight), clrWhite);
-   CreateLabel(panelPrefix + "Drawdown", "Drawdown: 0.0%", x + 10, y + 10 + (row++ * rowHeight), clrWhite);
-   row++; // Skip row
-   
+   // Gap and Next levels
    CreateLabel(panelPrefix + "Gap", "Gap: 0.00% ($0.00)", x + 10, y + 10 + (row++ * rowHeight), clrCyan);
    CreateLabel(panelPrefix + "NextBuy", "Next BUY: 0.00000", x + 10, y + 10 + (row++ * rowHeight), clrLime);
    CreateLabel(panelPrefix + "NextSell", "Next SELL: 0.00000", x + 10, y + 10 + (row++ * rowHeight), clrRed);
    
-   // Buttons
+   // Buttons - 2x2 grid
    row++;
-   CreateButton(panelPrefix + "CloseBuyBtn", "CLOSE BUYS", x + 10, y + 10 + (row++ * rowHeight), 120, 25);
-   CreateButton(panelPrefix + "CloseSellBtn", "CLOSE SELLS", x + 150, y + 10 + (row * rowHeight), 120, 25);
-   row++;
-   CreateButton(panelPrefix + "CloseAllBtn", "CLOSE ALL", x + 10, y + 10 + (row++ * rowHeight), 260, 25);
-   CreateButton(panelPrefix + "RebuildBtn", "REBUILD GRID", x + 10, y + 10 + (row++ * rowHeight), 260, 25);
-   CreateButton(panelPrefix + "PauseBtn", "⏸ PAUSE EA", x + 10, y + 10 + (row++ * rowHeight), 260, 25);
+   CreateButton(panelPrefix + "CloseBuyBtn", "CLOSE BUYS", x + 10, y + 10 + (row * rowHeight), 130, 25);
+   CreateButton(panelPrefix + "CloseSellBtn", "CLOSE SELLS", x + 145, y + 10 + (row++ * rowHeight), 130, 25);
+   CreateButton(panelPrefix + "RebuildBtn", "REBUILD", x + 10, y + 10 + (row * rowHeight), 130, 25);
+   CreateButton(panelPrefix + "PauseBtn", "⏸ PAUSE", x + 145, y + 10 + (row++ * rowHeight), 130, 25);
+   CreateButton(panelPrefix + "CloseAllBtn", "CLOSE ALL", x + 10, y + 10 + (row++ * rowHeight), 265, 25);
    
-   // Branding
-   row += 2;
-   CreateLabel(panelPrefix + "Brand", "TORAMA CAPITAL", x + width - 140, y + 10 + (row * rowHeight), clrGold);
-   ObjectSetInteger(0, panelPrefix + "Brand", OBJPROP_FONTSIZE, 11);
-   ObjectSetString(0, panelPrefix + "Brand", OBJPROP_FONT, "Arial Bold");
+   // Branding - bold, chalk white
+   row++;
+   CreateLabel(panelPrefix + "Brand", "TORAMA CAPITAL", x + width - 150, y + 10 + (row * rowHeight), clrWhite);
+   ObjectSetInteger(0, panelPrefix + "Brand", OBJPROP_FONTSIZE, 12);
+   ObjectSetString(0, panelPrefix + "Brand", OBJPROP_FONT, "Arial Black");
 }
 
 //+------------------------------------------------------------------+
@@ -908,8 +1307,8 @@ void UpdatePanel()
    double totalPL = buyPL + sellPL;
    
    // Update labels
-   ObjectSetString(0, panelPrefix + "BuyPos", OBJPROP_TEXT, "BUY Positions: " + IntegerToString(buyCount));
-   ObjectSetString(0, panelPrefix + "SellPos", OBJPROP_TEXT, "SELL Positions: " + IntegerToString(sellCount));
+   ObjectSetString(0, panelPrefix + "BuyPos", OBJPROP_TEXT, "BUY: " + IntegerToString(buyCount));
+   ObjectSetString(0, panelPrefix + "SellPos", OBJPROP_TEXT, "SELL: " + IntegerToString(sellCount));
    
    ObjectSetString(0, panelPrefix + "BuyProfit", OBJPROP_TEXT, "BUY P/L: $" + DoubleToString(buyPL, 2));
    ObjectSetInteger(0, panelPrefix + "BuyProfit", OBJPROP_COLOR, (buyPL >= 0) ? clrLime : clrRed);
@@ -932,7 +1331,7 @@ void UpdatePanel()
    double equity = AccountInfoDouble(ACCOUNT_EQUITY);
    double balance = AccountInfoDouble(ACCOUNT_BALANCE);
    double drawdown = ((balance - equity) / balance) * 100.0;
-   ObjectSetString(0, panelPrefix + "Drawdown", OBJPROP_TEXT, "Drawdown: " + DoubleToString(drawdown, 1) + "%");
+   ObjectSetString(0, panelPrefix + "Drawdown", OBJPROP_TEXT, "DD: " + DoubleToString(drawdown, 1) + "%");
    ObjectSetInteger(0, panelPrefix + "Drawdown", OBJPROP_COLOR, (drawdown > MaxDrawdownPercent * 0.8) ? clrRed : clrLime);
    
    // Calculate and display Gap
@@ -990,14 +1389,14 @@ void UpdatePanel()
    // Update pause button
    if(isPaused)
    {
-      ObjectSetString(0, panelPrefix + "PauseBtn", OBJPROP_TEXT, "▶ RESUME EA");
+      ObjectSetString(0, panelPrefix + "PauseBtn", OBJPROP_TEXT, "▶ RESUME");
       ObjectSetInteger(0, panelPrefix + "PauseBtn", OBJPROP_BGCOLOR, clrDarkGreen);
       ObjectSetString(0, panelPrefix + "Title", OBJPROP_TEXT, "MEAN REVERSION GRID v1.0 [PAUSED]");
       ObjectSetInteger(0, panelPrefix + "Title", OBJPROP_COLOR, clrOrange);
    }
    else
    {
-      ObjectSetString(0, panelPrefix + "PauseBtn", OBJPROP_TEXT, "⏸ PAUSE EA");
+      ObjectSetString(0, panelPrefix + "PauseBtn", OBJPROP_TEXT, "⏸ PAUSE");
       ObjectSetInteger(0, panelPrefix + "PauseBtn", OBJPROP_BGCOLOR, clrDarkBlue);
       ObjectSetString(0, panelPrefix + "Title", OBJPROP_TEXT, "MEAN REVERSION GRID v1.0");
       ObjectSetInteger(0, panelPrefix + "Title", OBJPROP_COLOR, clrYellow);
@@ -1090,6 +1489,89 @@ void OnChartEvent(const int id, const long &lparam, const double &dparam, const 
             
          UpdatePanel();
       }
+   }
+}
+//+------------------------------------------------------------------+
+//| ERROR DESCRIPTION HELPER                                          |
+//+------------------------------------------------------------------+
+string ErrorDescription(int error)
+{
+   switch(error)
+   {
+      case 0: return "No error";
+      case 1: return "No error, trade server returned no error code";
+      case 2: return "Common error";
+      case 3: return "Invalid trade parameters";
+      case 4: return "Trade server is busy";
+      case 5: return "Old version of the client terminal";
+      case 6: return "No connection with trade server";
+      case 7: return "Not enough rights";
+      case 8: return "Too frequent requests";
+      case 9: return "Malfunctional trade operation";
+      case 64: return "Account disabled";
+      case 65: return "Invalid account";
+      case 128: return "Trade timeout";
+      case 129: return "Invalid price";
+      case 130: return "Invalid stops";
+      case 131: return "Invalid trade volume";
+      case 132: return "Market is closed";
+      case 133: return "Trade is disabled";
+      case 134: return "Not enough money";
+      case 135: return "Price changed";
+      case 136: return "Off quotes";
+      case 137: return "Broker is busy";
+      case 138: return "Requote";
+      case 139: return "Order is locked";
+      case 140: return "Long positions only allowed";
+      case 141: return "Too many requests";
+      case 145: return "Modification denied because order too close to market";
+      case 146: return "Trade context is busy";
+      case 147: return "Expirations are denied by broker";
+      case 148: return "Amount of open and pending orders has reached the limit";
+      case 149: return "Hedging is prohibited";
+      case 150: return "Prohibited by FIFO rules";
+      default: return "Unknown error " + IntegerToString(error);
+   }
+}
+
+//+------------------------------------------------------------------+
+//| TRADE RETCODE DESCRIPTION HELPER                                  |
+//+------------------------------------------------------------------+
+string TradeRetcodeDescription(uint retcode)
+{
+   switch(retcode)
+   {
+      case TRADE_RETCODE_REQUOTE: return "Requote";
+      case TRADE_RETCODE_REJECT: return "Request rejected";
+      case TRADE_RETCODE_CANCEL: return "Request canceled by trader";
+      case TRADE_RETCODE_PLACED: return "Order placed";
+      case TRADE_RETCODE_DONE: return "Request completed";
+      case TRADE_RETCODE_DONE_PARTIAL: return "Request partially completed";
+      case TRADE_RETCODE_ERROR: return "Request processing error";
+      case TRADE_RETCODE_TIMEOUT: return "Request timeout";
+      case TRADE_RETCODE_INVALID: return "Invalid request";
+      case TRADE_RETCODE_INVALID_VOLUME: return "Invalid volume";
+      case TRADE_RETCODE_INVALID_PRICE: return "Invalid price";
+      case TRADE_RETCODE_INVALID_STOPS: return "Invalid stops";
+      case TRADE_RETCODE_TRADE_DISABLED: return "Trade is disabled";
+      case TRADE_RETCODE_MARKET_CLOSED: return "Market is closed";
+      case TRADE_RETCODE_NO_MONEY: return "Not enough money";
+      case TRADE_RETCODE_PRICE_CHANGED: return "Price changed";
+      case TRADE_RETCODE_PRICE_OFF: return "No prices";
+      case TRADE_RETCODE_INVALID_EXPIRATION: return "Invalid order expiration";
+      case TRADE_RETCODE_ORDER_CHANGED: return "Order state changed";
+      case TRADE_RETCODE_TOO_MANY_REQUESTS: return "Too many requests";
+      case TRADE_RETCODE_NO_CHANGES: return "No changes in request";
+      case TRADE_RETCODE_SERVER_DISABLES_AT: return "Autotrading disabled by server";
+      case TRADE_RETCODE_CLIENT_DISABLES_AT: return "Autotrading disabled by client";
+      case TRADE_RETCODE_LOCKED: return "Request locked for processing";
+      case TRADE_RETCODE_FROZEN: return "Order or position frozen";
+      case TRADE_RETCODE_INVALID_FILL: return "Invalid order filling type";
+      case TRADE_RETCODE_CONNECTION: return "No connection";
+      case TRADE_RETCODE_ONLY_REAL: return "Only real accounts allowed";
+      case TRADE_RETCODE_LIMIT_ORDERS: return "Limit orders limit reached";
+      case TRADE_RETCODE_LIMIT_VOLUME: return "Volume limit reached";
+      default: return "Unknown retcode " + IntegerToString(retcode);
    }
 }
 //+------------------------------------------------------------------+
