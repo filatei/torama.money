@@ -280,6 +280,45 @@ void OnTick()
 // Due to length, I'll include the key helper functions. The rest follow the same pattern as the Momentum EA
 
 //+------------------------------------------------------------------+
+//| SAFE HELPER FUNCTIONS - ERROR HANDLING                            |
+//+------------------------------------------------------------------+
+
+// Safe price retrieval with validation
+double GetSafePrice(ENUM_SYMBOL_INFO_DOUBLE price_type)
+{
+   double price = SymbolInfoDouble(_Symbol, price_type);
+   if(price <= 0)
+   {
+      Print("❌ ERROR: Invalid price retrieved for ", EnumToString(price_type));
+      return 0;
+   }
+   return price;
+}
+
+// Safe account info with validation
+double GetSafeAccountInfo(ENUM_ACCOUNT_INFO_DOUBLE info_type)
+{
+   double value = AccountInfoDouble(info_type);
+   if(value < 0)
+   {
+      Print("❌ ERROR: Invalid account info for ", EnumToString(info_type));
+      return 0;
+   }
+   return value;
+}
+
+// Safe position ticket retrieval
+ulong GetSafePositionTicket(int index)
+{
+   ulong ticket = PositionGetTicket(index);
+   if(ticket <= 0)
+   {
+      return 0;
+   }
+   return ticket;
+}
+
+//+------------------------------------------------------------------+
 //| INITIALIZE SYMBOL PROPERTIES                                      |
 //+------------------------------------------------------------------+
 bool InitializeSymbolProperties()
@@ -938,19 +977,32 @@ void UpdatePanel()
    ObjectSetInteger(0, panelPrefix + "Drawdown", OBJPROP_COLOR, 
       drawdown > MaxDrawdownPercent * 0.8 ? clrRed : clrLime);
    
-   // Spread
+   // Spread with color coding
    long spread = SymbolInfoInteger(_Symbol, SYMBOL_SPREAD);
+   color spreadColor = clrLime;
+   if(spread > MaxSpread * 0.8) // Over 80% of max
+      spreadColor = clrOrange;
+   if(spread > MaxSpread)
+      spreadColor = clrRed;
+   
    ObjectSetString(0, panelPrefix + "Spread", OBJPROP_TEXT, 
-      "Spread: " + IntegerToString(spread));
-   ObjectSetInteger(0, panelPrefix + "Spread", OBJPROP_COLOR, 
-      spread > MaxSpread ? clrRed : clrLime);
+      "Spread: " + IntegerToString(spread) + " pts (Max: " + IntegerToString(MaxSpread) + ")");
+   ObjectSetInteger(0, panelPrefix + "Spread", OBJPROP_COLOR, spreadColor);
    
-   // Calculate next levels
+   // Calculate next BUY level (MEAN REVERSION: Buy when falling)
    double nextBuyLevel = 0;
-   double nextSellLevel = 0;
+   string nextBuyText = "";
    
-   if(buyCount > 0)
+   if(buyCount == 0)
    {
+      // No positions yet - first BUY will be placed when price falls
+      // Level is dynamic: current price - gap
+      nextBuyLevel = bid - currentGapSize;
+      nextBuyText = "Next BUY: " + DoubleToString(nextBuyLevel, digits) + " (dynamic)";
+   }
+   else
+   {
+      // Find lowest buy position - next BUY is below this (fixed)
       double lowestBuy = buyPositions[0].openPrice;
       for(int i = 1; i < buyCount; i++)
       {
@@ -958,14 +1010,23 @@ void UpdatePanel()
             lowestBuy = buyPositions[i].openPrice;
       }
       nextBuyLevel = lowestBuy - currentGapSize;
+      nextBuyText = "Next BUY: " + DoubleToString(nextBuyLevel, digits);
+   }
+   
+   // Calculate next SELL level (MEAN REVERSION: Sell when rising)
+   double nextSellLevel = 0;
+   string nextSellText = "";
+   
+   if(sellCount == 0)
+   {
+      // No positions yet - first SELL will be placed when price rises
+      // Level is dynamic: current price + gap
+      nextSellLevel = ask + currentGapSize;
+      nextSellText = "Next SELL: " + DoubleToString(nextSellLevel, digits) + " (dynamic)";
    }
    else
    {
-      nextBuyLevel = bid - currentGapSize;
-   }
-   
-   if(sellCount > 0)
-   {
+      // Find highest sell position - next SELL is above this (fixed)
       double highestSell = sellPositions[0].openPrice;
       for(int i = 1; i < sellCount; i++)
       {
@@ -973,16 +1034,11 @@ void UpdatePanel()
             highestSell = sellPositions[i].openPrice;
       }
       nextSellLevel = highestSell + currentGapSize;
-   }
-   else
-   {
-      nextSellLevel = ask + currentGapSize;
+      nextSellText = "Next SELL: " + DoubleToString(nextSellLevel, digits);
    }
    
-   ObjectSetString(0, panelPrefix + "NextBuy", OBJPROP_TEXT, 
-      "Next BUY: " + DoubleToString(nextBuyLevel, digits));
-   ObjectSetString(0, panelPrefix + "NextSell", OBJPROP_TEXT, 
-      "Next SELL: " + DoubleToString(nextSellLevel, digits));
+   ObjectSetString(0, panelPrefix + "NextBuy", OBJPROP_TEXT, nextBuyText);
+   ObjectSetString(0, panelPrefix + "NextSell", OBJPROP_TEXT, nextSellText);
    
    // Update pause button
    if(isPaused)

@@ -1082,6 +1082,20 @@ void CreatePanel()
    ObjectSetInteger(0, panelPrefix + "Balance", OBJPROP_ZORDER, 1);
    yOffset += 25;
    
+   // Spread display
+   ObjectCreate(0, panelPrefix + "Spread", OBJ_LABEL, 0, 0, 0);
+   ObjectSetInteger(0, panelPrefix + "Spread", OBJPROP_XDISTANCE, panelX + 20);
+   ObjectSetInteger(0, panelPrefix + "Spread", OBJPROP_YDISTANCE, panelY + yOffset);
+   ObjectSetString(0, panelPrefix + "Spread", OBJPROP_TEXT, "Spread: 0 pts");
+   ObjectSetInteger(0, panelPrefix + "Spread", OBJPROP_COLOR, clrLime);
+   ObjectSetInteger(0, panelPrefix + "Spread", OBJPROP_FONTSIZE, 9);
+   ObjectSetString(0, panelPrefix + "Spread", OBJPROP_FONT, "Arial");
+   ObjectSetInteger(0, panelPrefix + "Spread", OBJPROP_CORNER, CORNER_LEFT_UPPER);
+   ObjectSetInteger(0, panelPrefix + "Spread", OBJPROP_SELECTABLE, false);
+   ObjectSetInteger(0, panelPrefix + "Spread", OBJPROP_HIDDEN, true);
+   ObjectSetInteger(0, panelPrefix + "Spread", OBJPROP_ZORDER, 1);
+   yOffset += 25;
+   
    // Next BUY level
    ObjectCreate(0, panelPrefix + "NextBuy", OBJ_LABEL, 0, 0, 0);
    ObjectSetInteger(0, panelPrefix + "NextBuy", OBJPROP_XDISTANCE, panelX + 20);
@@ -1314,6 +1328,18 @@ void UpdatePanel()
    // Balance
    ObjectSetString(0, panelPrefix + "Balance", OBJPROP_TEXT, 
       "Balance: $" + DoubleToString(currentBalance, 2));
+   
+   // Spread with color coding
+   long currentSpread = SymbolInfoInteger(_Symbol, SYMBOL_SPREAD);
+   color spreadColor = clrLime;
+   if(currentSpread > MaxSpread * 0.8) // Over 80% of max
+      spreadColor = clrOrange;
+   if(currentSpread > MaxSpread)
+      spreadColor = clrRed;
+   
+   ObjectSetString(0, panelPrefix + "Spread", OBJPROP_TEXT, 
+      "Spread: " + IntegerToString(currentSpread) + " pts (Max: " + IntegerToString(MaxSpread) + ")");
+   ObjectSetInteger(0, panelPrefix + "Spread", OBJPROP_COLOR, spreadColor);
    
    // Calculate next BUY level (MOMENTUM: Only buy when ABOVE reference)
    double nextBuyLevel = 0;
