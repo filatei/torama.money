@@ -17,11 +17,17 @@
 //| INPUT PARAMETERS                                                  |
 //+------------------------------------------------------------------+
 
+enum ENUM_TRADE_DIRECTION
+{
+   BUYONLY,    // BUY ONLY - Buys up and down the grid
+   SELLONLY    // SELL ONLY - Sells up and down the grid
+};
+
 input group "=== DIRECTION ==="
-input ENUM_ORDER_TYPE Direction = ORDER_TYPE_BUY;  // Trading Direction (BUY or SELL only)
+input ENUM_TRADE_DIRECTION Direction = BUYONLY;  // Trading Direction
 
 input group "=== GRID SETTINGS ==="
-input double   GridGapPercent = 0.01;             // Grid gap % (0.2-0.5 recommended)
+input double   GridGapPercent = 0.30;             // Grid gap % (0.2-0.5 recommended)
 input int      MaxPositions = 20;                 // Maximum positions
 input double   LotSize = 0.1;                     // Lot size per position
 
@@ -32,13 +38,12 @@ input double   GroupTPFactor = 5.0;               // Group TP factor (5 = 5x gap
 input double   GroupSLFactor = 0;                 // Group SL factor (0 = no SL)
 
 input group "=== RISK MANAGEMENT ==="
-double   MaxDrawdownPercent = 20.0;         // Max drawdown % (emergency stop)
-double   DailyTargetPercent = 200.0;        // Daily profit target (% of start balance)
+input double   MaxDrawdownPercent = 20.0;         // Max drawdown % (emergency stop)
+input double   DailyTargetPercent = 200.0;        // Daily profit target (% of start balance)
 
 input group "=== SETTINGS ==="
-int      MaxSpread = 2000;                  // Maximum spread (points)
-input int      MagicNumber = 77735;               // Magic number
-bool     ShowPanel = true;                  // Show info panel
+input int      MaxSpread = 2000;                  // Maximum spread (points)
+input bool     ShowPanel = true;                  // Show info panel
 
 //+------------------------------------------------------------------+
 //| GLOBAL VARIABLES                                                  |
@@ -75,6 +80,9 @@ bool dailyTargetReached = false;
 // Statistics
 int totalTrades = 0;
 bool isPaused = false;
+
+// Magic number (auto-generated)
+int MagicNumber = 0;
 
 // Panel
 string panelPrefix = "TORAMA_AGG_";
@@ -135,18 +143,15 @@ int OnInit()
    Print("🚀 ", EA_NAME, " v", EA_VERSION);
    Print("═══════════════════════════════════════");
    
-   // Validate direction
-   if(Direction != ORDER_TYPE_BUY && Direction != ORDER_TYPE_SELL)
-   {
-      Print("❌ ERROR: Direction must be BUY or SELL only!");
-      return(INIT_PARAMETERS_INCORRECT);
-   }
+   // Generate unique magic number from current time in milliseconds
+   MagicNumber = (int)(GetTickCount() % 2147483647);  // Keep within int range
+   Print("🔢 Generated Magic Number: ", MagicNumber);
    
    // Validate lot size
    validatedLotSize = ValidateLotSize(LotSize);
    
    Print("📊 CONFIGURATION:");
-   Print("Direction: ", Direction == ORDER_TYPE_BUY ? "BUY ONLY" : "SELL ONLY");
+   Print("Direction: ", Direction == BUYONLY ? "BUY ONLY" : "SELL ONLY");
    Print("Symbol: ", _Symbol);
    Print("Lot Size: ", validatedLotSize);
    Print("Max Positions: ", MaxPositions);
@@ -178,7 +183,7 @@ int OnInit()
    
    Print("═══════════════════════════════════════");
    Print("⚡ AGGRESSIVE STRATEGY:");
-   Print("   Direction: ", Direction == ORDER_TYPE_BUY ? "BUY UP & DOWN" : "SELL UP & DOWN");
+   Print("   Direction: ", Direction == BUYONLY ? "BUY UP & DOWN" : "SELL UP & DOWN");
    Print("   Opens positions as price moves through grid");
    Print("   Takes profits aggressively");
    Print("   Max Positions: ", MaxPositions);
@@ -341,11 +346,12 @@ void CheckGrid()
          }
          
          // Open position at this level
-         double openPrice = (Direction == ORDER_TYPE_BUY) ? ask : bid;
+         ENUM_ORDER_TYPE orderType = (Direction == BUYONLY) ? ORDER_TYPE_BUY : ORDER_TYPE_SELL;
+         double openPrice = (Direction == BUYONLY) ? ask : bid;
          
-         if(OpenPosition(Direction, openPrice, levelPrice))
+         if(OpenPosition(orderType, openPrice, levelPrice))
          {
-            string dirStr = (Direction == ORDER_TYPE_BUY) ? "BUY" : "SELL";
+            string dirStr = (Direction == BUYONLY) ? "BUY" : "SELL";
             Print("⚡ ", dirStr, " opened at grid level: $", DoubleToString(levelPrice, (int)SymbolInfoInteger(_Symbol, SYMBOL_DIGITS)));
          }
       }
@@ -418,12 +424,24 @@ void CheckGroupTPSL()
    {
       double groupTPDollars = currentGapSize * GroupTPFactor;
       
+      // Debug output
+      static datetime lastTPDebug = 0;
+      if(TimeCurrent() - lastTPDebug >= 60)  // Every 60 seconds
+      {
+         lastTPDebug = TimeCurrent();
+         Print("💰 GROUP TP CHECK: Current P/L: $", DoubleToString(totalProfit, 2), 
+               " | Target: $", DoubleToString(groupTPDollars, 2),
+               " | Gap: $", DoubleToString(currentGapSize, 2), 
+               " | Factor: ", DoubleToString(GroupTPFactor, 1));
+      }
+      
       if(totalProfit >= groupTPDollars)
       {
          Print("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
          Print("🎯 GROUP TP HIT: $", DoubleToString(totalProfit, 2), " (Target: $", DoubleToString(groupTPDollars, 2), ")");
          CloseAllPositions();
          Print("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
+         return;  // Exit after closing
       }
    }
    
@@ -431,6 +449,17 @@ void CheckGroupTPSL()
    if(GroupSLFactor > 0)
    {
       double groupSLDollars = -(currentGapSize * GroupSLFactor);
+      
+      // Debug output
+      static datetime lastSLDebug = 0;
+      if(TimeCurrent() - lastSLDebug >= 60)  // Every 60 seconds
+      {
+         lastSLDebug = TimeCurrent();
+         Print("🛑 GROUP SL CHECK: Current P/L: $", DoubleToString(totalProfit, 2), 
+               " | Limit: $", DoubleToString(groupSLDollars, 2),
+               " | Gap: $", DoubleToString(currentGapSize, 2), 
+               " | Factor: ", DoubleToString(GroupSLFactor, 1));
+      }
       
       if(totalProfit <= groupSLDollars)
       {
@@ -642,7 +671,7 @@ void PrintDebugStatus()
    Print("╠══════════════════════════════════════════════════════════════╣");
    Print("║ GRID STATUS                                                  ║");
    Print("╠══════════════════════════════════════════════════════════════╣");
-   Print("Direction:             ", Direction == ORDER_TYPE_BUY ? "BUY ONLY" : "SELL ONLY");
+   Print("Direction:             ", Direction == BUYONLY ? "BUY ONLY" : "SELL ONLY");
    Print("Current Price:         $", DoubleToString(currentPrice, (int)SymbolInfoInteger(_Symbol, SYMBOL_DIGITS)));
    Print("Reference Price:       $", DoubleToString(referencePrice, (int)SymbolInfoInteger(_Symbol, SYMBOL_DIGITS)));
    Print("Grid Gap:              $", DoubleToString(currentGapSize, 2), " (", DoubleToString(GridGapPercent, 2), "%)");
@@ -792,9 +821,9 @@ void CreatePanel()
    yPos += 35;
    
    // Direction
-   color dirColor = (Direction == ORDER_TYPE_BUY) ? clrDodgerBlue : clrOrangeRed;
+   color dirColor = (Direction == BUYONLY) ? clrDodgerBlue : clrOrangeRed;
    CreateLabel(panelPrefix + "DirectionLabel", x + 10, yPos, "Direction:", clrGold, 9, "Arial Bold");
-   CreateLabel(panelPrefix + "Direction", x + 100, yPos, Direction == ORDER_TYPE_BUY ? "BUY ONLY" : "SELL ONLY", dirColor, 9, "Arial Black");
+   CreateLabel(panelPrefix + "Direction", x + 100, yPos, Direction == BUYONLY ? "BUY ONLY" : "SELL ONLY", dirColor, 9, "Arial Black");
    yPos += lineHeight;
    
    // Price
@@ -964,6 +993,9 @@ void CreateLabel(string name, int x, int y, string text, color clr, int fontSize
    ObjectSetString(0, name, OBJPROP_FONT, font);
    ObjectSetString(0, name, OBJPROP_TEXT, text);
    ObjectSetInteger(0, name, OBJPROP_SELECTABLE, false);
+   ObjectSetInteger(0, name, OBJPROP_BACK, false);     // Keep on front
+   ObjectSetInteger(0, name, OBJPROP_HIDDEN, true);    // Hide from object list
+   ObjectSetInteger(0, name, OBJPROP_ZORDER, 0);       // Top layer
 }
 
 //+------------------------------------------------------------------+
@@ -982,6 +1014,9 @@ void CreateButton(string name, int x, int y, int width, int height, string text,
    ObjectSetInteger(0, name, OBJPROP_BORDER_COLOR, clrGold);
    ObjectSetInteger(0, name, OBJPROP_FONTSIZE, 9);
    ObjectSetString(0, name, OBJPROP_FONT, "Arial Bold");
+   ObjectSetInteger(0, name, OBJPROP_BACK, false);     // Keep on front
+   ObjectSetInteger(0, name, OBJPROP_HIDDEN, true);    // Hide from object list
+   ObjectSetInteger(0, name, OBJPROP_ZORDER, 0);       // Top layer
 }
 
 //+------------------------------------------------------------------+

@@ -34,7 +34,6 @@ input bool     ResetSessionDaily = true;         // Reset session profit daily
 
 input group "=== SETTINGS ==="
 input int      MaxSpread = 2000;                 // Maximum spread (points)
-input int      MagicNumber = 77733;              // Magic number
 input bool     ShowPanel = true;                 // Show info panel
 
 //+------------------------------------------------------------------+
@@ -75,6 +74,9 @@ bool sessionTargetReached = false;
 // Statistics
 int totalTrades = 0;
 bool isPaused = false;
+
+// Magic number (auto-generated)
+int MagicNumber = 0;
 
 // Panel
 string panelPrefix = "TORAMA_MR_";
@@ -139,6 +141,10 @@ int OnInit()
    Print("═══════════════════════════════════════");
    Print("🚀 ", EA_NAME, " v", EA_VERSION);
    Print("═══════════════════════════════════════");
+   
+   // Generate unique magic number from current time in milliseconds
+   MagicNumber = (int)(GetTickCount() % 2147483647);  // Keep within int range
+   Print("🔢 Generated Magic Number: ", MagicNumber);
    
    // Validate lot size
    validatedLotSize = ValidateLotSize(LotSize);
@@ -496,6 +502,17 @@ void CheckGlobalTP()
       return;
    
    double globalTPDollars = currentGapSize * GlobalTPFactor;
+   
+   // Debug output every 60 seconds
+   static datetime lastDebug = 0;
+   if(TimeCurrent() - lastDebug >= 60)
+   {
+      lastDebug = TimeCurrent();
+      Print("💰 GLOBAL TP CHECK: Current P/L: $", DoubleToString(totalProfit, 2), 
+            " | Target: $", DoubleToString(globalTPDollars, 2),
+            " | Gap: $", DoubleToString(currentGapSize, 2), 
+            " | Factor: ", DoubleToString(GlobalTPFactor, 1));
+   }
    
    if(totalProfit >= globalTPDollars)
    {
