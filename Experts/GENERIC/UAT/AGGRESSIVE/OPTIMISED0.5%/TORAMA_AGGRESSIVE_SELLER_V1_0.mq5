@@ -785,24 +785,36 @@ void OnChartEvent(const int id, const long &lparam, const double &dparam, const 
    
    if(id == CHARTEVENT_OBJECT_CLICK)
    {
+      // CLOSE button - Works even when EA is paused
       if(sparam == panelPrefix + "CloseBtn")
       {
          ObjectSetInteger(0, panelPrefix + "CloseBtn", OBJPROP_STATE, false);
          if(ArraySize(positions) > 0)
          {
+            Print("🔴 CLOSE button pressed - Closing all positions...");
             CloseAllPositions();
+            Print("✅ All positions closed");
+         }
+         else
+         {
+            Print("ℹ️ No positions to close");
          }
       }
+      // PAUSE/RESUME button
       else if(sparam == panelPrefix + "PauseBtn")
       {
          ObjectSetInteger(0, panelPrefix + "PauseBtn", OBJPROP_STATE, false);
          isPaused = !isPaused;
-         Print(isPaused ? "⏸️ EA PAUSED" : "▶️ EA RESUMED");
+         Print(isPaused ? "⏸️ EA PAUSED - No new positions will open" : "▶️ EA RESUMED - Trading active");
+         Print(isPaused ? "   (CLOSE and TAKE TP buttons still work)" : "");
       }
+      // TAKE TP button - Works even when EA is paused
       else if(sparam == panelPrefix + "TPBtn")
       {
          ObjectSetInteger(0, panelPrefix + "TPBtn", OBJPROP_STATE, false);
+         Print("💰 TAKE TP button pressed - Closing profitable positions...");
          CloseProfitablePositions();
+         Print("✅ Profitable positions closed");
       }
    }
 }
@@ -978,7 +990,7 @@ void UpdatePanel()
    }
    else if(isPaused)
    {
-      ObjectSetString(0, panelPrefix + "Status", OBJPROP_TEXT, "⏸️ PAUSED");
+      ObjectSetString(0, panelPrefix + "Status", OBJPROP_TEXT, "⏸️ PAUSED (Buttons Active)");
       ObjectSetInteger(0, panelPrefix + "Status", OBJPROP_COLOR, clrOrange);
    }
    else
