@@ -31,18 +31,18 @@ input double   GridGapPercent = 0.01;             // Grid gap % (0.2-0.5 recomme
 input int      MaxPositions = 20;                 // Maximum positions
 input double   LotSize = 0.1;                     // Lot size per position
 
-input group "=== TAKE PROFIT & STOP LOSS ==="
+input group "=== TAKE PROFIT ==="
 input double   IndividualTPFactor = 3.0;          // Individual TP factor (3 = 3x gap)
-input double   IndividualSLFactor = 0;            // Individual SL factor (0 = no SL)
 input double   GroupTPFactor = 5.0;               // Group TP factor (5 = 5x gap)
-input double   GroupSLFactor = 0;                 // Group SL factor (0 = no SL)
 
-double   MaxDrawdownPercent = 20.0;         // Max drawdown % (emergency stop)
-double   DailyTargetPercent = 200.0;        // Daily profit target (% of start balance)
+input group "=== RISK MANAGEMENT ==="
+input double   MaxDrawdownPercent = 20.0;         // Max drawdown % (emergency stop)
+input double   DailyTargetPercent = 200.0;        // Daily profit target (% of start balance)
+// Note: Every trade has automatic 1% balance SL
 
-
-int      MaxSpread = 2000;                  // Maximum spread (points)
-bool     ShowPanel = true;                  // Show info panel
+input group "=== SETTINGS ==="
+input int      MaxSpread = 2000;                  // Maximum spread (points)
+input bool     ShowPanel = true;                  // Show info panel
 
 //+------------------------------------------------------------------+
 //| GLOBAL VARIABLES                                                  |
@@ -429,30 +429,8 @@ void CheckGroupTPSL()
       }
    }
    
-   // Check Group SL
-   if(GroupSLFactor > 0)
-   {
-      double groupSLDollars = -(currentGapSize * GroupSLFactor);
-      
-      // Debug output
-      static datetime lastSLDebug = 0;
-      if(TimeCurrent() - lastSLDebug >= 60)  // Every 60 seconds
-      {
-         lastSLDebug = TimeCurrent();
-         Print("🛑 GROUP SL CHECK: Current P/L: $", DoubleToString(totalProfit, 2), 
-               " | Limit: $", DoubleToString(groupSLDollars, 2),
-               " | Gap: $", DoubleToString(currentGapSize, 2), 
-               " | Factor: ", DoubleToString(GroupSLFactor, 1));
-      }
-      
-      if(totalProfit <= groupSLDollars)
-      {
-         Print("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
-         Print("🛑 GROUP SL HIT: $", DoubleToString(totalProfit, 2), " (Limit: $", DoubleToString(groupSLDollars, 2), ")");
-         CloseAllPositions();
-         Print("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
-      }
-   }
+   // Note: Individual 1% balance SL protects each position
+   // No group SL needed - positions close individually at their SLs
 }
 
 //+------------------------------------------------------------------+
@@ -487,20 +465,39 @@ bool OpenPosition(ENUM_ORDER_TYPE orderType, double price, double levelPrice)
       }
    }
    
-   // Set SL based on individual SL factor
-   if(IndividualSLFactor > 0)
+   // ALWAYS set 1% balance-based SL
+   double balance = AccountInfoDouble(ACCOUNT_BALANCE);
+   double riskAmount = balance * 0.01;  // 1% of balance
+   
+   // Calculate point value for the symbol
+   double tickValue = SymbolInfoDouble(_Symbol, SYMBOL_TRADE_TICK_VALUE);
+   double tickSize = SymbolInfoDouble(_Symbol, SYMBOL_TRADE_TICK_SIZE);
+   
+   // Calculate how much 1 point (or 1 dollar for Gold) is worth for our lot size
+   double pointValue = tickValue / tickSize;  // Value per 1.0 price unit
+   double positionValue = pointValue * validatedLotSize;  // Value for our lot size
+   
+   // Calculate SL distance in price units
+   double slDistancePrice = riskAmount / positionValue;
+   
+   // Apply SL
+   if(orderType == ORDER_TYPE_BUY)
    {
-      double slDistance = currentGapSize * IndividualSLFactor;
-      
-      if(orderType == ORDER_TYPE_BUY)
-      {
-         request.sl = NormalizeDouble(price - slDistance, (int)SymbolInfoInteger(_Symbol, SYMBOL_DIGITS));
-      }
-      else
-      {
-         request.sl = NormalizeDouble(price + slDistance, (int)SymbolInfoInteger(_Symbol, SYMBOL_DIGITS));
-      }
+      request.sl = NormalizeDouble(price - slDistancePrice, (int)SymbolInfoInteger(_Symbol, SYMBOL_DIGITS));
    }
+   else
+   {
+      request.sl = NormalizeDouble(price + slDistancePrice, (int)SymbolInfoInteger(_Symbol, SYMBOL_DIGITS));
+   }
+   
+   // Debug output
+   Print("💰 SL Calculation:");
+   Print("   Balance: $", DoubleToString(balance, 2));
+   Print("   Risk Amount (1%): $", DoubleToString(riskAmount, 2));
+   Print("   Position Value/Point: $", DoubleToString(positionValue, 2));
+   Print("   SL Distance: $", DoubleToString(slDistancePrice, 4));
+   Print("   Entry: $", DoubleToString(price, (int)SymbolInfoInteger(_Symbol, SYMBOL_DIGITS)));
+   Print("   SL: $", DoubleToString(request.sl, (int)SymbolInfoInteger(_Symbol, SYMBOL_DIGITS)));
    
    if(!OrderSend(request, result))
    {
