@@ -1,17 +1,17 @@
 //+------------------------------------------------------------------+
-//|                    TORAMA Mean Reversion Grid EA v1.0            |
+//|                    TORAMA Momentum Grid EA v1.0                  |
 //|                                           TORAMA CAPITAL          |
 //|                                      https://www.torama.money     |
 //+------------------------------------------------------------------+
 #property copyright "TORAMA CAPITAL"
 #property link      "https://www.torama.money"
 #property version   "1.0"
-#property description "Pure Mean Reversion Grid EA"
-#property description "Buys as price falls, Sells as price rises"
-#property description "Takes profit on reversals - Classic mean reversion"
+#property description "Pure Momentum Grid EA"
+#property description "Buys as price rises, Sells as price falls"
+#property description "Rides the trend - Classic momentum trading"
 
 #define EA_VERSION "1.0"
-#define EA_NAME "TORAMA MEAN REVERSION"
+#define EA_NAME "TORAMA MOMENTUM"
 
 //+------------------------------------------------------------------+
 //| INPUT PARAMETERS                                                  |
@@ -34,7 +34,7 @@ input bool     ResetSessionDaily = true;         // Reset session profit daily
 
 input group "=== SETTINGS ==="
 input int      MaxSpread = 2000;                 // Maximum spread (points)
-input int      MagicNumber = 77733;              // Magic number
+input int      MagicNumber = 77734;              // Magic number
 input bool     ShowPanel = true;                 // Show info panel
 
 //+------------------------------------------------------------------+
@@ -77,7 +77,7 @@ int totalTrades = 0;
 bool isPaused = false;
 
 // Panel
-string panelPrefix = "TORAMA_MR_";
+string panelPrefix = "TORAMA_MO_";
 bool panelVisible = true;
 
 // Lot size validation
@@ -179,10 +179,10 @@ int OnInit()
    currentDay = time.day;
    
    Print("═══════════════════════════════════════");
-   Print("📈 MEAN REVERSION STRATEGY:");
-   Print("   BUY positions: Open as price FALLS below grid levels");
-   Print("   SELL positions: Open as price RISES above grid levels");
-   Print("   Profit Target: Reversal to mean (opposite direction)");
+   Print("📈 MOMENTUM STRATEGY:");
+   Print("   BUY positions: Open as price RISES above grid levels");
+   Print("   SELL positions: Open as price FALLS below grid levels");
+   Print("   Profit Target: Continuation of trend");
    Print("   Max BUY positions: ", MaxBuyPositions);
    Print("   Max SELL positions: ", MaxSellPositions);
    Print("═══════════════════════════════════════");
@@ -196,7 +196,7 @@ int OnInit()
    // Sync existing positions
    SyncPositions();
    
-   return INIT_SUCCEEDED;
+   return(INIT_SUCCEEDED);
 }
 
 //+------------------------------------------------------------------+
@@ -204,125 +204,95 @@ int OnInit()
 //+------------------------------------------------------------------+
 void OnDeinit(const int reason)
 {
+   // Clean up panel objects
    ObjectsDeleteAll(0, panelPrefix);
-   Print("EA stopped. Total trades: ", totalTrades);
+   ChartRedraw();
+   
+   Print("═══════════════════════════════════════");
+   Print("👋 ", EA_NAME, " stopped");
+   Print("Total trades: ", totalTrades);
    Print("═══════════════════════════════════════");
 }
 
 //+------------------------------------------------------------------+
-//| MAIN TICK FUNCTION                                                |
+//| ON TICK                                                           |
 //+------------------------------------------------------------------+
 void OnTick()
 {
-   // Debug logging
-   debugTickCounter++;
-   datetime currentTime = TimeCurrent();
-   bool shouldDebug = (debugTickCounter % 50 == 0) || (currentTime - lastDebugTime >= 30);
-   
-   if(debugVerbose && shouldDebug)
-   {
-      lastDebugTime = currentTime;
-      Print("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
-      Print("🔍 DEBUG TICK #", debugTickCounter);
-      Print("Time: ", TimeToString(currentTime, TIME_DATE|TIME_SECONDS));
-      Print("BUY Positions: ", ArraySize(buyPositions), "/", MaxBuyPositions);
-      Print("SELL Positions: ", ArraySize(sellPositions), "/", MaxSellPositions);
-      Print("Status: ", isPaused ? "PAUSED" : (emergencyStop ? "STOPPED" : (sessionTargetReached ? "TARGET" : "ACTIVE")));
-      Print("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
-   }
-   
-   // Update panel
-   if(ShowPanel) UpdatePanel();
-   
-   // Check for daily session reset
-   if(ResetSessionDaily)
-   {
-      MqlDateTime time;
-      TimeToStruct(TimeCurrent(), time);
-      if(time.day != currentDay)
-      {
-         currentDay = time.day;
-         sessionStartBalance = AccountInfoDouble(ACCOUNT_BALANCE);
-         sessionProfit = 0;
-         sessionTargetReached = false;
-         Print("🔄 Daily session reset. New start balance: $", DoubleToString(sessionStartBalance, 2));
-      }
-   }
-   
    // Check if paused
    if(isPaused)
    {
-      if(debugVerbose && debugTickCounter % 200 == 0)
-      {
-         Print("⏸️ EA PAUSED - Not trading");
-         if(sessionTargetReached)
-            Print("   Reason: Session profit target reached ($", DoubleToString(sessionProfit, 2), ")");
-      }
+      UpdatePanel();
       return;
    }
    
    // Check emergency stop
    if(emergencyStop)
    {
-      if(debugVerbose && debugTickCounter % 200 == 0)
-      {
-         Print("🛑 EMERGENCY STOP ACTIVE!");
-         Print("   Reason: ", emergencyReason);
-      }
+      UpdatePanel();
       return;
    }
    
    // Check session target
-   if(SessionProfitPercent > 0 && !sessionTargetReached)
+   if(sessionTargetReached)
    {
-      double currentBalance = AccountInfoDouble(ACCOUNT_BALANCE);
-      sessionProfit = currentBalance - sessionStartBalance;
-      if(sessionProfit >= sessionProfitTarget)
-      {
-         sessionTargetReached = true;
-         Print("🎯 SESSION TARGET REACHED! Profit: $", DoubleToString(sessionProfit, 2));
-         isPaused = true;
-         return;
-      }
+      UpdatePanel();
+      return;
    }
    
-   // Update peak equity
-   double currentEquity = AccountInfoDouble(ACCOUNT_EQUITY);
-   if(currentEquity > peakEquity)
-      peakEquity = currentEquity;
-   
-   // Check drawdown limit
-   if(MaxDrawdownPercent > 0 && peakEquity > 0)
+   // Daily session reset
+   if(ResetSessionDaily)
    {
-      double currentDD = (currentEquity - peakEquity) / peakEquity * 100;
-      if(currentDD <= -MaxDrawdownPercent)
+      MqlDateTime time;
+      TimeToStruct(TimeCurrent(), time);
+      if(time.day != currentDay)
       {
-         emergencyStop = true;
-         emergencyReason = StringFormat("Drawdown %.1f%% exceeded limit %.1f%%", currentDD, MaxDrawdownPercent);
-         Print("🛑 EMERGENCY STOP: ", emergencyReason);
-         CloseAllPositions();
-         return;
+         sessionStartBalance = AccountInfoDouble(ACCOUNT_BALANCE);
+         sessionProfit = 0;
+         sessionTargetReached = false;
+         currentDay = time.day;
+         Print("📅 New day - Session profit reset");
       }
    }
    
    // Check spread
-   long spreadPoints = SymbolInfoInteger(_Symbol, SYMBOL_SPREAD);
-   if(spreadPoints > MaxSpread)
+   long spread = SymbolInfoInteger(_Symbol, SYMBOL_SPREAD);
+   if(spread > MaxSpread)
    {
-      if(debugVerbose && debugTickCounter % 100 == 0)
-      {
-         Print("⚠️ HIGH SPREAD: ", spreadPoints, " points (max: ", MaxSpread, ")");
-      }
+      UpdatePanel();
       return;
    }
    
-   // Get current price
-   double ask = SymbolInfoDouble(_Symbol, SYMBOL_ASK);
-   double bid = SymbolInfoDouble(_Symbol, SYMBOL_BID);
-   double currentPrice = (ask + bid) / 2.0;
+   // Update peak equity and check drawdown
+   double equity = AccountInfoDouble(ACCOUNT_EQUITY);
+   if(equity > peakEquity)
+      peakEquity = equity;
    
-   // Update gap size based on current price
-   currentGapSize = currentPrice * GridSpacingPercent / 100.0;
+   double drawdown = (peakEquity > 0) ? ((equity - peakEquity) / peakEquity * 100) : 0;
+   if(drawdown < -MaxDrawdownPercent)
+   {
+      emergencyStop = true;
+      emergencyReason = "Max drawdown exceeded";
+      CloseAllPositions();
+      Print("🛑 EMERGENCY STOP: ", emergencyReason);
+      UpdatePanel();
+      return;
+   }
+   
+   // Check session profit target
+   if(SessionProfitPercent > 0)
+   {
+      double currentBalance = AccountInfoDouble(ACCOUNT_BALANCE);
+      sessionProfit = currentBalance - sessionStartBalance;
+      
+      if(sessionProfit >= sessionProfitTarget)
+      {
+         sessionTargetReached = true;
+         Print("🎯 SESSION TARGET REACHED: $", DoubleToString(sessionProfit, 2));
+         UpdatePanel();
+         return;
+      }
+   }
    
    // Sync positions
    SyncPositions();
@@ -333,93 +303,79 @@ void OnTick()
    // Check global TP
    CheckGlobalTP();
    
-   // MEAN REVERSION LOGIC
-   CheckForBuyOpportunities(currentPrice, ask);
-   CheckForSellOpportunities(currentPrice, bid);
+   // Momentum grid logic
+   CheckMomentumGrid();
+   
+   // Update panel
+   UpdatePanel();
 }
 
 //+------------------------------------------------------------------+
-//| CHECK FOR BUY OPPORTUNITIES (Price falling)                      |
+//| MOMENTUM GRID LOGIC                                               |
 //+------------------------------------------------------------------+
-void CheckForBuyOpportunities(double currentPrice, double ask)
+void CheckMomentumGrid()
 {
-   // Can we open more BUY positions?
-   if(ArraySize(buyPositions) >= MaxBuyPositions)
-      return;
+   double ask = SymbolInfoDouble(_Symbol, SYMBOL_ASK);
+   double bid = SymbolInfoDouble(_Symbol, SYMBOL_BID);
+   double currentPrice = (ask + bid) / 2.0;
    
-   // Calculate how many grid levels down from last BUY level
-   double priceDropFromLastBuy = lastBuyLevel - currentPrice;
-   
-   // Has price fallen by at least one full grid level?
-   if(priceDropFromLastBuy >= currentGapSize)
+   // MOMENTUM LOGIC: BUY when price RISES
+   if(currentPrice > lastBuyLevel)
    {
-      // Calculate how many levels down we are
-      int levelsFallen = (int)MathFloor(priceDropFromLastBuy / currentGapSize);
+      double priceRiseFromLastBuy = currentPrice - lastBuyLevel;
+      int levelsRisen = (int)MathFloor(priceRiseFromLastBuy / currentGapSize);
       
       // Open BUY positions for each grid level we've crossed
-      for(int i = 0; i < levelsFallen; i++)
+      for(int i = 0; i < levelsRisen; i++)
       {
          if(ArraySize(buyPositions) >= MaxBuyPositions)
             break;
          
          // Calculate the exact level price
-         double levelPrice = lastBuyLevel - ((i + 1) * currentGapSize);
+         double levelPrice = lastBuyLevel + ((i + 1) * currentGapSize);
          
-         // Only open if current price is still below this level
-         if(currentPrice <= levelPrice)
+         // Only open if current price is still above this level
+         if(currentPrice >= levelPrice)
          {
             if(OpenPosition(ORDER_TYPE_BUY, ask, levelPrice))
             {
-               Print("📉 BUY opened at grid level: $", DoubleToString(levelPrice, (int)SymbolInfoInteger(_Symbol, SYMBOL_DIGITS)));
-               Print("   (Price fell from $", DoubleToString(lastBuyLevel, (int)SymbolInfoInteger(_Symbol, SYMBOL_DIGITS)), ")");
+               Print("📈 BUY opened at grid level: $", DoubleToString(levelPrice, (int)SymbolInfoInteger(_Symbol, SYMBOL_DIGITS)));
+               Print("   (Price rose from $", DoubleToString(lastBuyLevel, (int)SymbolInfoInteger(_Symbol, SYMBOL_DIGITS)), ")");
             }
          }
       }
       
-      // Update last BUY level to current price (rounded to nearest grid)
+      // Update last BUY level to current price
       lastBuyLevel = currentPrice;
    }
-}
-
-//+------------------------------------------------------------------+
-//| CHECK FOR SELL OPPORTUNITIES (Price rising)                      |
-//+------------------------------------------------------------------+
-void CheckForSellOpportunities(double currentPrice, double bid)
-{
-   // Can we open more SELL positions?
-   if(ArraySize(sellPositions) >= MaxSellPositions)
-      return;
    
-   // Calculate how many grid levels up from last SELL level
-   double priceRiseFromLastSell = currentPrice - lastSellLevel;
-   
-   // Has price risen by at least one full grid level?
-   if(priceRiseFromLastSell >= currentGapSize)
+   // MOMENTUM LOGIC: SELL when price FALLS
+   if(currentPrice < lastSellLevel)
    {
-      // Calculate how many levels up we are
-      int levelsRisen = (int)MathFloor(priceRiseFromLastSell / currentGapSize);
+      double priceFallFromLastSell = lastSellLevel - currentPrice;
+      int levelsFallen = (int)MathFloor(priceFallFromLastSell / currentGapSize);
       
       // Open SELL positions for each grid level we've crossed
-      for(int i = 0; i < levelsRisen; i++)
+      for(int i = 0; i < levelsFallen; i++)
       {
          if(ArraySize(sellPositions) >= MaxSellPositions)
             break;
          
          // Calculate the exact level price
-         double levelPrice = lastSellLevel + ((i + 1) * currentGapSize);
+         double levelPrice = lastSellLevel - ((i + 1) * currentGapSize);
          
-         // Only open if current price is still above this level
-         if(currentPrice >= levelPrice)
+         // Only open if current price is still below this level
+         if(currentPrice <= levelPrice)
          {
             if(OpenPosition(ORDER_TYPE_SELL, bid, levelPrice))
             {
-               Print("📈 SELL opened at grid level: $", DoubleToString(levelPrice, (int)SymbolInfoInteger(_Symbol, SYMBOL_DIGITS)));
-               Print("   (Price rose from $", DoubleToString(lastSellLevel, (int)SymbolInfoInteger(_Symbol, SYMBOL_DIGITS)), ")");
+               Print("📉 SELL opened at grid level: $", DoubleToString(levelPrice, (int)SymbolInfoInteger(_Symbol, SYMBOL_DIGITS)));
+               Print("   (Price fell from $", DoubleToString(lastSellLevel, (int)SymbolInfoInteger(_Symbol, SYMBOL_DIGITS)), ")");
             }
          }
       }
       
-      // Update last SELL level to current price (rounded to nearest grid)
+      // Update last SELL level to current price
       lastSellLevel = currentPrice;
    }
 }
@@ -500,12 +456,10 @@ void CheckGlobalTP()
    if(totalProfit >= globalTPDollars)
    {
       Print("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
-      Print("💰 GLOBAL TP HIT! Profit: $", DoubleToString(totalProfit, 2));
-      Print("   Target was: $", DoubleToString(globalTPDollars, 2));
-      Print("   Closing all positions...");
+      Print("🎯 GLOBAL TP HIT: $", DoubleToString(totalProfit, 2), " (Target: $", DoubleToString(globalTPDollars, 2), ")");
       CloseAllPositions();
       
-      // Reset reference to current price
+      // Reset grid to current price
       double ask = SymbolInfoDouble(_Symbol, SYMBOL_ASK);
       double bid = SymbolInfoDouble(_Symbol, SYMBOL_BID);
       referencePrice = (ask + bid) / 2.0;
@@ -532,7 +486,7 @@ bool OpenPosition(ENUM_ORDER_TYPE orderType, double price, double levelPrice)
    request.price = price;
    request.deviation = 10;
    request.magic = MagicNumber;
-   request.comment = StringFormat("MR_%.2f", levelPrice);
+   request.comment = StringFormat("MO_%.2f", levelPrice);
    
    // Set TP based on individual TP factor
    if(IndividualTPFactor > 0)
@@ -644,8 +598,8 @@ void RebuildGrid()
    Print("🔄 GRID REBUILT");
    Print("   New Reference: $", DoubleToString(referencePrice, (int)SymbolInfoInteger(_Symbol, SYMBOL_DIGITS)));
    Print("   Grid Gap: $", DoubleToString(currentGapSize, 2));
-   Print("   Next BUY: $", DoubleToString(lastBuyLevel - currentGapSize, (int)SymbolInfoInteger(_Symbol, SYMBOL_DIGITS)));
-   Print("   Next SELL: $", DoubleToString(lastSellLevel + currentGapSize, (int)SymbolInfoInteger(_Symbol, SYMBOL_DIGITS)));
+   Print("   Next BUY: $", DoubleToString(lastBuyLevel + currentGapSize, (int)SymbolInfoInteger(_Symbol, SYMBOL_DIGITS)));
+   Print("   Next SELL: $", DoubleToString(lastSellLevel - currentGapSize, (int)SymbolInfoInteger(_Symbol, SYMBOL_DIGITS)));
    Print("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
 }
 
@@ -667,9 +621,18 @@ void ClosePosition(ulong ticket)
    request.magic = MagicNumber;
    request.position = ticket;
    
-   ENUM_POSITION_TYPE posType = (ENUM_POSITION_TYPE)PositionGetInteger(POSITION_TYPE);
-   request.type = (posType == POSITION_TYPE_BUY) ? ORDER_TYPE_SELL : ORDER_TYPE_BUY;
-   request.price = (request.type == ORDER_TYPE_SELL) ? SymbolInfoDouble(_Symbol, SYMBOL_BID) : SymbolInfoDouble(_Symbol, SYMBOL_ASK);
+   ENUM_POSITION_TYPE type = (ENUM_POSITION_TYPE)PositionGetInteger(POSITION_TYPE);
+   
+   if(type == POSITION_TYPE_BUY)
+   {
+      request.type = ORDER_TYPE_SELL;
+      request.price = SymbolInfoDouble(_Symbol, SYMBOL_BID);
+   }
+   else
+   {
+      request.type = ORDER_TYPE_BUY;
+      request.price = SymbolInfoDouble(_Symbol, SYMBOL_ASK);
+   }
    
    if(!OrderSend(request, result))
    {
@@ -682,7 +645,7 @@ void ClosePosition(ulong ticket)
 }
 
 //+------------------------------------------------------------------+
-//| PRINT DEBUG STATUS                                                |
+//| DEBUG STATUS                                                      |
 //+------------------------------------------------------------------+
 void PrintDebugStatus()
 {
@@ -692,26 +655,23 @@ void PrintDebugStatus()
    double dd = (peakEquity > 0) ? ((equity - peakEquity) / peakEquity * 100) : 0;
    
    Print("╔══════════════════════════════════════════════════════════════╗");
-   Print("║          TORAMA MEAN REVERSION EA - DEBUG STATUS v1.0       ║");
+   Print("║ ", EA_NAME, " v", EA_VERSION, " - DEBUG STATUS                         ║");
    Print("╠══════════════════════════════════════════════════════════════╣");
-   Print("║ TRADING STATUS                                               ║");
-   Print("╠══════════════════════════════════════════════════════════════╣");
-   Print("Strategy:              PURE MEAN REVERSION");
-   Print("EA Status:             ", isPaused ? "PAUSED" : (emergencyStop ? "STOPPED" : (sessionTargetReached ? "TARGET" : "ACTIVE")));
-   if(emergencyStop) Print("Stop Reason:           ", emergencyReason);
-   Print("BUY Positions:         ", ArraySize(buyPositions), "/", MaxBuyPositions);
-   Print("SELL Positions:        ", ArraySize(sellPositions), "/", MaxSellPositions);
-   Print("Total Trades:          ", totalTrades);
-   Print("╠══════════════════════════════════════════════════════════════╣");
-   Print("║ PRICE & GRID                                                 ║");
+   Print("║ GRID STATUS                                                  ║");
    Print("╠══════════════════════════════════════════════════════════════╣");
    Print("Current Price:         $", DoubleToString(currentPrice, (int)SymbolInfoInteger(_Symbol, SYMBOL_DIGITS)));
    Print("Reference Price:       $", DoubleToString(referencePrice, (int)SymbolInfoInteger(_Symbol, SYMBOL_DIGITS)));
    Print("Grid Gap:              $", DoubleToString(currentGapSize, 2), " (", DoubleToString(GridSpacingPercent, 2), "%)");
    Print("Last BUY Level:        $", DoubleToString(lastBuyLevel, (int)SymbolInfoInteger(_Symbol, SYMBOL_DIGITS)));
    Print("Last SELL Level:       $", DoubleToString(lastSellLevel, (int)SymbolInfoInteger(_Symbol, SYMBOL_DIGITS)));
-   Print("Next BUY at:           $", DoubleToString(lastBuyLevel - currentGapSize, (int)SymbolInfoInteger(_Symbol, SYMBOL_DIGITS)), " (", DoubleToString(lastBuyLevel - currentPrice, 2), " away)");
-   Print("Next SELL at:          $", DoubleToString(lastSellLevel + currentGapSize, (int)SymbolInfoInteger(_Symbol, SYMBOL_DIGITS)), " (", DoubleToString(currentPrice - lastSellLevel, 2), " away)");
+   Print("Next BUY at:           $", DoubleToString(lastBuyLevel + currentGapSize, (int)SymbolInfoInteger(_Symbol, SYMBOL_DIGITS)), " (", DoubleToString(currentPrice - lastBuyLevel, 2), " away)");
+   Print("Next SELL at:          $", DoubleToString(lastSellLevel - currentGapSize, (int)SymbolInfoInteger(_Symbol, SYMBOL_DIGITS)), " (", DoubleToString(lastSellLevel - currentPrice, 2), " away)");
+   Print("╠══════════════════════════════════════════════════════════════╣");
+   Print("║ POSITIONS                                                    ║");
+   Print("╠══════════════════════════════════════════════════════════════╣");
+   Print("BUY Positions:         ", ArraySize(buyPositions), "/", MaxBuyPositions);
+   Print("SELL Positions:        ", ArraySize(sellPositions), "/", MaxSellPositions);
+   Print("Total Trades:          ", totalTrades);
    Print("╠══════════════════════════════════════════════════════════════╣");
    Print("║ PROFIT & RISK                                                ║");
    Print("╠══════════════════════════════════════════════════════════════╣");
@@ -838,7 +798,7 @@ void CreatePanel()
    int yPos = y + 10;
    
    // Title
-   CreateLabel(panelPrefix + "Title", x + 10, yPos, "TORAMA MEAN REVERSION", clrGold, 10, "Arial Black");
+   CreateLabel(panelPrefix + "Title", x + 10, yPos, "TORAMA MOMENTUM", clrGold, 10, "Arial Black");
    yPos += 25;
    
    // Status
@@ -860,12 +820,12 @@ void CreatePanel()
    CreateLabel(panelPrefix + "Price", x + 100, yPos, "$0", clrWhite, 9, "Arial Black");
    yPos += lineHeight;
    
-   // Next BUY Level
+   // Next BUY Level (MOMENTUM: rises with price)
    CreateLabel(panelPrefix + "NextBuyLabel", x + 10, yPos, "Next BUY:", clrDodgerBlue, 9, "Arial Bold");
    CreateLabel(panelPrefix + "NextBuy", x + 100, yPos, "$0", clrDodgerBlue, 9, "Arial Black");
    yPos += lineHeight;
    
-   // Next SELL Level
+   // Next SELL Level (MOMENTUM: falls with price)
    CreateLabel(panelPrefix + "NextSellLabel", x + 10, yPos, "Next SELL:", clrOrangeRed, 9, "Arial Bold");
    CreateLabel(panelPrefix + "NextSell", x + 100, yPos, "$0", clrOrangeRed, 9, "Arial Black");
    yPos += lineHeight;
@@ -881,12 +841,12 @@ void CreatePanel()
    yPos += lineHeight + 5;
    
    // BUY Positions
-   CreateLabel(panelPrefix + "BuyLabel", x + 10, yPos, "📉 BUY Pos:", clrDodgerBlue, 9, "Arial Black");
+   CreateLabel(panelPrefix + "BuyLabel", x + 10, yPos, "📈 BUY Pos:", clrDodgerBlue, 9, "Arial Black");
    CreateLabel(panelPrefix + "BuyPositions", x + 100, yPos, "0/15", clrDodgerBlue, 9, "Arial Black");
    yPos += lineHeight;
    
    // SELL Positions
-   CreateLabel(panelPrefix + "SellLabel", x + 10, yPos, "📈 SELL Pos:", clrOrangeRed, 9, "Arial Black");
+   CreateLabel(panelPrefix + "SellLabel", x + 10, yPos, "📉 SELL Pos:", clrOrangeRed, 9, "Arial Black");
    CreateLabel(panelPrefix + "SellPositions", x + 100, yPos, "0/15", clrOrangeRed, 9, "Arial Black");
    yPos += lineHeight + 5;
    
@@ -973,12 +933,12 @@ void UpdatePanel()
    // Price
    ObjectSetString(0, panelPrefix + "Price", OBJPROP_TEXT, "$" + FormatPrice(currentPrice, digits));
    
-   // Next BUY level (one gap below current price)
-   double nextBuyLevel = lastBuyLevel - currentGapSize;
+   // Next BUY level (MOMENTUM: one gap ABOVE current price - rises with trend)
+   double nextBuyLevel = lastBuyLevel + currentGapSize;
    ObjectSetString(0, panelPrefix + "NextBuy", OBJPROP_TEXT, "$" + FormatPrice(nextBuyLevel, digits));
    
-   // Next SELL level (one gap above current price)
-   double nextSellLevel = lastSellLevel + currentGapSize;
+   // Next SELL level (MOMENTUM: one gap BELOW current price - falls with trend)
+   double nextSellLevel = lastSellLevel - currentGapSize;
    ObjectSetString(0, panelPrefix + "NextSell", OBJPROP_TEXT, "$" + FormatPrice(nextSellLevel, digits));
    
    // Grid
