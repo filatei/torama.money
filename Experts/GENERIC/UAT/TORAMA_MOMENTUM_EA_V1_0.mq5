@@ -339,32 +339,36 @@ void CheckMomentumGrid()
       double priceRiseFromLastBuy = currentPrice - lastBuyLevel;
       int levelsRisen = (int)MathFloor(priceRiseFromLastBuy / currentGapSize);
       
-      Print("📈 Price rose! Levels crossed: ", levelsRisen);
-      
-      // Open BUY positions for each grid level we've crossed
-      for(int i = 0; i < levelsRisen; i++)
+      if(levelsRisen > 0)
       {
-         if(ArraySize(buyPositions) >= MaxBuyPositions)
-            break;
+         Print("📈 Price rose! Levels crossed: ", levelsRisen);
          
-         // Calculate the exact level price
-         double levelPrice = lastBuyLevel + ((i + 1) * currentGapSize);
-         
-         Print("   Checking level: $", DoubleToString(levelPrice, (int)SymbolInfoInteger(_Symbol, SYMBOL_DIGITS)));
-         
-         // Only open if current price is still above this level
-         if(currentPrice >= levelPrice)
+         // Open BUY positions for each grid level we've crossed
+         for(int i = 0; i < levelsRisen; i++)
          {
-            if(OpenPosition(ORDER_TYPE_BUY, ask, levelPrice))
+            if(ArraySize(buyPositions) >= MaxBuyPositions)
+               break;
+            
+            // Calculate the exact level price
+            double levelPrice = lastBuyLevel + ((i + 1) * currentGapSize);
+            
+            Print("   Checking level: $", DoubleToString(levelPrice, (int)SymbolInfoInteger(_Symbol, SYMBOL_DIGITS)));
+            
+            // Only open if current price is still above this level
+            if(currentPrice >= levelPrice)
             {
-               Print("📈 BUY opened at grid level: $", DoubleToString(levelPrice, (int)SymbolInfoInteger(_Symbol, SYMBOL_DIGITS)));
-               Print("   (Price rose from $", DoubleToString(lastBuyLevel, (int)SymbolInfoInteger(_Symbol, SYMBOL_DIGITS)), ")");
+               if(OpenPosition(ORDER_TYPE_BUY, ask, levelPrice))
+               {
+                  Print("📈 BUY opened at grid level: $", DoubleToString(levelPrice, (int)SymbolInfoInteger(_Symbol, SYMBOL_DIGITS)));
+                  Print("   (Price rose from $", DoubleToString(lastBuyLevel, (int)SymbolInfoInteger(_Symbol, SYMBOL_DIGITS)), ")");
+               }
             }
          }
+         
+         // ONLY update last BUY level after actually crossing grid levels
+         lastBuyLevel = lastBuyLevel + (levelsRisen * currentGapSize);
+         Print("   Updated lastBuyLevel to: $", DoubleToString(lastBuyLevel, (int)SymbolInfoInteger(_Symbol, SYMBOL_DIGITS)));
       }
-      
-      // Update last BUY level to current price
-      lastBuyLevel = currentPrice;
    }
    
    // MOMENTUM LOGIC: SELL when price FALLS
@@ -373,32 +377,36 @@ void CheckMomentumGrid()
       double priceFallFromLastSell = lastSellLevel - currentPrice;
       int levelsFallen = (int)MathFloor(priceFallFromLastSell / currentGapSize);
       
-      Print("📉 Price fell! Levels crossed: ", levelsFallen);
-      
-      // Open SELL positions for each grid level we've crossed
-      for(int i = 0; i < levelsFallen; i++)
+      if(levelsFallen > 0)
       {
-         if(ArraySize(sellPositions) >= MaxSellPositions)
-            break;
+         Print("📉 Price fell! Levels crossed: ", levelsFallen);
          
-         // Calculate the exact level price
-         double levelPrice = lastSellLevel - ((i + 1) * currentGapSize);
-         
-         Print("   Checking level: $", DoubleToString(levelPrice, (int)SymbolInfoInteger(_Symbol, SYMBOL_DIGITS)));
-         
-         // Only open if current price is still below this level
-         if(currentPrice <= levelPrice)
+         // Open SELL positions for each grid level we've crossed
+         for(int i = 0; i < levelsFallen; i++)
          {
-            if(OpenPosition(ORDER_TYPE_SELL, bid, levelPrice))
+            if(ArraySize(sellPositions) >= MaxSellPositions)
+               break;
+            
+            // Calculate the exact level price
+            double levelPrice = lastSellLevel - ((i + 1) * currentGapSize);
+            
+            Print("   Checking level: $", DoubleToString(levelPrice, (int)SymbolInfoInteger(_Symbol, SYMBOL_DIGITS)));
+            
+            // Only open if current price is still below this level
+            if(currentPrice <= levelPrice)
             {
-               Print("📉 SELL opened at grid level: $", DoubleToString(levelPrice, (int)SymbolInfoInteger(_Symbol, SYMBOL_DIGITS)));
-               Print("   (Price fell from $", DoubleToString(lastSellLevel, (int)SymbolInfoInteger(_Symbol, SYMBOL_DIGITS)), ")");
+               if(OpenPosition(ORDER_TYPE_SELL, bid, levelPrice))
+               {
+                  Print("📉 SELL opened at grid level: $", DoubleToString(levelPrice, (int)SymbolInfoInteger(_Symbol, SYMBOL_DIGITS)));
+                  Print("   (Price fell from $", DoubleToString(lastSellLevel, (int)SymbolInfoInteger(_Symbol, SYMBOL_DIGITS)), ")");
+               }
             }
          }
+         
+         // ONLY update last SELL level after actually crossing grid levels
+         lastSellLevel = lastSellLevel - (levelsFallen * currentGapSize);
+         Print("   Updated lastSellLevel to: $", DoubleToString(lastSellLevel, (int)SymbolInfoInteger(_Symbol, SYMBOL_DIGITS)));
       }
-      
-      // Update last SELL level to current price
-      lastSellLevel = currentPrice;
    }
 }
 
