@@ -717,11 +717,6 @@ void OnChartEvent(const int id, const long &lparam, const double &dparam, const 
          ObjectSetInteger(0, panelPrefix + "TPBtn", OBJPROP_STATE, false);
          CloseProfitablePositions();
       }
-      else if(sparam == panelPrefix + "RebuildBtn")
-      {
-         ObjectSetInteger(0, panelPrefix + "RebuildBtn", OBJPROP_STATE, false);
-         RebuildGrid();
-      }
    }
 }
 
@@ -732,7 +727,7 @@ void TogglePanelVisibility()
 {
    string objects[] = {
       "Background", "Title", "Status",
-      "CloseBtn", "PauseBtn", "TPBtn", "RebuildBtn",
+      "CloseBtn", "PauseBtn", "TPBtn",
       "DirectionLabel", "Direction",
       "PriceLabel", "Price",
       "GridLabel", "GridSpacing",
@@ -773,7 +768,7 @@ void CreatePanel()
    ObjectSetInteger(0, panelPrefix + "Background", OBJPROP_XDISTANCE, x);
    ObjectSetInteger(0, panelPrefix + "Background", OBJPROP_YDISTANCE, y);
    ObjectSetInteger(0, panelPrefix + "Background", OBJPROP_XSIZE, width);
-   ObjectSetInteger(0, panelPrefix + "Background", OBJPROP_YSIZE, 340);
+   ObjectSetInteger(0, panelPrefix + "Background", OBJPROP_YSIZE, 310);  // Reduced height (removed REBUILD button)
    ObjectSetInteger(0, panelPrefix + "Background", OBJPROP_BGCOLOR, C'20,20,25');
    ObjectSetInteger(0, panelPrefix + "Background", OBJPROP_BORDER_TYPE, BORDER_FLAT);
    ObjectSetInteger(0, panelPrefix + "Background", OBJPROP_COLOR, clrGold);
@@ -792,14 +787,10 @@ void CreatePanel()
    CreateLabel(panelPrefix + "Status", x + 10, yPos, "✅ ACTIVE", clrLimeGreen, 9, "Arial Black");
    yPos += lineHeight;
    
-   // Buttons Row 1
-   CreateButton(panelPrefix + "CloseBtn", x + 10, yPos, 80, 25, "CLOSE", clrRed, clrWhite);
-   CreateButton(panelPrefix + "PauseBtn", x + 95, yPos, 80, 25, "PAUSE", clrOrange, clrWhite);
-   CreateButton(panelPrefix + "TPBtn", x + 180, yPos, 90, 25, "TAKE TP", clrGreen, clrWhite);
-   yPos += 30;
-   
-   // Buttons Row 2
-   CreateButton(panelPrefix + "RebuildBtn", x + 10, yPos, 260, 25, "REBUILD GRID", clrDodgerBlue, clrWhite);
+   // Buttons - Single Row
+   CreateButton(panelPrefix + "CloseBtn", x + 10, yPos, 85, 25, "CLOSE", clrRed, clrWhite);
+   CreateButton(panelPrefix + "PauseBtn", x + 100, yPos, 85, 25, "PAUSE", clrOrange, clrWhite);
+   CreateButton(panelPrefix + "TPBtn", x + 190, yPos, 80, 25, "TAKE TP", clrGreen, clrWhite);
    yPos += 35;
    
    // Direction
