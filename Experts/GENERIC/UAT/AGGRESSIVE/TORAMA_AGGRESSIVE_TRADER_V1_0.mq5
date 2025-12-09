@@ -318,44 +318,38 @@ void CheckGrid()
    int levelIndex = (int)MathRound(distanceFromReference / currentGapSize);
    double nearestGridLevel = referencePrice + (levelIndex * currentGapSize);
    
-   // Check multiple grid levels around current price
-   // This ensures we catch opportunities when price moves quickly
-   int levelsToCheck = 3;  // Check 3 levels above and below
+   // Calculate how close we are to the nearest level
+   double distanceToNearestLevel = MathAbs(currentPrice - nearestGridLevel);
    
-   for(int offset = -levelsToCheck; offset <= levelsToCheck; offset++)
+   // Only trigger if we're VERY close to a grid level (within 5% of gap)
+   // This prevents continuous triggering
+   if(distanceToNearestLevel > (currentGapSize * 0.05))
+      return;
+   
+   // Check if we already have a position at this level
+   bool levelHasPosition = false;
+   
+   for(int i = 0; i < ArraySize(positions); i++)
    {
-      double checkLevel = nearestGridLevel + (offset * currentGapSize);
-      double distanceToLevel = MathAbs(currentPrice - checkLevel);
-      
-      // Only open if price is within half a gap of this level
-      if(distanceToLevel <= (currentGapSize / 2.0))
+      double entryDiff = MathAbs(positions[i].entryPrice - nearestGridLevel);
+      if(entryDiff < (currentGapSize * 0.15))  // Within 15% of gap = same level
       {
-         // Check if we already have a position at this level
-         bool levelHasPosition = false;
-         
-         for(int i = 0; i < ArraySize(positions); i++)
-         {
-            double entryDiff = MathAbs(positions[i].entryPrice - checkLevel);
-            if(entryDiff < (currentGapSize * 0.1))  // Within 10% of gap = same level
-            {
-               levelHasPosition = true;
-               break;
-            }
-         }
-         
-         // If no position at this level and under max, open one
-         if(!levelHasPosition && ArraySize(positions) < MaxPositions)
-         {
-            ENUM_ORDER_TYPE orderType = (Direction == BUYONLY) ? ORDER_TYPE_BUY : ORDER_TYPE_SELL;
-            double openPrice = (Direction == BUYONLY) ? ask : bid;
-            
-            if(OpenPosition(orderType, openPrice, checkLevel))
-            {
-               string dirStr = (Direction == BUYONLY) ? "BUY" : "SELL";
-               Print("⚡ ", dirStr, " opened at grid level: $", DoubleToString(checkLevel, digits));
-               Print("   (Replaced closed position or new level)");
-            }
-         }
+         levelHasPosition = true;
+         break;
+      }
+   }
+   
+   // If no position at this level and under max, open one
+   if(!levelHasPosition && ArraySize(positions) < MaxPositions)
+   {
+      ENUM_ORDER_TYPE orderType = (Direction == BUYONLY) ? ORDER_TYPE_BUY : ORDER_TYPE_SELL;
+      double openPrice = (Direction == BUYONLY) ? ask : bid;
+      
+      if(OpenPosition(orderType, openPrice, nearestGridLevel))
+      {
+         string dirStr = (Direction == BUYONLY) ? "BUY" : "SELL";
+         Print("⚡ ", dirStr, " opened at grid level: $", DoubleToString(nearestGridLevel, digits));
+         Print("   Distance from level: $", DoubleToString(distanceToNearestLevel, 4));
       }
    }
 }
