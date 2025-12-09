@@ -27,7 +27,7 @@ input group "=== DIRECTION ==="
 input ENUM_TRADE_DIRECTION Direction = BUYONLY;  // Trading Direction
 
 input group "=== GRID SETTINGS ==="
-input double   GridGapPercent = 0.30;             // Grid gap % (0.2-0.5 recommended)
+input double   GridGapPercent = 0.01;             // Grid gap % (0.2-0.5 recommended)
 input int      MaxPositions = 20;                 // Maximum positions
 input double   LotSize = 0.1;                     // Lot size per position
 
@@ -37,13 +37,12 @@ input double   IndividualSLFactor = 0;            // Individual SL factor (0 = n
 input double   GroupTPFactor = 5.0;               // Group TP factor (5 = 5x gap)
 input double   GroupSLFactor = 0;                 // Group SL factor (0 = no SL)
 
-input group "=== RISK MANAGEMENT ==="
-input double   MaxDrawdownPercent = 20.0;         // Max drawdown % (emergency stop)
-input double   DailyTargetPercent = 200.0;        // Daily profit target (% of start balance)
+double   MaxDrawdownPercent = 20.0;         // Max drawdown % (emergency stop)
+double   DailyTargetPercent = 200.0;        // Daily profit target (% of start balance)
 
-input group "=== SETTINGS ==="
-input int      MaxSpread = 2000;                  // Maximum spread (points)
-input bool     ShowPanel = true;                  // Show info panel
+
+int      MaxSpread = 2000;                  // Maximum spread (points)
+bool     ShowPanel = true;                  // Show info panel
 
 //+------------------------------------------------------------------+
 //| GLOBAL VARIABLES                                                  |
