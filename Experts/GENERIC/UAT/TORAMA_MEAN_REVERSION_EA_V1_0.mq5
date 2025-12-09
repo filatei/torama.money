@@ -24,8 +24,8 @@ input int      MaxSellPositions = 15;            // Maximum SELL positions
 input double   LotSize = 0.1;                    // Lot size per position
 
 input group "=== TAKE PROFIT SETTINGS ==="
-input double   IndividualTPPercent = 300.0;      // Individual TP as % of gap (300 = 3x gap)
-input double   GlobalTPPercent = 500.0;          // Global TP as % of gap (500 = 5x gap)
+input double   IndividualTPFactor = 3.0;         // Individual TP factor (3 = 3x gap)
+input double   GlobalTPFactor = 5.0;             // Global TP factor (5 = 5x gap)
 
 input group "=== RISK MANAGEMENT ==="
 input double   MaxDrawdownPercent = 20.0;        // Max drawdown % (emergency stop)
@@ -492,10 +492,10 @@ void CalculateTotalProfit()
 //+------------------------------------------------------------------+
 void CheckGlobalTP()
 {
-   if(GlobalTPPercent <= 0)
+   if(GlobalTPFactor <= 0)
       return;
    
-   double globalTPDollars = currentGapSize * GlobalTPPercent / 100.0;
+   double globalTPDollars = currentGapSize * GlobalTPFactor;
    
    if(totalProfit >= globalTPDollars)
    {
@@ -534,10 +534,10 @@ bool OpenPosition(ENUM_ORDER_TYPE orderType, double price, double levelPrice)
    request.magic = MagicNumber;
    request.comment = StringFormat("MR_%.2f", levelPrice);
    
-   // Set TP based on individual TP percent
-   if(IndividualTPPercent > 0)
+   // Set TP based on individual TP factor
+   if(IndividualTPFactor > 0)
    {
-      double tpDistance = currentGapSize * IndividualTPPercent / 100.0;
+      double tpDistance = currentGapSize * IndividualTPFactor;
       
       if(orderType == ORDER_TYPE_BUY)
       {
@@ -589,6 +589,64 @@ void CloseAllPositions()
    
    Print("🔒 Closed ", closed, " positions");
    SyncPositions();
+}
+
+//+------------------------------------------------------------------+
+//| CLOSE PROFITABLE POSITIONS ONLY                                   |
+//+------------------------------------------------------------------+
+void CloseProfitablePositions()
+{
+   int closed = 0;
+   
+   for(int i = PositionsTotal() - 1; i >= 0; i--)
+   {
+      ulong ticket = PositionGetTicket(i);
+      if(ticket > 0)
+      {
+         if(PositionGetString(POSITION_SYMBOL) == _Symbol && 
+            PositionGetInteger(POSITION_MAGIC) == MagicNumber)
+         {
+            if(PositionSelectByTicket(ticket))
+            {
+               double profit = PositionGetDouble(POSITION_PROFIT);
+               if(profit > 0)
+               {
+                  ClosePosition(ticket);
+                  closed++;
+               }
+            }
+         }
+      }
+   }
+   
+   Print("💰 Closed ", closed, " profitable positions");
+   SyncPositions();
+}
+
+//+------------------------------------------------------------------+
+//| REBUILD GRID AROUND CURRENT PRICE                                |
+//+------------------------------------------------------------------+
+void RebuildGrid()
+{
+   double ask = SymbolInfoDouble(_Symbol, SYMBOL_ASK);
+   double bid = SymbolInfoDouble(_Symbol, SYMBOL_BID);
+   double currentPrice = (ask + bid) / 2.0;
+   
+   // Set new reference to current price
+   referencePrice = currentPrice;
+   lastBuyLevel = currentPrice;
+   lastSellLevel = currentPrice;
+   
+   // Recalculate gap
+   currentGapSize = referencePrice * GridSpacingPercent / 100.0;
+   
+   Print("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
+   Print("🔄 GRID REBUILT");
+   Print("   New Reference: $", DoubleToString(referencePrice, (int)SymbolInfoInteger(_Symbol, SYMBOL_DIGITS)));
+   Print("   Grid Gap: $", DoubleToString(currentGapSize, 2));
+   Print("   Next BUY: $", DoubleToString(lastBuyLevel - currentGapSize, (int)SymbolInfoInteger(_Symbol, SYMBOL_DIGITS)));
+   Print("   Next SELL: $", DoubleToString(lastSellLevel + currentGapSize, (int)SymbolInfoInteger(_Symbol, SYMBOL_DIGITS)));
+   Print("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
 }
 
 //+------------------------------------------------------------------+
@@ -702,6 +760,16 @@ void OnChartEvent(const int id, const long &lparam, const double &dparam, const 
          isPaused = !isPaused;
          Print(isPaused ? "⏸️ EA PAUSED" : "▶️ EA RESUMED");
       }
+      else if(sparam == panelPrefix + "TPBtn")
+      {
+         ObjectSetInteger(0, panelPrefix + "TPBtn", OBJPROP_STATE, false);
+         CloseProfitablePositions();
+      }
+      else if(sparam == panelPrefix + "RebuildBtn")
+      {
+         ObjectSetInteger(0, panelPrefix + "RebuildBtn", OBJPROP_STATE, false);
+         RebuildGrid();
+      }
    }
 }
 
@@ -712,8 +780,10 @@ void TogglePanelVisibility()
 {
    string objects[] = {
       "Background", "Title", "Status",
-      "CloseBtn", "PauseBtn",
+      "CloseBtn", "PauseBtn", "TPBtn", "RebuildBtn",
       "PriceLabel", "Price",
+      "NextBuyLabel", "NextBuy",
+      "NextSellLabel", "NextSell",
       "GridLabel", "GridSpacing",
       "RefLabel", "RefPrice",
       "BuyLabel", "BuyPositions",
@@ -747,80 +817,117 @@ void CreatePanel()
    int width = 280;
    int lineHeight = 20;
    
-   // Background
+   // Background - SOLID, ON TOP OF EVERYTHING
    ObjectCreate(0, panelPrefix + "Background", OBJ_RECTANGLE_LABEL, 0, 0, 0);
    ObjectSetInteger(0, panelPrefix + "Background", OBJPROP_XDISTANCE, x);
    ObjectSetInteger(0, panelPrefix + "Background", OBJPROP_YDISTANCE, y);
    ObjectSetInteger(0, panelPrefix + "Background", OBJPROP_XSIZE, width);
-   ObjectSetInteger(0, panelPrefix + "Background", OBJPROP_YSIZE, 380);
-   ObjectSetInteger(0, panelPrefix + "Background", OBJPROP_BGCOLOR, clrBlack);
+   ObjectSetInteger(0, panelPrefix + "Background", OBJPROP_YSIZE, 380);  // Increased height for new elements
+   ObjectSetInteger(0, panelPrefix + "Background", OBJPROP_BGCOLOR, C'20,20,25');  // Solid dark background
    ObjectSetInteger(0, panelPrefix + "Background", OBJPROP_BORDER_TYPE, BORDER_FLAT);
    ObjectSetInteger(0, panelPrefix + "Background", OBJPROP_COLOR, clrGold);
-   ObjectSetInteger(0, panelPrefix + "Background", OBJPROP_BACK, true);
+   ObjectSetInteger(0, panelPrefix + "Background", OBJPROP_BACK, false);  // FRONT (on top)
    ObjectSetInteger(0, panelPrefix + "Background", OBJPROP_SELECTABLE, false);
+   ObjectSetInteger(0, panelPrefix + "Background", OBJPROP_HIDDEN, true);
+   ObjectSetInteger(0, panelPrefix + "Background", OBJPROP_ZORDER, 0);  // Top layer
    
    int yPos = y + 10;
    
    // Title
-   CreateLabel(panelPrefix + "Title", x + 10, yPos, "TORAMA MEAN REVERSION", clrGold, 10, "Arial Bold");
+   CreateLabel(panelPrefix + "Title", x + 10, yPos, "TORAMA MEAN REVERSION", clrGold, 10, "Arial Black");
    yPos += 25;
    
    // Status
-   CreateLabel(panelPrefix + "Status", x + 10, yPos, "✅ ACTIVE", clrLimeGreen, 9, "Arial Bold");
+   CreateLabel(panelPrefix + "Status", x + 10, yPos, "✅ ACTIVE", clrLimeGreen, 9, "Arial Black");
    yPos += lineHeight;
    
-   // Buttons
-   CreateButton(panelPrefix + "CloseBtn", x + 10, yPos, 125, 25, "CLOSE ALL", clrRed, clrWhite);
-   CreateButton(panelPrefix + "PauseBtn", x + 145, yPos, 125, 25, "PAUSE", clrOrange, clrWhite);
+   // Buttons Row 1
+   CreateButton(panelPrefix + "CloseBtn", x + 10, yPos, 80, 25, "CLOSE", clrRed, clrWhite);
+   CreateButton(panelPrefix + "PauseBtn", x + 95, yPos, 80, 25, "PAUSE", clrOrange, clrWhite);
+   CreateButton(panelPrefix + "TPBtn", x + 180, yPos, 90, 25, "TAKE TP", clrGreen, clrWhite);
+   yPos += 30;
+   
+   // Buttons Row 2
+   CreateButton(panelPrefix + "RebuildBtn", x + 10, yPos, 260, 25, "REBUILD GRID", clrDodgerBlue, clrWhite);
    yPos += 35;
    
    // Price
-   CreateLabel(panelPrefix + "PriceLabel", x + 10, yPos, "Price:", clrGold, 8, "Arial");
-   CreateLabel(panelPrefix + "Price", x + 100, yPos, "$0.00", clrWhite, 8, "Arial Bold");
+   CreateLabel(panelPrefix + "PriceLabel", x + 10, yPos, "Price:", clrGold, 9, "Arial Bold");
+   CreateLabel(panelPrefix + "Price", x + 100, yPos, "$0", clrWhite, 9, "Arial Black");
+   yPos += lineHeight;
+   
+   // Next BUY Level
+   CreateLabel(panelPrefix + "NextBuyLabel", x + 10, yPos, "Next BUY:", clrDodgerBlue, 9, "Arial Bold");
+   CreateLabel(panelPrefix + "NextBuy", x + 100, yPos, "$0", clrDodgerBlue, 9, "Arial Black");
+   yPos += lineHeight;
+   
+   // Next SELL Level
+   CreateLabel(panelPrefix + "NextSellLabel", x + 10, yPos, "Next SELL:", clrOrangeRed, 9, "Arial Bold");
+   CreateLabel(panelPrefix + "NextSell", x + 100, yPos, "$0", clrOrangeRed, 9, "Arial Black");
    yPos += lineHeight;
    
    // Grid
-   CreateLabel(panelPrefix + "GridLabel", x + 10, yPos, "Grid Gap:", clrGold, 8, "Arial");
-   CreateLabel(panelPrefix + "GridSpacing", x + 100, yPos, "0.30%", clrWhite, 8, "Arial");
+   CreateLabel(panelPrefix + "GridLabel", x + 10, yPos, "Grid Gap:", clrGold, 9, "Arial Bold");
+   CreateLabel(panelPrefix + "GridSpacing", x + 100, yPos, "0.3%", clrWhite, 9, "Arial Bold");
    yPos += lineHeight;
    
    // Reference
-   CreateLabel(panelPrefix + "RefLabel", x + 10, yPos, "Reference:", clrGold, 8, "Arial");
-   CreateLabel(panelPrefix + "RefPrice", x + 100, yPos, "$0.00", clrWhite, 8, "Arial");
+   CreateLabel(panelPrefix + "RefLabel", x + 10, yPos, "Reference:", clrGold, 9, "Arial Bold");
+   CreateLabel(panelPrefix + "RefPrice", x + 100, yPos, "$0", clrWhite, 9, "Arial Bold");
    yPos += lineHeight + 5;
    
    // BUY Positions
-   CreateLabel(panelPrefix + "BuyLabel", x + 10, yPos, "📉 BUY Pos:", clrDodgerBlue, 8, "Arial Bold");
-   CreateLabel(panelPrefix + "BuyPositions", x + 100, yPos, "0/15", clrDodgerBlue, 8, "Arial Bold");
+   CreateLabel(panelPrefix + "BuyLabel", x + 10, yPos, "📉 BUY Pos:", clrDodgerBlue, 9, "Arial Black");
+   CreateLabel(panelPrefix + "BuyPositions", x + 100, yPos, "0/15", clrDodgerBlue, 9, "Arial Black");
    yPos += lineHeight;
    
    // SELL Positions
-   CreateLabel(panelPrefix + "SellLabel", x + 10, yPos, "📈 SELL Pos:", clrOrangeRed, 8, "Arial Bold");
-   CreateLabel(panelPrefix + "SellPositions", x + 100, yPos, "0/15", clrOrangeRed, 8, "Arial Bold");
+   CreateLabel(panelPrefix + "SellLabel", x + 10, yPos, "📈 SELL Pos:", clrOrangeRed, 9, "Arial Black");
+   CreateLabel(panelPrefix + "SellPositions", x + 100, yPos, "0/15", clrOrangeRed, 9, "Arial Black");
    yPos += lineHeight + 5;
    
    // P/L
-   CreateLabel(panelPrefix + "PnLLabel", x + 10, yPos, "P/L:", clrGold, 8, "Arial");
-   CreateLabel(panelPrefix + "PnL", x + 100, yPos, "$0.00", clrWhite, 9, "Arial Bold");
+   CreateLabel(panelPrefix + "PnLLabel", x + 10, yPos, "P/L:", clrGold, 9, "Arial Bold");
+   CreateLabel(panelPrefix + "PnL", x + 100, yPos, "$0", clrWhite, 10, "Arial Black");
    yPos += lineHeight;
    
    // Equity
-   CreateLabel(panelPrefix + "EquityLabel", x + 10, yPos, "Equity:", clrGold, 8, "Arial");
-   CreateLabel(panelPrefix + "Equity", x + 100, yPos, "$0.00", clrWhite, 8, "Arial");
+   CreateLabel(panelPrefix + "EquityLabel", x + 10, yPos, "Equity:", clrGold, 9, "Arial Bold");
+   CreateLabel(panelPrefix + "Equity", x + 100, yPos, "$0", clrWhite, 9, "Arial Bold");
    yPos += lineHeight;
    
    // Drawdown
-   CreateLabel(panelPrefix + "DDLabel", x + 10, yPos, "Drawdown:", clrGold, 8, "Arial");
-   CreateLabel(panelPrefix + "DD", x + 100, yPos, "0.0%", clrWhite, 8, "Arial");
+   CreateLabel(panelPrefix + "DDLabel", x + 10, yPos, "Drawdown:", clrGold, 9, "Arial Bold");
+   CreateLabel(panelPrefix + "DD", x + 100, yPos, "0%", clrWhite, 9, "Arial Bold");
    yPos += lineHeight;
    
    // Session Profit
-   CreateLabel(panelPrefix + "SessionLabel", x + 10, yPos, "Session:", clrGold, 8, "Arial");
-   CreateLabel(panelPrefix + "SessionProfit", x + 100, yPos, "$0.00", clrWhite, 8, "Arial");
-   yPos += lineHeight + 10;
+   CreateLabel(panelPrefix + "SessionLabel", x + 10, yPos, "Session:", clrGold, 9, "Arial Bold");
+   CreateLabel(panelPrefix + "SessionProfit", x + 100, yPos, "$0", clrWhite, 9, "Arial Bold");
+   yPos += lineHeight + 5;
    
-   // Brand
-   CreateLabel(panelPrefix + "Brand", x + 10, yPos, "TORAMA CAPITAL", clrGold, 7, "Arial");
+   // TORAMA CAPITAL BRANDING - Bottom right with margins, SOLID bold big gold
+   CreateLabel(panelPrefix + "Brand", x + width - 155, yPos, "TORAMA CAPITAL", clrGold, 11, "Arial Black");
+}
+
+//+------------------------------------------------------------------+
+//| FORMAT PRICE (REMOVE .00)                                         |
+//+------------------------------------------------------------------+
+string FormatPrice(double price, int digits)
+{
+   string priceStr = DoubleToString(price, digits);
+   
+   // Remove .00 or .0 at the end
+   if(StringFind(priceStr, ".") >= 0)
+   {
+      while(StringSubstr(priceStr, StringLen(priceStr) - 1) == "0")
+         priceStr = StringSubstr(priceStr, 0, StringLen(priceStr) - 1);
+      
+      if(StringSubstr(priceStr, StringLen(priceStr) - 1) == ".")
+         priceStr = StringSubstr(priceStr, 0, StringLen(priceStr) - 1);
+   }
+   
+   return priceStr;
 }
 
 //+------------------------------------------------------------------+
@@ -860,14 +967,22 @@ void UpdatePanel()
    ObjectSetInteger(0, panelPrefix + "PauseBtn", OBJPROP_BGCOLOR, isPaused ? clrGreen : clrOrange);
    
    // Price
-   ObjectSetString(0, panelPrefix + "Price", OBJPROP_TEXT, "$" + DoubleToString(currentPrice, digits));
+   ObjectSetString(0, panelPrefix + "Price", OBJPROP_TEXT, "$" + FormatPrice(currentPrice, digits));
+   
+   // Next BUY level (one gap below current price)
+   double nextBuyLevel = lastBuyLevel - currentGapSize;
+   ObjectSetString(0, panelPrefix + "NextBuy", OBJPROP_TEXT, "$" + FormatPrice(nextBuyLevel, digits));
+   
+   // Next SELL level (one gap above current price)
+   double nextSellLevel = lastSellLevel + currentGapSize;
+   ObjectSetString(0, panelPrefix + "NextSell", OBJPROP_TEXT, "$" + FormatPrice(nextSellLevel, digits));
    
    // Grid
    ObjectSetString(0, panelPrefix + "GridSpacing", OBJPROP_TEXT,
-                   DoubleToString(GridSpacingPercent, 2) + "% ($" + DoubleToString(currentGapSize, 2) + ")");
+                   FormatPrice(GridSpacingPercent, 2) + "% ($" + FormatPrice(currentGapSize, 2) + ")");
    
    // Reference
-   ObjectSetString(0, panelPrefix + "RefPrice", OBJPROP_TEXT, "$" + DoubleToString(referencePrice, digits));
+   ObjectSetString(0, panelPrefix + "RefPrice", OBJPROP_TEXT, "$" + FormatPrice(referencePrice, digits));
    
    // Positions
    ObjectSetString(0, panelPrefix + "BuyPositions", OBJPROP_TEXT,
@@ -880,17 +995,17 @@ void UpdatePanel()
    CalculateTotalProfit();
    color pnlColor = (totalProfit >= 0) ? clrLimeGreen : clrRed;
    ObjectSetString(0, panelPrefix + "PnL", OBJPROP_TEXT,
-                   (totalProfit >= 0 ? "+" : "") + "$" + DoubleToString(totalProfit, 2));
+                   (totalProfit >= 0 ? "+" : "") + "$" + FormatPrice(totalProfit, 2));
    ObjectSetInteger(0, panelPrefix + "PnL", OBJPROP_COLOR, pnlColor);
    
    // Equity
    double equity = AccountInfoDouble(ACCOUNT_EQUITY);
-   ObjectSetString(0, panelPrefix + "Equity", OBJPROP_TEXT, "$" + DoubleToString(equity, 2));
+   ObjectSetString(0, panelPrefix + "Equity", OBJPROP_TEXT, "$" + FormatPrice(equity, 2));
    
    // Drawdown
    double dd = (peakEquity > 0) ? ((equity - peakEquity) / peakEquity * 100) : 0;
    color ddColor = (dd >= -5) ? clrLimeGreen : (dd >= -10) ? clrYellow : clrRed;
-   ObjectSetString(0, panelPrefix + "DD", OBJPROP_TEXT, DoubleToString(dd, 1) + "%");
+   ObjectSetString(0, panelPrefix + "DD", OBJPROP_TEXT, FormatPrice(dd, 1) + "%");
    ObjectSetInteger(0, panelPrefix + "DD", OBJPROP_COLOR, ddColor);
    
    // Session Profit
@@ -903,7 +1018,7 @@ void UpdatePanel()
                            (sessionProfit >= 0) ? clrLimeGreen : clrRed;
       
       ObjectSetString(0, panelPrefix + "SessionProfit", OBJPROP_TEXT,
-                      (sessionProfit >= 0 ? "+" : "") + "$" + DoubleToString(sessionProfit, 2));
+                      (sessionProfit >= 0 ? "+" : "") + "$" + FormatPrice(sessionProfit, 2));
       ObjectSetInteger(0, panelPrefix + "SessionProfit", OBJPROP_COLOR, sessionColor);
    }
    else
