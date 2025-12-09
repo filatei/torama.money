@@ -789,6 +789,7 @@ void TogglePanelVisibility()
       "NextBuyLabel", "NextBuy",
       "NextSellLabel", "NextSell",
       "GridLabel", "GridSpacing",
+      "SpreadLabel", "Spread",
       "RefLabel", "RefPrice",
       "BuyLabel", "BuyPositions",
       "SellLabel", "SellPositions",
@@ -826,7 +827,7 @@ void CreatePanel()
    ObjectSetInteger(0, panelPrefix + "Background", OBJPROP_XDISTANCE, x);
    ObjectSetInteger(0, panelPrefix + "Background", OBJPROP_YDISTANCE, y);
    ObjectSetInteger(0, panelPrefix + "Background", OBJPROP_XSIZE, width);
-   ObjectSetInteger(0, panelPrefix + "Background", OBJPROP_YSIZE, 380);  // Increased height for new elements
+   ObjectSetInteger(0, panelPrefix + "Background", OBJPROP_YSIZE, 400);  // Increased for spread line
    ObjectSetInteger(0, panelPrefix + "Background", OBJPROP_BGCOLOR, C'20,20,25');  // Solid dark background
    ObjectSetInteger(0, panelPrefix + "Background", OBJPROP_BORDER_TYPE, BORDER_FLAT);
    ObjectSetInteger(0, panelPrefix + "Background", OBJPROP_COLOR, clrGold);
@@ -873,6 +874,11 @@ void CreatePanel()
    // Grid
    CreateLabel(panelPrefix + "GridLabel", x + 10, yPos, "Grid Gap:", clrGold, 9, "Arial Bold");
    CreateLabel(panelPrefix + "GridSpacing", x + 100, yPos, "0.3%", clrWhite, 9, "Arial Bold");
+   yPos += lineHeight;
+   
+   // Spread
+   CreateLabel(panelPrefix + "SpreadLabel", x + 10, yPos, "Spread:", clrGold, 9, "Arial Bold");
+   CreateLabel(panelPrefix + "Spread", x + 100, yPos, "0", clrWhite, 9, "Arial Bold");
    yPos += lineHeight;
    
    // Reference
@@ -984,6 +990,12 @@ void UpdatePanel()
    // Grid
    ObjectSetString(0, panelPrefix + "GridSpacing", OBJPROP_TEXT,
                    FormatPrice(GridSpacingPercent, 2) + "% ($" + FormatPrice(currentGapSize, 2) + ")");
+   
+   // Spread
+   long spread = SymbolInfoInteger(_Symbol, SYMBOL_SPREAD);
+   color spreadColor = (spread > MaxSpread) ? clrRed : (spread > MaxSpread * 0.7) ? clrOrange : clrLimeGreen;
+   ObjectSetString(0, panelPrefix + "Spread", OBJPROP_TEXT, IntegerToString(spread) + "/" + IntegerToString(MaxSpread));
+   ObjectSetInteger(0, panelPrefix + "Spread", OBJPROP_COLOR, spreadColor);
    
    // Reference
    ObjectSetString(0, panelPrefix + "RefPrice", OBJPROP_TEXT, "$" + FormatPrice(referencePrice, digits));

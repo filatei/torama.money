@@ -319,11 +319,27 @@ void CheckMomentumGrid()
    double bid = SymbolInfoDouble(_Symbol, SYMBOL_BID);
    double currentPrice = (ask + bid) / 2.0;
    
+   // Debug output every 60 seconds
+   static datetime lastDebug = 0;
+   if(TimeCurrent() - lastDebug >= 60)
+   {
+      lastDebug = TimeCurrent();
+      Print("🔍 MOMENTUM CHECK:");
+      Print("   Current: $", DoubleToString(currentPrice, (int)SymbolInfoInteger(_Symbol, SYMBOL_DIGITS)));
+      Print("   Last BUY: $", DoubleToString(lastBuyLevel, (int)SymbolInfoInteger(_Symbol, SYMBOL_DIGITS)));
+      Print("   Last SELL: $", DoubleToString(lastSellLevel, (int)SymbolInfoInteger(_Symbol, SYMBOL_DIGITS)));
+      Print("   Gap: $", DoubleToString(currentGapSize, 2));
+      Print("   Need to rise to: $", DoubleToString(lastBuyLevel + currentGapSize, (int)SymbolInfoInteger(_Symbol, SYMBOL_DIGITS)), " for BUY");
+      Print("   Need to fall to: $", DoubleToString(lastSellLevel - currentGapSize, (int)SymbolInfoInteger(_Symbol, SYMBOL_DIGITS)), " for SELL");
+   }
+   
    // MOMENTUM LOGIC: BUY when price RISES
    if(currentPrice > lastBuyLevel)
    {
       double priceRiseFromLastBuy = currentPrice - lastBuyLevel;
       int levelsRisen = (int)MathFloor(priceRiseFromLastBuy / currentGapSize);
+      
+      Print("📈 Price rose! Levels crossed: ", levelsRisen);
       
       // Open BUY positions for each grid level we've crossed
       for(int i = 0; i < levelsRisen; i++)
@@ -333,6 +349,8 @@ void CheckMomentumGrid()
          
          // Calculate the exact level price
          double levelPrice = lastBuyLevel + ((i + 1) * currentGapSize);
+         
+         Print("   Checking level: $", DoubleToString(levelPrice, (int)SymbolInfoInteger(_Symbol, SYMBOL_DIGITS)));
          
          // Only open if current price is still above this level
          if(currentPrice >= levelPrice)
@@ -355,6 +373,8 @@ void CheckMomentumGrid()
       double priceFallFromLastSell = lastSellLevel - currentPrice;
       int levelsFallen = (int)MathFloor(priceFallFromLastSell / currentGapSize);
       
+      Print("📉 Price fell! Levels crossed: ", levelsFallen);
+      
       // Open SELL positions for each grid level we've crossed
       for(int i = 0; i < levelsFallen; i++)
       {
@@ -363,6 +383,8 @@ void CheckMomentumGrid()
          
          // Calculate the exact level price
          double levelPrice = lastSellLevel - ((i + 1) * currentGapSize);
+         
+         Print("   Checking level: $", DoubleToString(levelPrice, (int)SymbolInfoInteger(_Symbol, SYMBOL_DIGITS)));
          
          // Only open if current price is still below this level
          if(currentPrice <= levelPrice)
@@ -749,6 +771,7 @@ void TogglePanelVisibility()
       "NextBuyLabel", "NextBuy",
       "NextSellLabel", "NextSell",
       "GridLabel", "GridSpacing",
+      "SpreadLabel", "Spread",
       "RefLabel", "RefPrice",
       "BuyLabel", "BuyPositions",
       "SellLabel", "SellPositions",
@@ -786,7 +809,7 @@ void CreatePanel()
    ObjectSetInteger(0, panelPrefix + "Background", OBJPROP_XDISTANCE, x);
    ObjectSetInteger(0, panelPrefix + "Background", OBJPROP_YDISTANCE, y);
    ObjectSetInteger(0, panelPrefix + "Background", OBJPROP_XSIZE, width);
-   ObjectSetInteger(0, panelPrefix + "Background", OBJPROP_YSIZE, 380);  // Increased height for new elements
+   ObjectSetInteger(0, panelPrefix + "Background", OBJPROP_YSIZE, 400);  // Increased for spread line
    ObjectSetInteger(0, panelPrefix + "Background", OBJPROP_BGCOLOR, C'20,20,25');  // Solid dark background
    ObjectSetInteger(0, panelPrefix + "Background", OBJPROP_BORDER_TYPE, BORDER_FLAT);
    ObjectSetInteger(0, panelPrefix + "Background", OBJPROP_COLOR, clrGold);
@@ -833,6 +856,11 @@ void CreatePanel()
    // Grid
    CreateLabel(panelPrefix + "GridLabel", x + 10, yPos, "Grid Gap:", clrGold, 9, "Arial Bold");
    CreateLabel(panelPrefix + "GridSpacing", x + 100, yPos, "0.3%", clrWhite, 9, "Arial Bold");
+   yPos += lineHeight;
+   
+   // Spread
+   CreateLabel(panelPrefix + "SpreadLabel", x + 10, yPos, "Spread:", clrGold, 9, "Arial Bold");
+   CreateLabel(panelPrefix + "Spread", x + 100, yPos, "0", clrWhite, 9, "Arial Bold");
    yPos += lineHeight;
    
    // Reference
@@ -944,6 +972,12 @@ void UpdatePanel()
    // Grid
    ObjectSetString(0, panelPrefix + "GridSpacing", OBJPROP_TEXT,
                    FormatPrice(GridSpacingPercent, 2) + "% ($" + FormatPrice(currentGapSize, 2) + ")");
+   
+   // Spread
+   long spread = SymbolInfoInteger(_Symbol, SYMBOL_SPREAD);
+   color spreadColor = (spread > MaxSpread) ? clrRed : (spread > MaxSpread * 0.7) ? clrOrange : clrLimeGreen;
+   ObjectSetString(0, panelPrefix + "Spread", OBJPROP_TEXT, IntegerToString(spread) + "/" + IntegerToString(MaxSpread));
+   ObjectSetInteger(0, panelPrefix + "Spread", OBJPROP_COLOR, spreadColor);
    
    // Reference
    ObjectSetString(0, panelPrefix + "RefPrice", OBJPROP_TEXT, "$" + FormatPrice(referencePrice, digits));
