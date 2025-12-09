@@ -60,7 +60,6 @@ Position positions[];
 // Grid tracking
 double referencePrice = 0;              // Starting reference price
 double currentGapSize = 0;              // Current grid spacing in dollars
-double lastGridLevel = 0;               // Last price level where we placed a trade
 
 // Risk management
 bool emergencyStop = false;
@@ -160,9 +159,6 @@ int OnInit()
    double bid = SymbolInfoDouble(_Symbol, SYMBOL_BID);
    referencePrice = (ask + bid) / 2.0;
    currentGapSize = referencePrice * GridGapPercent / 100.0;
-   
-   // Set initial grid level
-   lastGridLevel = referencePrice;
    
    Print("📍 STARTING REFERENCE: $", DoubleToString(referencePrice, (int)SymbolInfoInteger(_Symbol, SYMBOL_DIGITS)));
    Print("📏 Grid Gap: $", DoubleToString(currentGapSize, 2), " (", DoubleToString(GridGapPercent, 2), "%)");
@@ -308,64 +304,59 @@ void OnTick()
 }
 
 //+------------------------------------------------------------------+
-//| GRID LOGIC                                                        |
+//| GRID LOGIC - REPLACES CLOSED POSITIONS                            |
 //+------------------------------------------------------------------+
 void CheckGrid()
 {
    double ask = SymbolInfoDouble(_Symbol, SYMBOL_ASK);
    double bid = SymbolInfoDouble(_Symbol, SYMBOL_BID);
    double currentPrice = (ask + bid) / 2.0;
+   int digits = (int)SymbolInfoInteger(_Symbol, SYMBOL_DIGITS);
    
-   // Calculate distance from last grid level
-   double distanceFromLastLevel = MathAbs(currentPrice - lastGridLevel);
-   int levelsCrossed = (int)MathFloor(distanceFromLastLevel / currentGapSize);
+   // Find the nearest grid level to current price
+   double distanceFromReference = currentPrice - referencePrice;
+   int levelIndex = (int)MathRound(distanceFromReference / currentGapSize);
+   double nearestGridLevel = referencePrice + (levelIndex * currentGapSize);
    
-   if(levelsCrossed > 0)
+   // Check multiple grid levels around current price
+   // This ensures we catch opportunities when price moves quickly
+   int levelsToCheck = 3;  // Check 3 levels above and below
+   
+   for(int offset = -levelsToCheck; offset <= levelsToCheck; offset++)
    {
-      Print("⚡ Grid levels crossed: ", levelsCrossed);
+      double checkLevel = nearestGridLevel + (offset * currentGapSize);
+      double distanceToLevel = MathAbs(currentPrice - checkLevel);
       
-      // Open positions for each grid level crossed
-      for(int i = 0; i < levelsCrossed; i++)
+      // Only open if price is within half a gap of this level
+      if(distanceToLevel <= (currentGapSize / 2.0))
       {
-         if(ArraySize(positions) >= MaxPositions)
+         // Check if we already have a position at this level
+         bool levelHasPosition = false;
+         
+         for(int i = 0; i < ArraySize(positions); i++)
          {
-            Print("⚠️ Max positions reached: ", MaxPositions);
-            break;
+            double entryDiff = MathAbs(positions[i].entryPrice - checkLevel);
+            if(entryDiff < (currentGapSize * 0.1))  // Within 10% of gap = same level
+            {
+               levelHasPosition = true;
+               break;
+            }
          }
          
-         // Calculate the exact level price
-         double levelPrice;
-         if(currentPrice > lastGridLevel)
+         // If no position at this level and under max, open one
+         if(!levelHasPosition && ArraySize(positions) < MaxPositions)
          {
-            levelPrice = lastGridLevel + ((i + 1) * currentGapSize);
-         }
-         else
-         {
-            levelPrice = lastGridLevel - ((i + 1) * currentGapSize);
-         }
-         
-         // Open position at this level
-         ENUM_ORDER_TYPE orderType = (Direction == BUYONLY) ? ORDER_TYPE_BUY : ORDER_TYPE_SELL;
-         double openPrice = (Direction == BUYONLY) ? ask : bid;
-         
-         if(OpenPosition(orderType, openPrice, levelPrice))
-         {
-            string dirStr = (Direction == BUYONLY) ? "BUY" : "SELL";
-            Print("⚡ ", dirStr, " opened at grid level: $", DoubleToString(levelPrice, (int)SymbolInfoInteger(_Symbol, SYMBOL_DIGITS)));
+            ENUM_ORDER_TYPE orderType = (Direction == BUYONLY) ? ORDER_TYPE_BUY : ORDER_TYPE_SELL;
+            double openPrice = (Direction == BUYONLY) ? ask : bid;
+            
+            if(OpenPosition(orderType, openPrice, checkLevel))
+            {
+               string dirStr = (Direction == BUYONLY) ? "BUY" : "SELL";
+               Print("⚡ ", dirStr, " opened at grid level: $", DoubleToString(checkLevel, digits));
+               Print("   (Replaced closed position or new level)");
+            }
          }
       }
-      
-      // Update last grid level
-      if(currentPrice > lastGridLevel)
-      {
-         lastGridLevel = lastGridLevel + (levelsCrossed * currentGapSize);
-      }
-      else
-      {
-         lastGridLevel = lastGridLevel - (levelsCrossed * currentGapSize);
-      }
-      
-      Print("   Updated lastGridLevel to: $", DoubleToString(lastGridLevel, (int)SymbolInfoInteger(_Symbol, SYMBOL_DIGITS)));
    }
 }
 
@@ -602,7 +593,6 @@ void RebuildGrid()
    
    // Set new reference to current price
    referencePrice = currentPrice;
-   lastGridLevel = currentPrice;
    
    // Recalculate gap
    currentGapSize = referencePrice * GridGapPercent / 100.0;
@@ -674,7 +664,6 @@ void PrintDebugStatus()
    Print("Current Price:         $", DoubleToString(currentPrice, (int)SymbolInfoInteger(_Symbol, SYMBOL_DIGITS)));
    Print("Reference Price:       $", DoubleToString(referencePrice, (int)SymbolInfoInteger(_Symbol, SYMBOL_DIGITS)));
    Print("Grid Gap:              $", DoubleToString(currentGapSize, 2), " (", DoubleToString(GridGapPercent, 2), "%)");
-   Print("Last Grid Level:       $", DoubleToString(lastGridLevel, (int)SymbolInfoInteger(_Symbol, SYMBOL_DIGITS)));
    Print("╠══════════════════════════════════════════════════════════════╣");
    Print("║ POSITIONS                                                    ║");
    Print("╠══════════════════════════════════════════════════════════════╣");
