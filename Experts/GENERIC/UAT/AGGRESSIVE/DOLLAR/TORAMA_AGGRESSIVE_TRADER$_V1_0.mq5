@@ -70,9 +70,9 @@ input group "=== DIRECTION ==="
 input ENUM_TRADE_DIRECTION Direction = BUYONLY;  // Trading Direction
 
 input group "=== GRID SETTINGS ==="
-input double   GridGapPercent = 0.02;             // Grid gap % (0.01 = tight, 0.3 = wide)
+input double   GridGapPercent = 0.01;             // Grid gap % (0.01 = tight, 0.3 = wide)
 input int      MaxPositions = 100;                // Maximum positions
-input double   LotSize = 0.2;                     // Lot size per position (0.2 for $100k account)
+input double   LotSize = 0.1;                     // Lot size per position (0.2 for $100k account)
 
 input group "=== TAKE PROFIT ==="
 input double   IndividualTPDollars = 50.0;        // Individual TP target ($50 per position)
@@ -83,7 +83,7 @@ input double   IndividualSLDollars = 1000.0;       // SL risk per trade ($100 ma
 
 input group "=== RISK MANAGEMENT ==="
 input double   MaxDrawdownPercent = 20.0;         // Max drawdown % (emergency stop)
-input double   DailyTargetPercent = 300.0;        // Daily profit target (% of start balance)
+input double   DailyTargetPercent = 200.0;        // Daily profit target (% of start balance)
 
 input group "=== SETTINGS ==="
 input int      MaxSpread = 2000;                  // Maximum spread (points)
