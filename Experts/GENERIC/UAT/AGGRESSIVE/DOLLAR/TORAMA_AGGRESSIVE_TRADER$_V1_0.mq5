@@ -70,7 +70,7 @@ input group "=== DIRECTION ==="
 input ENUM_TRADE_DIRECTION Direction = BUYONLY;  // Trading Direction
 
 input group "=== GRID SETTINGS ==="
-input double   GridGapPercent = 0.01;             // Grid gap % (0.01 = tight, 0.3 = wide)
+input double   GridGapPercent = 0.02;             // Grid gap % (0.01 = tight, 0.3 = wide)
 input int      MaxPositions = 100;                // Maximum positions
 input double   LotSize = 0.2;                     // Lot size per position (0.2 for $100k account)
 
@@ -79,11 +79,11 @@ input double   IndividualTPDollars = 50.0;        // Individual TP target ($50 p
 input double   GroupTPDollars = 200.0;            // Group TP target ($200 total profit closes all)
 
 input group "=== STOP LOSS ==="
-input double   IndividualSLDollars = 100.0;       // SL risk per trade ($100 max loss, 0 = disabled)
+input double   IndividualSLDollars = 1000.0;       // SL risk per trade ($100 max loss, 0 = disabled)
 
 input group "=== RISK MANAGEMENT ==="
-input double   MaxDrawdownPercent = 25.0;         // Max drawdown % (emergency stop)
-input double   DailyTargetPercent = 100.0;        // Daily profit target (% of start balance)
+input double   MaxDrawdownPercent = 20.0;         // Max drawdown % (emergency stop)
+input double   DailyTargetPercent = 300.0;        // Daily profit target (% of start balance)
 
 input group "=== SETTINGS ==="
 input int      MaxSpread = 2000;                  // Maximum spread (points)
@@ -508,12 +508,15 @@ void CheckGrid()
       return;
    
    // Check if we already have a position at this level
+   // A position is "at this level" if it's within 50% of the gap from the grid level
+   // This prevents multiple positions at the same grid level
    bool levelHasPosition = false;
+   double levelTolerance = currentGapSize * 0.5;  // 50% of gap = tight tolerance
    
    for(int i = 0; i < ArraySize(positions); i++)
    {
       double entryDiff = MathAbs(positions[i].entryPrice - nearestGridLevel);
-      if(entryDiff < (currentGapSize * 0.15))  // Within 15% of gap = same level
+      if(entryDiff < levelTolerance)
       {
          levelHasPosition = true;
          break;
