@@ -627,16 +627,46 @@ bool OpenPosition(ENUM_ORDER_TYPE orderType, double price, double levelPrice)
    double balance = AccountInfoDouble(ACCOUNT_BALANCE);
    double riskAmount = balance * (IndividualSLPercent / 100.0);  // Configurable % of balance
    
-   // Calculate point value for the symbol
+   // Get symbol specifications
    double tickValue = SymbolInfoDouble(_Symbol, SYMBOL_TRADE_TICK_VALUE);
    double tickSize = SymbolInfoDouble(_Symbol, SYMBOL_TRADE_TICK_SIZE);
+   double contractSize = SymbolInfoDouble(_Symbol, SYMBOL_TRADE_CONTRACT_SIZE);
+   double point = SymbolInfoDouble(_Symbol, SYMBOL_POINT);
    
-   // Calculate how much 1 point (or 1 dollar for Gold) is worth for our lot size
-   double pointValue = tickValue / tickSize;  // Value per 1.0 price unit
-   double positionValue = pointValue * validatedLotSize;  // Value for our lot size
+   // Calculate value per point for 1 lot
+   // For most symbols: value per point = (contract size × tick value) / tick size
+   // But we need to be more precise
+   double valuePerPointPerLot;
    
-   // Calculate SL distance in price units
-   double slDistancePrice = riskAmount / positionValue;
+   if(tickSize > 0)
+   {
+      // Calculate how many points in one tick
+      double pointsPerTick = tickSize / point;
+      if(pointsPerTick > 0)
+      {
+         // Value per point = tick value / points per tick
+         valuePerPointPerLot = tickValue / pointsPerTick;
+      }
+      else
+      {
+         // Fallback: use tick value directly
+         valuePerPointPerLot = tickValue / point;
+      }
+   }
+   else
+   {
+      // Fallback calculation
+      valuePerPointPerLot = tickValue;
+   }
+   
+   // Calculate value per point for our lot size
+   double valuePerPoint = valuePerPointPerLot * validatedLotSize;
+   
+   // Calculate SL distance in points
+   double slDistancePoints = riskAmount / valuePerPoint;
+   
+   // Convert points to price
+   double slDistancePrice = slDistancePoints * point;
    
    // Apply SL
    if(orderType == ORDER_TYPE_BUY)
@@ -652,8 +682,13 @@ bool OpenPosition(ENUM_ORDER_TYPE orderType, double price, double levelPrice)
    Print("💰 SL Calculation:");
    Print("   Balance: $", DoubleToString(balance, 2));
    Print("   SL Risk: ", DoubleToString(IndividualSLPercent, 2), "% = $", DoubleToString(riskAmount, 2));
-   Print("   Position Value/Point: $", DoubleToString(positionValue, 2));
-   Print("   SL Distance: $", DoubleToString(slDistancePrice, 4));
+   Print("   Tick Value: $", DoubleToString(tickValue, 4));
+   Print("   Tick Size: $", DoubleToString(tickSize, 6));
+   Print("   Point: $", DoubleToString(point, 6));
+   Print("   Contract Size: ", DoubleToString(contractSize, 2));
+   Print("   Value/Point/Lot: $", DoubleToString(valuePerPointPerLot, 4));
+   Print("   Value/Point (", DoubleToString(validatedLotSize, 2), " lots): $", DoubleToString(valuePerPoint, 4));
+   Print("   SL Distance: ", DoubleToString(slDistancePoints, 2), " points = $", DoubleToString(slDistancePrice, 2));
    Print("   Entry: $", DoubleToString(price, (int)SymbolInfoInteger(_Symbol, SYMBOL_DIGITS)));
    Print("   SL: $", DoubleToString(request.sl, (int)SymbolInfoInteger(_Symbol, SYMBOL_DIGITS)));
    
