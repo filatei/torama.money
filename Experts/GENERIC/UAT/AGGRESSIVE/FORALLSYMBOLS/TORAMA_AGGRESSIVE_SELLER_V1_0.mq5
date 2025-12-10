@@ -1009,10 +1009,23 @@ void CreatePanel()
    // Daily Profit
    CreateLabel(panelPrefix + "DailyLabel", x + 10, yPos, "Daily:", clrGold, 9, "Arial Bold");
    CreateLabel(panelPrefix + "DailyProfit", x + 100, yPos, "$0", clrWhite, 9, "Arial Bold");
-   yPos += lineHeight + 5;
+   yPos += lineHeight + 10;
    
-   // TORAMA CAPITAL BRANDING - Bottom right with margins, SOLID bold big gold
-   CreateLabel(panelPrefix + "Brand", x + width - 155, yPos, "TORAMA CAPITAL", clrGold, 11, "Arial Black");
+   // TORAMA CAPITAL BRANDING - Bottom right inside panel with 10px right margin
+   // Using right anchor for proper alignment
+   int brandX = x + width - 10;  // 10px from right edge of panel
+   ObjectCreate(0, panelPrefix + "Brand", OBJ_LABEL, 0, 0, 0);
+   ObjectSetInteger(0, panelPrefix + "Brand", OBJPROP_XDISTANCE, brandX);
+   ObjectSetInteger(0, panelPrefix + "Brand", OBJPROP_YDISTANCE, yPos);
+   ObjectSetInteger(0, panelPrefix + "Brand", OBJPROP_COLOR, clrGold);
+   ObjectSetInteger(0, panelPrefix + "Brand", OBJPROP_FONTSIZE, 10);
+   ObjectSetString(0, panelPrefix + "Brand", OBJPROP_FONT, "Arial Black");
+   ObjectSetString(0, panelPrefix + "Brand", OBJPROP_TEXT, "TORAMA CAPITAL");
+   ObjectSetInteger(0, panelPrefix + "Brand", OBJPROP_ANCHOR, ANCHOR_RIGHT_UPPER);  // Right-aligned
+   ObjectSetInteger(0, panelPrefix + "Brand", OBJPROP_SELECTABLE, false);
+   ObjectSetInteger(0, panelPrefix + "Brand", OBJPROP_BACK, false);
+   ObjectSetInteger(0, panelPrefix + "Brand", OBJPROP_HIDDEN, true);
+   ObjectSetInteger(0, panelPrefix + "Brand", OBJPROP_ZORDER, 0);
 }
 
 //+------------------------------------------------------------------+
