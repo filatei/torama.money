@@ -79,7 +79,7 @@ input double   IndividualTPFactor = 2.5;          // Individual TP factor (2.5 =
 input double   GroupTPFactor = 100.0;             // Group TP factor (100 = 100x gap)
 
 input group "=== STOP LOSS ==="
-input double   IndividualSLPercent = 0.5;         // SL risk per trade (% of balance, 0.5 = safer)
+input double   IndividualSLPercent = 0.5;         // SL risk per trade (% of balance, 0 = disabled)
 
 input group "=== RISK MANAGEMENT ==="
 input double   MaxDrawdownPercent = 25.0;         // Max drawdown % (emergency stop)
@@ -266,38 +266,53 @@ int OnInit()
    
    // Risk analysis
    double balance = AccountInfoDouble(ACCOUNT_BALANCE);
-   double riskPerTrade = balance * (IndividualSLPercent / 100.0);  // Configurable % per trade
+   double riskPerTrade = balance * (IndividualSLPercent / 100.0);
    double totalRisk = riskPerTrade * MaxPositions;
    double totalRiskPercent = (totalRisk / balance) * 100.0;
    
    Print("═══════════════════════════════════════");
    Print("💰 RISK ANALYSIS:");
    Print("   Account Balance: $", DoubleToString(balance, 2));
-   Print("   SL Risk Per Trade: ", DoubleToString(IndividualSLPercent, 2), "% = $", DoubleToString(riskPerTrade, 2));
-   Print("   Max Positions: ", MaxPositions);
-   Print("   Total Portfolio Risk: $", DoubleToString(totalRisk, 2), " (", DoubleToString(totalRiskPercent, 1), "%)");
-   Print("   Max Drawdown Limit: ", DoubleToString(MaxDrawdownPercent, 1), "%");
    
-   if(totalRiskPercent > MaxDrawdownPercent)
+   if(IndividualSLPercent > 0)
    {
-      Print("⚠️ WARNING: Total risk (", DoubleToString(totalRiskPercent, 1), "%) exceeds max drawdown (", 
-            DoubleToString(MaxDrawdownPercent, 1), "%)");
-      Print("   However, emergency stop will trigger BEFORE all ", MaxPositions, " positions hit SL");
-      Print("   Emergency stop at ", DoubleToString(MaxDrawdownPercent, 1), "% = $", 
-            DoubleToString(balance * MaxDrawdownPercent / 100.0, 2), " loss");
+      Print("   SL Risk Per Trade: ", DoubleToString(IndividualSLPercent, 2), "% = $", DoubleToString(riskPerTrade, 2));
+      Print("   Max Positions: ", MaxPositions);
+      Print("   Total Portfolio Risk: $", DoubleToString(totalRisk, 2), " (", DoubleToString(totalRiskPercent, 1), "%)");
+      Print("   Max Drawdown Limit: ", DoubleToString(MaxDrawdownPercent, 1), "%");
+      
+      if(totalRiskPercent > MaxDrawdownPercent)
+      {
+         Print("⚠️ WARNING: Total risk (", DoubleToString(totalRiskPercent, 1), "%) exceeds max drawdown (", 
+               DoubleToString(MaxDrawdownPercent, 1), "%)");
+         Print("   However, emergency stop will trigger BEFORE all ", MaxPositions, " positions hit SL");
+         Print("   Emergency stop at ", DoubleToString(MaxDrawdownPercent, 1), "% = $", 
+               DoubleToString(balance * MaxDrawdownPercent / 100.0, 2), " loss");
+      }
+      else
+      {
+         Print("✅ Total risk (", DoubleToString(totalRiskPercent, 1), "%) is WITHIN max drawdown (", 
+               DoubleToString(MaxDrawdownPercent, 1), "%)");
+         Print("   Safe configuration - emergency stop will prevent excessive losses");
+      }
+      
+      // Calculate how many positions could hit SL before emergency stop
+      if(riskPerTrade > 0)
+      {
+         double emergencyStopLoss = balance * (MaxDrawdownPercent / 100.0);
+         int maxPositionsBeforeStop = (int)MathFloor(emergencyStopLoss / riskPerTrade);
+         Print("   Emergency stop triggers after ~", maxPositionsBeforeStop, " positions hit SL");
+         Print("   (", DoubleToString(MaxDrawdownPercent, 1), "% drawdown protection active)");
+      }
    }
    else
    {
-      Print("✅ Total risk (", DoubleToString(totalRiskPercent, 1), "%) is WITHIN max drawdown (", 
-            DoubleToString(MaxDrawdownPercent, 1), "%)");
-      Print("   Safe configuration - emergency stop will prevent excessive losses");
+      Print("   Individual SL: DISABLED (0%)");
+      Print("   ⚠️ WARNING: Trading without stop losses!");
+      Print("   Protection: Emergency stop at ", DoubleToString(MaxDrawdownPercent, 1), "% drawdown");
+      Print("   Max Drawdown: $", DoubleToString(balance * MaxDrawdownPercent / 100.0, 2));
+      Print("   This is HIGH RISK - Only emergency stop and daily target protect you!");
    }
-   
-   // Calculate how many positions could hit SL before emergency stop
-   double emergencyStopLoss = balance * (MaxDrawdownPercent / 100.0);
-   int maxPositionsBeforeStop = (int)MathFloor(emergencyStopLoss / riskPerTrade);
-   Print("   Emergency stop triggers after ~", maxPositionsBeforeStop, " positions hit SL");
-   Print("   (", DoubleToString(MaxDrawdownPercent, 1), "% drawdown protection active)");
    
    // TP/SL info
    double individualTP = currentGapSize * IndividualTPFactor;
@@ -306,8 +321,17 @@ int OnInit()
    Print("🎯 PROFIT & LOSS TARGETS:");
    Print("   Individual TP: $", DoubleToString(individualTP, 2), " (", DoubleToString(IndividualTPFactor, 1), "x gap)");
    Print("   Group TP: $", DoubleToString(groupTP, 2), " (", DoubleToString(GroupTPFactor, 1), "x gap)");
-   Print("   Individual SL: ", DoubleToString(IndividualSLPercent, 2), "% of balance per trade");
-   Print("   At $100k: ", DoubleToString(IndividualSLPercent, 2), "% = $", DoubleToString(balance * IndividualSLPercent / 100.0, 2), " risk per trade");
+   
+   if(IndividualSLPercent > 0)
+   {
+      Print("   Individual SL: ", DoubleToString(IndividualSLPercent, 2), "% of balance per trade");
+      Print("   Current balance: ", DoubleToString(IndividualSLPercent, 2), "% = $", DoubleToString(balance * IndividualSLPercent / 100.0, 2), " risk per trade");
+   }
+   else
+   {
+      Print("   Individual SL: DISABLED");
+      Print("   Relying on: Emergency stop (", DoubleToString(MaxDrawdownPercent, 1), "%) and Daily target only");
+   }
    
    MqlDateTime time;
    TimeToStruct(TimeCurrent(), time);
@@ -623,74 +647,56 @@ bool OpenPosition(ENUM_ORDER_TYPE orderType, double price, double levelPrice)
       }
    }
    
-   // ALWAYS set SL based on IndividualSLPercent
-   double balance = AccountInfoDouble(ACCOUNT_BALANCE);
-   double riskAmount = balance * (IndividualSLPercent / 100.0);  // Configurable % of balance
-   
-   // Get symbol specifications
-   double tickValue = SymbolInfoDouble(_Symbol, SYMBOL_TRADE_TICK_VALUE);
-   double tickSize = SymbolInfoDouble(_Symbol, SYMBOL_TRADE_TICK_SIZE);
-   double contractSize = SymbolInfoDouble(_Symbol, SYMBOL_TRADE_CONTRACT_SIZE);
-   double point = SymbolInfoDouble(_Symbol, SYMBOL_POINT);
-   
-   // Calculate value per point for 1 lot
-   // For most symbols: value per point = (contract size × tick value) / tick size
-   // But we need to be more precise
-   double valuePerPointPerLot;
-   
-   if(tickSize > 0)
+   // Set SL based on IndividualSLPercent (0 = disabled)
+   if(IndividualSLPercent > 0)
    {
-      // Calculate how many points in one tick
-      double pointsPerTick = tickSize / point;
-      if(pointsPerTick > 0)
+      double balance = AccountInfoDouble(ACCOUNT_BALANCE);
+      double riskAmount = balance * (IndividualSLPercent / 100.0);
+      
+      // Get symbol specifications
+      double contractSize = SymbolInfoDouble(_Symbol, SYMBOL_TRADE_CONTRACT_SIZE);
+      
+      // Calculate value per $1 price movement for our lot size
+      // For Bitcoin: 0.1 lot × 1 BTC = $0.10 per dollar
+      // For Gold: 0.2 lot × 100 oz = $20 per dollar
+      double valuePerDollar = validatedLotSize * contractSize;
+      
+      // Calculate SL distance in dollars
+      double slDistancePrice = riskAmount / valuePerDollar;
+      
+      // Apply SL
+      int digits = (int)SymbolInfoInteger(_Symbol, SYMBOL_DIGITS);
+      if(orderType == ORDER_TYPE_BUY)
       {
-         // Value per point = tick value / points per tick
-         valuePerPointPerLot = tickValue / pointsPerTick;
+         request.sl = NormalizeDouble(price - slDistancePrice, digits);
       }
       else
       {
-         // Fallback: use tick value directly
-         valuePerPointPerLot = tickValue / point;
+         request.sl = NormalizeDouble(price + slDistancePrice, digits);
       }
+      
+      // Verify SL is reasonable
+      double slRisk = MathAbs(price - request.sl) * valuePerDollar;
+      
+      // Debug output
+      Print("💰 SL Calculation:");
+      Print("   Balance: $", DoubleToString(balance, 2));
+      Print("   SL Risk: ", DoubleToString(IndividualSLPercent, 2), "% = $", DoubleToString(riskAmount, 2));
+      Print("   Lot Size: ", DoubleToString(validatedLotSize, 2));
+      Print("   Contract Size: ", DoubleToString(contractSize, 2));
+      Print("   Value per $1 move: $", DoubleToString(valuePerDollar, 4));
+      Print("   SL Distance: $", DoubleToString(slDistancePrice, 2));
+      Print("   Entry: $", DoubleToString(price, digits));
+      Print("   SL: $", DoubleToString(request.sl, digits));
+      Print("   Actual Risk: $", DoubleToString(slRisk, 2));
    }
    else
    {
-      // Fallback calculation
-      valuePerPointPerLot = tickValue;
+      // SL disabled
+      request.sl = 0;
+      Print("⚠️ SL DISABLED - Trading without stop loss!");
+      Print("   WARNING: High risk! Emergency stop and daily target are your only protection.");
    }
-   
-   // Calculate value per point for our lot size
-   double valuePerPoint = valuePerPointPerLot * validatedLotSize;
-   
-   // Calculate SL distance in points
-   double slDistancePoints = riskAmount / valuePerPoint;
-   
-   // Convert points to price
-   double slDistancePrice = slDistancePoints * point;
-   
-   // Apply SL
-   if(orderType == ORDER_TYPE_BUY)
-   {
-      request.sl = NormalizeDouble(price - slDistancePrice, (int)SymbolInfoInteger(_Symbol, SYMBOL_DIGITS));
-   }
-   else
-   {
-      request.sl = NormalizeDouble(price + slDistancePrice, (int)SymbolInfoInteger(_Symbol, SYMBOL_DIGITS));
-   }
-   
-   // Debug output
-   Print("💰 SL Calculation:");
-   Print("   Balance: $", DoubleToString(balance, 2));
-   Print("   SL Risk: ", DoubleToString(IndividualSLPercent, 2), "% = $", DoubleToString(riskAmount, 2));
-   Print("   Tick Value: $", DoubleToString(tickValue, 4));
-   Print("   Tick Size: $", DoubleToString(tickSize, 6));
-   Print("   Point: $", DoubleToString(point, 6));
-   Print("   Contract Size: ", DoubleToString(contractSize, 2));
-   Print("   Value/Point/Lot: $", DoubleToString(valuePerPointPerLot, 4));
-   Print("   Value/Point (", DoubleToString(validatedLotSize, 2), " lots): $", DoubleToString(valuePerPoint, 4));
-   Print("   SL Distance: ", DoubleToString(slDistancePoints, 2), " points = $", DoubleToString(slDistancePrice, 2));
-   Print("   Entry: $", DoubleToString(price, (int)SymbolInfoInteger(_Symbol, SYMBOL_DIGITS)));
-   Print("   SL: $", DoubleToString(request.sl, (int)SymbolInfoInteger(_Symbol, SYMBOL_DIGITS)));
    
    if(!OrderSend(request, result))
    {
