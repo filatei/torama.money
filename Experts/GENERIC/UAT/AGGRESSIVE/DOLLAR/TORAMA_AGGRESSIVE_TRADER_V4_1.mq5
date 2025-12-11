@@ -1,59 +1,19 @@
 //+------------------------------------------------------------------+
-//|                    TORAMA Aggressive Trader EA v4.0              |
+//|                    TORAMA Aggressive Trader EA v4.1              |
 //|                                           TORAMA CAPITAL          |
 //|                                      https://www.torama.money     |
 //+------------------------------------------------------------------+
 #property copyright "TORAMA CAPITAL"
 #property link      "https://www.torama.money"
-#property version   "4.0"
+#property version   "4.1"
 #property description "Aggressive Directional Grid Trader"
 #property description "Trades ONLY in chosen direction as price moves"
 #property description "Replaces closed positions automatically"
 #property description ""
-#property description "OPTIMIZED FOR: $100k Account | 0.01% Gap | 100 Max Positions"
-#property description "V4.0: CRITICAL FIX - TP/SL calculation corrected"
+#property description "V4.1: OPTIMIZED - Fixed TP/SL calculations, removed redundant code, improved error handling"
 
-#define EA_VERSION "4.0"
+#define EA_VERSION "4.1"
 #define EA_NAME "TORAMA AGGRESSIVE TRADER"
-
-//+------------------------------------------------------------------+
-//| SETTINGS GUIDE FOR DIFFERENT ACCOUNT SIZES                       |
-//+------------------------------------------------------------------+
-/*
-  FORMULA: With 0.5% SL risk per trade
-  LotSize = Account size specific
-  IndividualSLPercent = 0.5% (default, safer)
-  Total Risk = MaxPositions × 0.5% = 50% theoretical max
-  Emergency Stop = 25% (triggers before 50 positions hit SL)
-  
-  $10k Account:
-  - LotSize: 0.02
-  - MaxPositions: 100
-  - Risk per trade: $50 (0.5%)
-  - Total risk: $5,000 (50% theoretical, 25% emergency stop)
-  
-  $50k Account:
-  - LotSize: 0.1
-  - MaxPositions: 100
-  - Risk per trade: $250 (0.5%)
-  - Total risk: $25,000 (50% theoretical, 25% emergency stop)
-  
-  $100k Account (DEFAULT):
-  - LotSize: 0.2
-  - MaxPositions: 100
-  - Risk per trade: $500 (0.5%)
-  - Total risk: $50,000 (50% theoretical, 25% emergency stop)
-  
-  $250k Account:
-  - LotSize: 0.5
-  - MaxPositions: 100
-  - Risk per trade: $1,250 (0.5%)
-  - Total risk: $125,000 (50% theoretical, 25% emergency stop)
-  
-  NOTE: Emergency stop at 25% drawdown will close all positions
-        BEFORE the theoretical 50% max risk is reached.
-        Realistic: ~50 positions would need to hit SL = 25% loss
-*/
 
 //+------------------------------------------------------------------+
 //| INPUT PARAMETERS                                                  |
@@ -71,7 +31,7 @@ input ENUM_TRADE_DIRECTION Direction = BUYONLY;  // Trading Direction
 input group "=== GRID SETTINGS ==="
 input double   GridGapPercent = 0.01;             // Grid gap % (0.01 = tight, 0.3 = wide)
 input int      MaxPositions = 100;                // Maximum positions
-input double   LotSize = 0.2;                     // Lot size per position (0.2 for $100k account)
+input double   LotSize = 0.2;                     // Lot size per position
 
 input group "=== TAKE PROFIT ==="
 input double   IndividualTPDollars = 50.0;        // Individual TP target ($50 per position)
@@ -102,8 +62,8 @@ struct Position
 Position positions[];
 
 // Grid tracking
-double referencePrice = 0;              // Starting reference price
-double currentGapSize = 0;              // Current grid spacing in dollars
+double referencePrice = 0;
+double currentGapSize = 0;
 
 // Risk management
 bool emergencyStop = false;
@@ -123,58 +83,31 @@ bool dailyTargetReached = false;
 int totalTrades = 0;
 bool isPaused = false;
 
-// Magic number (auto-generated)
+// Magic number
 int MagicNumber = 0;
 
 // Panel
 string panelPrefix = "TORAMA_AGG_";
 bool panelVisible = true;
 
-// Lot size validation
-double validatedLotSize = 0;
-double minLot = 0;
-double maxLot = 0;
-double lotStep = 0;
-
-//+------------------------------------------------------------------+
-//| VALIDATE AND NORMALIZE LOT SIZE                                  |
-//+------------------------------------------------------------------+
-double ValidateLotSize(double requestedLots)
+// Symbol specifications (cached)
+struct SymbolSpecs
 {
-   minLot = SymbolInfoDouble(_Symbol, SYMBOL_VOLUME_MIN);
-   maxLot = SymbolInfoDouble(_Symbol, SYMBOL_VOLUME_MAX);
-   lotStep = SymbolInfoDouble(_Symbol, SYMBOL_VOLUME_STEP);
-   
-   if(requestedLots < minLot)
-   {
-      Print("⚠️ WARNING: Requested lot size ", requestedLots, " is below minimum ", minLot, ". Using minimum.");
-      return minLot;
-   }
-   
-   if(requestedLots > maxLot)
-   {
-      Print("⚠️ WARNING: Requested lot size ", requestedLots, " exceeds maximum ", maxLot, ". Using maximum.");
-      return maxLot;
-   }
-   
-   double normalizedLots = MathFloor(requestedLots / lotStep) * lotStep;
-   
-   if(normalizedLots < minLot)
-      normalizedLots = minLot;
-   
-   int lotDigits = 2;
-   if(lotStep >= 0.1) lotDigits = 1;
-   else if(lotStep >= 1.0) lotDigits = 0;
-   
-   normalizedLots = NormalizeDouble(normalizedLots, lotDigits);
-   
-   if(normalizedLots != requestedLots)
-   {
-      Print("ℹ️ INFO: Lot size adjusted from ", requestedLots, " to ", normalizedLots);
-   }
-   
-   return normalizedLots;
-}
+   double contractSize;
+   double tickValue;
+   double tickSize;
+   double point;
+   long stopLevel;
+   int digits;
+   double minLot;
+   double maxLot;
+   double lotStep;
+   double minStopDistance;
+   double valuePerDollar;  // Profit/loss per $1 price move
+};
+
+SymbolSpecs specs;
+double validatedLotSize = 0;
 
 //+------------------------------------------------------------------+
 //| INITIALIZATION                                                    |
@@ -192,92 +125,48 @@ int OnInit()
    Print("   Leverage: 1:", IntegerToString(AccountInfoInteger(ACCOUNT_LEVERAGE)));
    Print("   Currency: ", AccountInfoString(ACCOUNT_CURRENCY));
    
-   // Generate unique magic number from current time in milliseconds
-   MagicNumber = (int)(GetTickCount() % 2147483647);  // Keep within int range
-   Print("🔢 Generated Magic Number: ", MagicNumber);
+   // Generate unique magic number
+   MagicNumber = (int)(GetTickCount() % 2147483647);
+   Print("🔢 Magic Number: ", MagicNumber);
    
-   // Validate lot size
+   // Initialize symbol specifications
+   if(!InitializeSymbolSpecs())
+   {
+      Print("❌ FAILED: Could not initialize symbol specifications");
+      return(INIT_FAILED);
+   }
+   
+   // Validate and normalize lot size
    validatedLotSize = ValidateLotSize(LotSize);
+   specs.valuePerDollar = validatedLotSize * specs.contractSize;
    
    Print("📊 CONFIGURATION:");
-   Print("Direction: ", Direction == BUYONLY ? "BUY ONLY" : "SELL ONLY");
-   Print("Symbol: ", _Symbol);
-   Print("Lot Size: ", validatedLotSize);
-   Print("Max Positions: ", MaxPositions);
+   Print("   Direction: ", Direction == BUYONLY ? "BUY ONLY" : "SELL ONLY");
+   Print("   Symbol: ", _Symbol);
+   Print("   Lot Size: ", DoubleToString(validatedLotSize, 3));
+   Print("   Max Positions: ", MaxPositions);
    
-   // Log symbol specifications (critical for cent accounts)
-   double contractSize = SymbolInfoDouble(_Symbol, SYMBOL_TRADE_CONTRACT_SIZE);
-   double tickValue = SymbolInfoDouble(_Symbol, SYMBOL_TRADE_TICK_VALUE);
-   double tickSize = SymbolInfoDouble(_Symbol, SYMBOL_TRADE_TICK_SIZE);
-   double point = SymbolInfoDouble(_Symbol, SYMBOL_POINT);
-   long stopLevel = SymbolInfoInteger(_Symbol, SYMBOL_TRADE_STOPS_LEVEL);
-   
-   Print("🔧 SYMBOL SPECIFICATIONS (broker-provided):");
-   Print("   Contract Size: ", DoubleToString(contractSize, 2));
-   Print("   Tick Value: $", DoubleToString(tickValue, 4));
-   Print("   Tick Size: ", DoubleToString(tickSize, 5));
-   Print("   Point: ", DoubleToString(point, 5));
-   Print("   Stop Level: ", stopLevel, " points");
-   
-   // Calculate value per dollar for this lot size
-   double valuePerDollar = validatedLotSize * contractSize;
-   Print("   Value per $1 move (", DoubleToString(validatedLotSize, 2), " lots): $", DoubleToString(valuePerDollar, 4));
-   Print("   → This means $1 price change = $", DoubleToString(valuePerDollar, 2), " profit/loss");
-   
-   // Initialize reference price
+   // Initialize reference price and grid
    double ask = SymbolInfoDouble(_Symbol, SYMBOL_ASK);
    double bid = SymbolInfoDouble(_Symbol, SYMBOL_BID);
+   
+   if(ask <= 0 || bid <= 0)
+   {
+      Print("❌ FAILED: Invalid price data");
+      return(INIT_FAILED);
+   }
+   
    referencePrice = (ask + bid) / 2.0;
    currentGapSize = referencePrice * GridGapPercent / 100.0;
    
-   // Get symbol specifications for validation
-   int digits = (int)SymbolInfoInteger(_Symbol, SYMBOL_DIGITS);
-   
-   // Validate gap is reasonable for this symbol
-   double minGap = tickSize * 50;  // At least 50 ticks
-   if(currentGapSize < minGap)
+   // Validate grid gap
+   if(!ValidateGridGap())
    {
-      Print("⚠️ WARNING: Grid gap $", DoubleToString(currentGapSize, digits), " is too small!");
-      Print("   Minimum recommended: $", DoubleToString(minGap, digits), " (50 ticks)");
-      Print("   Current tick size: $", DoubleToString(tickSize, digits));
+      Print("⚠️ WARNING: Grid gap validation failed - proceed with caution");
    }
    
-   // Check if gap is too large (symbol-specific recommendations)
-   double recommendedMaxGap = referencePrice * 0.5 / 100.0;  // 0.5% max for most symbols
-   if(currentGapSize > recommendedMaxGap)
-   {
-      Print("⚠️ WARNING: Grid gap $", DoubleToString(currentGapSize, 2), " might be too large!");
-      Print("   For ", _Symbol, " at $", DoubleToString(referencePrice, digits));
-      Print("   Recommended maximum: 0.5% = $", DoubleToString(recommendedMaxGap, 2));
-      Print("   Consider reducing GridGapPercent parameter");
-   }
-   
-   // Symbol-specific recommendations
-   string symbolGroup = "";
-   if(StringFind(_Symbol, "BTC") >= 0 || StringFind(_Symbol, "ETH") >= 0)
-   {
-      symbolGroup = "CRYPTO";
-      Print("📊 Detected: CRYPTOCURRENCY");
-      Print("   Recommended gap: 0.01-0.05% ($", DoubleToString(referencePrice * 0.01 / 100.0, 2), 
-            " - $", DoubleToString(referencePrice * 0.05 / 100.0, 2), ")");
-   }
-   else if(StringFind(_Symbol, "XAU") >= 0 || StringFind(_Symbol, "GOLD") >= 0)
-   {
-      symbolGroup = "METAL";
-      Print("📊 Detected: PRECIOUS METAL");
-      Print("   Recommended gap: 0.01-0.02% ($", DoubleToString(referencePrice * 0.01 / 100.0, 2), 
-            " - $", DoubleToString(referencePrice * 0.02 / 100.0, 2), ")");
-   }
-   else if(StringFind(_Symbol, "USD") >= 0 || StringFind(_Symbol, "EUR") >= 0 || StringFind(_Symbol, "GBP") >= 0)
-   {
-      symbolGroup = "FOREX";
-      Print("📊 Detected: FOREX PAIR");
-      Print("   Recommended gap: 0.05-0.1% (", DoubleToString(referencePrice * 0.05 / 100.0, digits), 
-            " - ", DoubleToString(referencePrice * 0.1 / 100.0, digits), " pips)");
-   }
-   
-   Print("📍 STARTING REFERENCE: $", DoubleToString(referencePrice, digits));
-   Print("📏 Grid Gap: $", DoubleToString(currentGapSize, digits), " (", DoubleToString(GridGapPercent, 3), "%)");
+   Print("📍 STARTING REFERENCE: $", DoubleToString(referencePrice, specs.digits));
+   Print("📏 Grid Gap: $", DoubleToString(currentGapSize, specs.digits), " (", DoubleToString(GridGapPercent, 3), "%)");
    
    // Initialize peak equity
    peakEquity = AccountInfoDouble(ACCOUNT_EQUITY);
@@ -288,69 +177,28 @@ int OnInit()
    Print("🎯 Daily Target: $", DoubleToString(dailyTarget, 2), " (", DoubleToString(DailyTargetPercent, 0), "%)");
    
    // Risk analysis
-   double balance = AccountInfoDouble(ACCOUNT_BALANCE);
-   double riskPerTrade = IndividualSLDollars;
-   double totalRisk = riskPerTrade * MaxPositions;
-   double totalRiskPercent = (totalRisk / balance) * 100.0;
-   
-   Print("═══════════════════════════════════════");
-   Print("💰 RISK ANALYSIS:");
-   Print("   Account Balance: $", DoubleToString(balance, 2));
-   
-   if(IndividualSLDollars > 0)
-   {
-      Print("   SL Risk Per Trade: $", DoubleToString(riskPerTrade, 2));
-      Print("   Max Positions: ", MaxPositions);
-      Print("   Total Portfolio Risk: $", DoubleToString(totalRisk, 2), " (", DoubleToString(totalRiskPercent, 1), "%)");
-      Print("   Max Drawdown Limit: ", DoubleToString(MaxDrawdownPercent, 1), "%");
-      
-      if(totalRiskPercent > MaxDrawdownPercent)
-      {
-         Print("⚠️ WARNING: Total risk (", DoubleToString(totalRiskPercent, 1), "%) exceeds max drawdown (", 
-               DoubleToString(MaxDrawdownPercent, 1), "%)");
-         Print("   However, emergency stop will trigger BEFORE all ", MaxPositions, " positions hit SL");
-         Print("   Emergency stop at ", DoubleToString(MaxDrawdownPercent, 1), "% = $", 
-               DoubleToString(balance * MaxDrawdownPercent / 100.0, 2), " loss");
-      }
-      else
-      {
-         Print("✅ Total risk (", DoubleToString(totalRiskPercent, 1), "%) is WITHIN max drawdown (", 
-               DoubleToString(MaxDrawdownPercent, 1), "%)");
-         Print("   Safe configuration - emergency stop will prevent excessive losses");
-      }
-      
-      // Calculate how many positions could hit SL before emergency stop
-      if(riskPerTrade > 0)
-      {
-         double emergencyStopLoss = balance * (MaxDrawdownPercent / 100.0);
-         int maxPositionsBeforeStop = (int)MathFloor(emergencyStopLoss / riskPerTrade);
-         Print("   Emergency stop triggers after ~", maxPositionsBeforeStop, " positions hit SL");
-         Print("   (", DoubleToString(MaxDrawdownPercent, 1), "% drawdown protection active)");
-      }
-   }
-   else
-   {
-      Print("   Individual SL: DISABLED (0%)");
-      Print("   ⚠️ WARNING: Trading without stop losses!");
-      Print("   Protection: Emergency stop at ", DoubleToString(MaxDrawdownPercent, 1), "% drawdown");
-      Print("   Max Drawdown: $", DoubleToString(balance * MaxDrawdownPercent / 100.0, 2));
-      Print("   This is HIGH RISK - Only emergency stop and daily target protect you!");
-   }
+   PrintRiskAnalysis();
    
    // TP/SL info
    Print("═══════════════════════════════════════");
    Print("🎯 PROFIT & LOSS TARGETS:");
-   Print("   Individual TP: $", DoubleToString(IndividualTPDollars, 2), " profit per position");
-   Print("   Group TP: $", DoubleToString(GroupTPDollars, 2), " total profit closes all");
+   Print("   Individual TP: $", DoubleToString(IndividualTPDollars, 2));
+   Print("   Group TP: $", DoubleToString(GroupTPDollars, 2));
+   Print("   Individual SL: ", IndividualSLDollars > 0 ? "$" + DoubleToString(IndividualSLDollars, 2) : "DISABLED");
+   
+   // Calculate expected TP/SL distances
+   if(IndividualTPDollars > 0)
+   {
+      double tpDistance = IndividualTPDollars / specs.valuePerDollar;
+      double tpPercent = (tpDistance / referencePrice) * 100.0;
+      Print("   Expected TP Distance: $", DoubleToString(tpDistance, 3), " (", DoubleToString(tpPercent, 3), "%)");
+   }
    
    if(IndividualSLDollars > 0)
    {
-      Print("   Individual SL: $", DoubleToString(IndividualSLDollars, 2), " max loss per trade");
-   }
-   else
-   {
-      Print("   Individual SL: DISABLED");
-      Print("   Relying on: Emergency stop (", DoubleToString(MaxDrawdownPercent, 1), "%) and Daily target only");
+      double slDistance = IndividualSLDollars / specs.valuePerDollar;
+      double slPercent = (slDistance / referencePrice) * 100.0;
+      Print("   Expected SL Distance: $", DoubleToString(slDistance, 3), " (", DoubleToString(slPercent, 3), "%)");
    }
    
    MqlDateTime time;
@@ -363,7 +211,6 @@ int OnInit()
    Print("   Direction: ", Direction == BUYONLY ? "BUY UP & DOWN" : "SELL UP & DOWN");
    Print("   Opens positions as price moves through grid");
    Print("   Replaces closed positions automatically");
-   Print("   Takes profits aggressively");
    Print("═══════════════════════════════════════");
    Print("🔍 DEBUG: Press 'D' key for status");
    Print("👁️ PANEL: Press 'H' key to hide/show");
@@ -376,6 +223,173 @@ int OnInit()
    SyncPositions();
    
    return(INIT_SUCCEEDED);
+}
+
+//+------------------------------------------------------------------+
+//| INITIALIZE SYMBOL SPECIFICATIONS                                  |
+//+------------------------------------------------------------------+
+bool InitializeSymbolSpecs()
+{
+   specs.contractSize = SymbolInfoDouble(_Symbol, SYMBOL_TRADE_CONTRACT_SIZE);
+   specs.tickValue = SymbolInfoDouble(_Symbol, SYMBOL_TRADE_TICK_VALUE);
+   specs.tickSize = SymbolInfoDouble(_Symbol, SYMBOL_TRADE_TICK_SIZE);
+   specs.point = SymbolInfoDouble(_Symbol, SYMBOL_POINT);
+   specs.stopLevel = SymbolInfoInteger(_Symbol, SYMBOL_TRADE_STOPS_LEVEL);
+   specs.digits = (int)SymbolInfoInteger(_Symbol, SYMBOL_DIGITS);
+   specs.minLot = SymbolInfoDouble(_Symbol, SYMBOL_VOLUME_MIN);
+   specs.maxLot = SymbolInfoDouble(_Symbol, SYMBOL_VOLUME_MAX);
+   specs.lotStep = SymbolInfoDouble(_Symbol, SYMBOL_VOLUME_STEP);
+   
+   // Validate critical values
+   if(specs.contractSize <= 0 || specs.point <= 0 || specs.minLot <= 0)
+   {
+      Print("❌ ERROR: Invalid symbol specifications");
+      Print("   Contract Size: ", specs.contractSize);
+      Print("   Point: ", specs.point);
+      Print("   Min Lot: ", specs.minLot);
+      return false;
+   }
+   
+   // Calculate minimum stop distance
+   specs.minStopDistance = specs.stopLevel * specs.point;
+   
+   // If broker returns 0, use reasonable minimum based on spread
+   if(specs.minStopDistance == 0 || specs.stopLevel == 0)
+   {
+      long spread = SymbolInfoInteger(_Symbol, SYMBOL_SPREAD);
+      specs.minStopDistance = MathMax(spread * specs.point * 2, specs.point * 10);
+   }
+   
+   Print("🔧 SYMBOL SPECIFICATIONS:");
+   Print("   Contract Size: ", DoubleToString(specs.contractSize, 2));
+   Print("   Tick Value: $", DoubleToString(specs.tickValue, 4));
+   Print("   Tick Size: ", DoubleToString(specs.tickSize, 5));
+   Print("   Point: ", DoubleToString(specs.point, 5));
+   Print("   Stop Level: ", specs.stopLevel, " points");
+   Print("   Min Stop Distance: $", DoubleToString(specs.minStopDistance, 5));
+   Print("   Digits: ", specs.digits);
+   Print("   Lot Range: ", DoubleToString(specs.minLot, 2), " - ", DoubleToString(specs.maxLot, 2));
+   Print("   Lot Step: ", DoubleToString(specs.lotStep, 3));
+   
+   return true;
+}
+
+//+------------------------------------------------------------------+
+//| VALIDATE LOT SIZE                                                 |
+//+------------------------------------------------------------------+
+double ValidateLotSize(double requestedLots)
+{
+   if(requestedLots < specs.minLot)
+   {
+      Print("⚠️ WARNING: Lot size ", requestedLots, " below minimum ", specs.minLot, ". Using minimum.");
+      return specs.minLot;
+   }
+   
+   if(requestedLots > specs.maxLot)
+   {
+      Print("⚠️ WARNING: Lot size ", requestedLots, " exceeds maximum ", specs.maxLot, ". Using maximum.");
+      return specs.maxLot;
+   }
+   
+   double normalizedLots = MathFloor(requestedLots / specs.lotStep) * specs.lotStep;
+   
+   if(normalizedLots < specs.minLot)
+      normalizedLots = specs.minLot;
+   
+   int lotDigits = 2;
+   if(specs.lotStep >= 0.1) lotDigits = 1;
+   else if(specs.lotStep >= 1.0) lotDigits = 0;
+   
+   normalizedLots = NormalizeDouble(normalizedLots, lotDigits);
+   
+   if(normalizedLots != requestedLots)
+   {
+      Print("ℹ️ INFO: Lot size adjusted from ", requestedLots, " to ", normalizedLots);
+   }
+   
+   return normalizedLots;
+}
+
+//+------------------------------------------------------------------+
+//| VALIDATE GRID GAP                                                 |
+//+------------------------------------------------------------------+
+bool ValidateGridGap()
+{
+   bool isValid = true;
+   
+   // Check if gap is too small
+   double minGap = specs.tickSize * 50;
+   if(currentGapSize < minGap)
+   {
+      Print("⚠️ WARNING: Grid gap $", DoubleToString(currentGapSize, specs.digits), " is too small!");
+      Print("   Minimum recommended: $", DoubleToString(minGap, specs.digits), " (50 ticks)");
+      isValid = false;
+   }
+   
+   // Check if gap is too large
+   double recommendedMaxGap = referencePrice * 0.5 / 100.0;
+   if(currentGapSize > recommendedMaxGap)
+   {
+      Print("⚠️ WARNING: Grid gap $", DoubleToString(currentGapSize, 2), " might be too large!");
+      Print("   Recommended maximum: 0.5% = $", DoubleToString(recommendedMaxGap, 2));
+      isValid = false;
+   }
+   
+   // Symbol-specific recommendations
+   if(StringFind(_Symbol, "BTC") >= 0 || StringFind(_Symbol, "ETH") >= 0)
+   {
+      Print("📊 CRYPTOCURRENCY: Recommended gap 0.01-0.05%");
+   }
+   else if(StringFind(_Symbol, "XAU") >= 0 || StringFind(_Symbol, "GOLD") >= 0)
+   {
+      Print("📊 PRECIOUS METAL: Recommended gap 0.01-0.02%");
+   }
+   else if(StringFind(_Symbol, "USD") >= 0 || StringFind(_Symbol, "EUR") >= 0)
+   {
+      Print("📊 FOREX: Recommended gap 0.05-0.1%");
+   }
+   
+   return isValid;
+}
+
+//+------------------------------------------------------------------+
+//| PRINT RISK ANALYSIS                                               |
+//+------------------------------------------------------------------+
+void PrintRiskAnalysis()
+{
+   double balance = AccountInfoDouble(ACCOUNT_BALANCE);
+   double riskPerTrade = IndividualSLDollars;
+   double totalRisk = riskPerTrade * MaxPositions;
+   double totalRiskPercent = (totalRisk / balance) * 100.0;
+   
+   Print("═══════════════════════════════════════");
+   Print("💰 RISK ANALYSIS:");
+   Print("   Account Balance: $", DoubleToString(balance, 2));
+   
+   if(IndividualSLDollars > 0)
+   {
+      Print("   SL Risk Per Trade: $", DoubleToString(riskPerTrade, 2), " (", DoubleToString((riskPerTrade/balance)*100, 2), "%)");
+      Print("   Max Positions: ", MaxPositions);
+      Print("   Total Portfolio Risk: $", DoubleToString(totalRisk, 2), " (", DoubleToString(totalRiskPercent, 1), "%)");
+      Print("   Max Drawdown Limit: ", DoubleToString(MaxDrawdownPercent, 1), "%");
+      
+      if(totalRiskPercent > MaxDrawdownPercent)
+      {
+         Print("⚠️ WARNING: Total risk exceeds max drawdown");
+         Print("   Emergency stop will trigger BEFORE all positions hit SL");
+      }
+      
+      // Calculate positions before emergency stop
+      double emergencyStopLoss = balance * (MaxDrawdownPercent / 100.0);
+      int maxPositionsBeforeStop = (int)MathFloor(emergencyStopLoss / riskPerTrade);
+      Print("   Emergency stop triggers after ~", maxPositionsBeforeStop, " positions hit SL");
+   }
+   else
+   {
+      Print("   Individual SL: DISABLED");
+      Print("   ⚠️ WARNING: Trading without stop losses!");
+      Print("   Protection: Emergency stop at ", DoubleToString(MaxDrawdownPercent, 1), "%");
+   }
 }
 
 //+------------------------------------------------------------------+
@@ -475,8 +489,8 @@ void OnTick()
    // Calculate total profit
    CalculateTotalProfit();
    
-   // Check group TP/SL
-   CheckGroupTPSL();
+   // Check group TP
+   CheckGroupTP();
    
    // Grid logic - only if under MaxPositions limit
    if(ArraySize(positions) < MaxPositions)
@@ -496,48 +510,35 @@ void CheckGrid()
    double ask = SymbolInfoDouble(_Symbol, SYMBOL_ASK);
    double bid = SymbolInfoDouble(_Symbol, SYMBOL_BID);
    double currentPrice = (ask + bid) / 2.0;
-   int digits = (int)SymbolInfoInteger(_Symbol, SYMBOL_DIGITS);
    
-   // Find the nearest grid level to current price
+   // Find nearest grid level
    double distanceFromReference = currentPrice - referencePrice;
    int levelIndex = (int)MathRound(distanceFromReference / currentGapSize);
    double nearestGridLevel = referencePrice + (levelIndex * currentGapSize);
    
-   // Calculate how close we are to the nearest level
+   // Calculate distance to nearest level
    double distanceToNearestLevel = MathAbs(currentPrice - nearestGridLevel);
    
-   // Adaptive trigger zone based on symbol characteristics
-   // For high-value symbols (like BTC), use tighter percentage
-   // For low-value symbols (like forex), use wider percentage
+   // Adaptive trigger zone based on symbol price
    double triggerPercent = 0.05;  // Default 5%
    
-   if(currentPrice > 10000)  // High-value symbols like BTC
-   {
-      triggerPercent = 0.02;  // 2% trigger zone
-   }
-   else if(currentPrice > 1000)  // Medium-value like Gold
-   {
-      triggerPercent = 0.03;  // 3% trigger zone
-   }
-   else  // Low-value like Forex pairs
-   {
-      triggerPercent = 0.05;  // 5% trigger zone
-   }
+   if(currentPrice > 10000)
+      triggerPercent = 0.02;  // 2% for high-value symbols
+   else if(currentPrice > 1000)
+      triggerPercent = 0.03;  // 3% for medium-value
    
    double triggerZone = currentGapSize * triggerPercent;
    
-   // Only trigger if we're VERY close to a grid level
+   // Only trigger if close to grid level
    if(distanceToNearestLevel > triggerZone)
       return;
    
-   // Check if we already have a position near this grid level
-   // Compare actual position entry prices, not just distance from theoretical level
+   // Check if position exists near this level
    bool levelHasPosition = false;
-   double minDistanceBetweenPositions = currentGapSize * 0.8;  // Positions must be 80% of gap apart
+   double minDistanceBetweenPositions = currentGapSize * 0.8;
    
    for(int i = 0; i < ArraySize(positions); i++)
    {
-      // Check distance between this grid level and existing position
       double distToExistingPosition = MathAbs(positions[i].entryPrice - nearestGridLevel);
       
       if(distToExistingPosition < minDistanceBetweenPositions)
@@ -547,7 +548,7 @@ void CheckGrid()
       }
    }
    
-   // If no position at this level and under max, open one
+   // Open position if level is empty
    if(!levelHasPosition && ArraySize(positions) < MaxPositions)
    {
       ENUM_ORDER_TYPE orderType = (Direction == BUYONLY) ? ORDER_TYPE_BUY : ORDER_TYPE_SELL;
@@ -556,9 +557,7 @@ void CheckGrid()
       if(OpenPosition(orderType, openPrice, nearestGridLevel))
       {
          string dirStr = (Direction == BUYONLY) ? "BUY" : "SELL";
-         Print("⚡ ", dirStr, " opened at grid level: $", DoubleToString(nearestGridLevel, digits));
-         Print("   Distance from level: $", DoubleToString(distanceToNearestLevel, 6));
-         Print("   Trigger zone: $", DoubleToString(triggerZone, 6), " (", DoubleToString(triggerPercent * 100, 1), "% of gap)");
+         Print("⚡ ", dirStr, " opened at grid level: $", DoubleToString(nearestGridLevel, specs.digits));
       }
    }
 }
@@ -608,46 +607,39 @@ void CalculateTotalProfit()
 }
 
 //+------------------------------------------------------------------+
-//| CHECK GROUP TP/SL                                                 |
+//| CHECK GROUP TP                                                    |
 //+------------------------------------------------------------------+
-void CheckGroupTPSL()
+void CheckGroupTP()
 {
-   // Check Group TP
-   if(GroupTPDollars > 0)
+   if(GroupTPDollars <= 0) return;
+   
+   // Debug output every 60 seconds
+   static datetime lastTPDebug = 0;
+   if(TimeCurrent() - lastTPDebug >= 60)
    {
-      // Debug output
-      static datetime lastTPDebug = 0;
-      if(TimeCurrent() - lastTPDebug >= 60)  // Every 60 seconds
-      {
-         lastTPDebug = TimeCurrent();
-         Print("💰 GROUP TP CHECK: Current P/L: $", DoubleToString(totalProfit, 2), 
-               " | Target: $", DoubleToString(GroupTPDollars, 2));
-      }
-      
-      if(totalProfit >= GroupTPDollars)
-      {
-         Print("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
-         Print("🎯 GROUP TP HIT: $", DoubleToString(totalProfit, 2), " (Target: $", DoubleToString(GroupTPDollars, 2), ")");
-         CloseAllPositions();
-         Print("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
-         return;  // Exit after closing
-      }
+      lastTPDebug = TimeCurrent();
+      Print("💰 GROUP TP CHECK: Current P/L: $", DoubleToString(totalProfit, 2), 
+            " | Target: $", DoubleToString(GroupTPDollars, 2));
    }
    
-   // Note: Individual SL protects each position
-   // No group SL needed - positions close individually at their SLs
+   if(totalProfit >= GroupTPDollars)
+   {
+      Print("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
+      Print("🎯 GROUP TP HIT: $", DoubleToString(totalProfit, 2));
+      CloseAllPositions();
+      Print("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
+   }
 }
 
 //+------------------------------------------------------------------+
-//| OPEN POSITION                                                     |
+//| OPEN POSITION WITH FIXED TP/SL CALCULATION                       |
 //+------------------------------------------------------------------+
 bool OpenPosition(ENUM_ORDER_TYPE orderType, double price, double levelPrice)
 {
-   // CRITICAL FAIL-SAFE: Verify MaxPositions limit before opening
+   // Verify MaxPositions limit
    if(ArraySize(positions) >= MaxPositions)
    {
-      Print("🛑 FAIL-SAFE TRIGGERED: Cannot open position - MaxPositions limit reached (", MaxPositions, ")");
-      Print("   Current positions: ", ArraySize(positions));
+      Print("🛑 Cannot open position - MaxPositions limit reached (", MaxPositions, ")");
       return false;
    }
    
@@ -663,143 +655,114 @@ bool OpenPosition(ENUM_ORDER_TYPE orderType, double price, double levelPrice)
    request.magic = MagicNumber;
    request.comment = StringFormat("AGG_%.2f", levelPrice);
    
-   // Get symbol specifications for calculations
-   double contractSize = SymbolInfoDouble(_Symbol, SYMBOL_TRADE_CONTRACT_SIZE);
-   int digits = (int)SymbolInfoInteger(_Symbol, SYMBOL_DIGITS);
-   
-   // CRITICAL: Calculate value per dollar movement
-   // This tells us how much P/L we get for $1 price change
-   double valuePerDollar = validatedLotSize * contractSize;
-   
-   // Validate valuePerDollar is reasonable
-   if(valuePerDollar <= 0 || valuePerDollar > 1000)
+   // Validate value per dollar
+   if(specs.valuePerDollar <= 0)
    {
-      Print("❌ ERROR: Invalid valuePerDollar calculation!");
-      Print("   Lot Size: ", validatedLotSize);
-      Print("   Contract Size: ", contractSize);
-      Print("   valuePerDollar: ", valuePerDollar);
+      Print("❌ ERROR: Invalid valuePerDollar: ", specs.valuePerDollar);
       return false;
    }
    
-   // Get broker's minimum stop level
-   long stopLevel = SymbolInfoInteger(_Symbol, SYMBOL_TRADE_STOPS_LEVEL);
-   double point = SymbolInfoDouble(_Symbol, SYMBOL_POINT);
-   double minStopDistance = stopLevel * point;
-   
-   // If broker returns 0, calculate reasonable minimum based on spread
-   if(minStopDistance == 0 || stopLevel == 0)
-   {
-      long spread = SymbolInfoInteger(_Symbol, SYMBOL_SPREAD);
-      minStopDistance = MathMax(spread * point * 2, point * 10);  // At least 2x spread or 10 points
-   }
-   
-   Print("📊 TP/SL Calculation Debug:");
-   Print("   Entry Price: $", DoubleToString(price, digits));
+   Print("📊 Opening ", (orderType == ORDER_TYPE_BUY ? "BUY" : "SELL"), " position:");
+   Print("   Entry: $", DoubleToString(price, specs.digits));
    Print("   Lot Size: ", DoubleToString(validatedLotSize, 3));
-   Print("   Contract Size: ", DoubleToString(contractSize, 2));
-   Print("   Value per $1 move: $", DoubleToString(valuePerDollar, 4));
-   Print("   Min Stop Distance: $", DoubleToString(minStopDistance, 3));
+   Print("   Value per $1 move: $", DoubleToString(specs.valuePerDollar, 4));
    
    // Set TP based on dollar target
    if(IndividualTPDollars > 0)
    {
-      // Calculate price distance needed to achieve target profit
-      double tpDistance = IndividualTPDollars / valuePerDollar;
+      // Calculate price distance for target profit
+      // Formula: Distance = Target$ / (LotSize × ContractSize)
+      double tpDistance = IndividualTPDollars / specs.valuePerDollar;
       
-      Print("   TP Target: $", DoubleToString(IndividualTPDollars, 2));
-      Print("   TP Distance Calculated: $", DoubleToString(tpDistance, 3));
-      
-      // Ensure TP distance meets minimum requirement
-      if(tpDistance < minStopDistance)
+      // Ensure meets minimum stop distance
+      if(tpDistance < specs.minStopDistance)
       {
-         Print("   ⚠️ TP distance too small, adjusting to minimum");
-         tpDistance = minStopDistance * 1.5;
+         Print("   ⚠️ TP distance too small (", DoubleToString(tpDistance, 5), 
+               "), using minimum (", DoubleToString(specs.minStopDistance, 5), ")");
+         tpDistance = specs.minStopDistance * 1.5;
       }
       
-      // Validate TP distance is reasonable (not more than 10% of price)
-      double maxTPDistance = price * 0.10;  // Max 10% of entry price
+      // Sanity check: TP should not exceed 10% of entry price
+      double maxTPDistance = price * 0.10;
       if(tpDistance > maxTPDistance)
       {
-         Print("   ⚠️ WARNING: TP distance ($", DoubleToString(tpDistance, 2), 
-               ") exceeds 10% of price! Using max: $", DoubleToString(maxTPDistance, 2));
+         Print("   ⚠️ WARNING: TP distance exceeds 10% of price!");
+         Print("   Requested: $", DoubleToString(tpDistance, 3));
+         Print("   Maximum: $", DoubleToString(maxTPDistance, 3));
+         Print("   Consider reducing IndividualTPDollars or increasing lot size");
          tpDistance = maxTPDistance;
       }
       
-      Print("   TP Distance Final: $", DoubleToString(tpDistance, 3));
-      
+      // Calculate TP level based on order type
       if(orderType == ORDER_TYPE_BUY)
       {
-         request.tp = NormalizeDouble(price + tpDistance, digits);
-         Print("   TP Level (BUY): $", DoubleToString(request.tp, digits), " (+", DoubleToString(tpDistance, 3), ")");
+         request.tp = NormalizeDouble(price + tpDistance, specs.digits);
+         Print("   TP: $", DoubleToString(request.tp, specs.digits), " (+", DoubleToString(tpDistance, 3), ")");
       }
       else
       {
-         request.tp = NormalizeDouble(price - tpDistance, digits);
-         Print("   TP Level (SELL): $", DoubleToString(request.tp, digits), " (-", DoubleToString(tpDistance, 3), ")");
+         request.tp = NormalizeDouble(price - tpDistance, specs.digits);
+         Print("   TP: $", DoubleToString(request.tp, specs.digits), " (-", DoubleToString(tpDistance, 3), ")");
       }
+      
+      // Verify expected profit
+      double expectedProfit = tpDistance * specs.valuePerDollar;
+      Print("   Expected TP Profit: $", DoubleToString(expectedProfit, 2));
    }
    
-   // Set SL based on dollar risk (0 = disabled)
+   // Set SL based on dollar risk
    if(IndividualSLDollars > 0)
    {
       // Calculate price distance for max loss
-      double slDistance = IndividualSLDollars / valuePerDollar;
+      // Formula: Distance = Risk$ / (LotSize × ContractSize)
+      double slDistance = IndividualSLDollars / specs.valuePerDollar;
       
-      Print("   SL Risk Target: $", DoubleToString(IndividualSLDollars, 2));
-      Print("   SL Distance Calculated: $", DoubleToString(slDistance, 3));
-      
-      // Ensure SL distance meets minimum requirement
-      if(slDistance < minStopDistance)
+      // Ensure meets minimum stop distance
+      if(slDistance < specs.minStopDistance)
       {
-         Print("   ⚠️ SL distance too small, adjusting to minimum");
-         slDistance = minStopDistance * 1.5;
+         Print("   ⚠️ SL distance too small (", DoubleToString(slDistance, 5), 
+               "), using minimum (", DoubleToString(specs.minStopDistance, 5), ")");
+         slDistance = specs.minStopDistance * 1.5;
       }
       
-      // Validate SL distance is reasonable (not more than 20% of price)
-      double maxSLDistance = price * 0.20;  // Max 20% of entry price
+      // Sanity check: SL should not exceed 20% of entry price
+      double maxSLDistance = price * 0.20;
       if(slDistance > maxSLDistance)
       {
-         Print("   ❌ ERROR: SL distance ($", DoubleToString(slDistance, 2), 
-               ") exceeds 20% of price! This indicates calculation error!");
-         Print("   Check IndividualSLDollars and lot size settings.");
-         slDistance = maxSLDistance;
+         Print("   ❌ ERROR: SL distance exceeds 20% of price!");
+         Print("   Requested: $", DoubleToString(slDistance, 3));
+         Print("   Maximum: $", DoubleToString(maxSLDistance, 3));
+         Print("   This indicates calculation error - trade NOT opened");
+         return false;
       }
       
-      Print("   SL Distance Final: $", DoubleToString(slDistance, 3));
-      
-      // Apply SL - CRITICAL: Direction matters!
+      // Calculate SL level based on order type
       if(orderType == ORDER_TYPE_BUY)
       {
-         // BUY: SL below entry
-         request.sl = NormalizeDouble(price - slDistance, digits);
-         Print("   SL Level (BUY): $", DoubleToString(request.sl, digits), " (-", DoubleToString(slDistance, 3), ")");
+         request.sl = NormalizeDouble(price - slDistance, specs.digits);
+         Print("   SL: $", DoubleToString(request.sl, specs.digits), " (-", DoubleToString(slDistance, 3), ")");
       }
       else
       {
-         // SELL: SL above entry
-         request.sl = NormalizeDouble(price + slDistance, digits);
-         Print("   SL Level (SELL): $", DoubleToString(request.sl, digits), " (+", DoubleToString(slDistance, 3), ")");
+         request.sl = NormalizeDouble(price + slDistance, specs.digits);
+         Print("   SL: $", DoubleToString(request.sl, specs.digits), " (+", DoubleToString(slDistance, 3), ")");
       }
       
-      // Final verification
-      double actualSLDistance = MathAbs(price - request.sl);
-      double actualSLRisk = actualSLDistance * valuePerDollar;
-      Print("   Actual SL Distance: $", DoubleToString(actualSLDistance, 3));
-      Print("   Actual SL Risk: $", DoubleToString(actualSLRisk, 2));
+      // Verify expected loss
+      double expectedLoss = slDistance * specs.valuePerDollar;
+      Print("   Expected SL Risk: $", DoubleToString(expectedLoss, 2));
       
-      // Safety check: If SL is more than 50% of price away, something is very wrong
+      // Final safety check
+      double actualSLDistance = MathAbs(price - request.sl);
       if(actualSLDistance > price * 0.5)
       {
          Print("❌ CRITICAL ERROR: SL is more than 50% away from entry!");
-         Print("   This trade will NOT be opened - calculation error detected.");
+         Print("   This trade will NOT be opened.");
          return false;
       }
    }
-   else
-   {
-      Print("   SL: DISABLED (IndividualSLDollars = 0)");
-   }
    
+   // Send order
    if(!OrderSend(request, result))
    {
       Print("❌ Order failed: ", result.retcode, " - ", result.comment);
@@ -809,18 +772,11 @@ bool OpenPosition(ENUM_ORDER_TYPE orderType, double price, double levelPrice)
    if(result.retcode == TRADE_RETCODE_DONE)
    {
       totalTrades++;
-      string typeStr = (orderType == ORDER_TYPE_BUY) ? "BUY" : "SELL";
-      Print("✅ ", typeStr, " position opened: Ticket #", result.order);
-      Print("   Entry: $", DoubleToString(price, digits), 
-            " | TP: $", DoubleToString(request.tp, digits), 
-            " | SL: $", DoubleToString(request.sl, digits));
-      if(IndividualTPDollars > 0)
-         Print("   Target Profit: $", DoubleToString(IndividualTPDollars, 2));
-      if(IndividualSLDollars > 0)
-         Print("   Max Loss: $", DoubleToString(IndividualSLDollars, 2));
+      Print("✅ Position opened: Ticket #", result.order);
       return true;
    }
    
+   Print("❌ Order not completed: ", result.retcode);
    return false;
 }
 
@@ -839,8 +795,8 @@ void CloseAllPositions()
          if(PositionGetString(POSITION_SYMBOL) == _Symbol && 
             PositionGetInteger(POSITION_MAGIC) == MagicNumber)
          {
-            ClosePosition(ticket);
-            closed++;
+            if(ClosePosition(ticket))
+               closed++;
          }
       }
    }
@@ -869,8 +825,8 @@ void CloseProfitablePositions()
                double profit = PositionGetDouble(POSITION_PROFIT);
                if(profit > 0)
                {
-                  ClosePosition(ticket);
-                  closed++;
+                  if(ClosePosition(ticket))
+                     closed++;
                }
             }
          }
@@ -882,34 +838,12 @@ void CloseProfitablePositions()
 }
 
 //+------------------------------------------------------------------+
-//| REBUILD GRID AROUND CURRENT PRICE                                |
-//+------------------------------------------------------------------+
-void RebuildGrid()
-{
-   double ask = SymbolInfoDouble(_Symbol, SYMBOL_ASK);
-   double bid = SymbolInfoDouble(_Symbol, SYMBOL_BID);
-   double currentPrice = (ask + bid) / 2.0;
-   
-   // Set new reference to current price
-   referencePrice = currentPrice;
-   
-   // Recalculate gap
-   currentGapSize = referencePrice * GridGapPercent / 100.0;
-   
-   Print("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
-   Print("🔄 GRID REBUILT");
-   Print("   New Reference: $", DoubleToString(referencePrice, (int)SymbolInfoInteger(_Symbol, SYMBOL_DIGITS)));
-   Print("   Grid Gap: $", DoubleToString(currentGapSize, 2));
-   Print("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
-}
-
-//+------------------------------------------------------------------+
 //| CLOSE SINGLE POSITION                                             |
 //+------------------------------------------------------------------+
-void ClosePosition(ulong ticket)
+bool ClosePosition(ulong ticket)
 {
    if(!PositionSelectByTicket(ticket))
-      return;
+      return false;
    
    MqlTradeRequest request = {};
    MqlTradeResult result = {};
@@ -937,11 +871,16 @@ void ClosePosition(ulong ticket)
    if(!OrderSend(request, result))
    {
       Print("❌ Failed to close position #", ticket, ": ", result.retcode, " - ", result.comment);
+      return false;
    }
-   else if(result.retcode != TRADE_RETCODE_DONE)
+   
+   if(result.retcode != TRADE_RETCODE_DONE)
    {
       Print("⚠️ Close position #", ticket, " returned: ", result.retcode);
+      return false;
    }
+   
+   return true;
 }
 
 //+------------------------------------------------------------------+
@@ -960,8 +899,8 @@ void PrintDebugStatus()
    Print("║ GRID STATUS                                                  ║");
    Print("╠══════════════════════════════════════════════════════════════╣");
    Print("Direction:             ", Direction == BUYONLY ? "BUY ONLY" : "SELL ONLY");
-   Print("Current Price:         $", DoubleToString(currentPrice, (int)SymbolInfoInteger(_Symbol, SYMBOL_DIGITS)));
-   Print("Reference Price:       $", DoubleToString(referencePrice, (int)SymbolInfoInteger(_Symbol, SYMBOL_DIGITS)));
+   Print("Current Price:         $", DoubleToString(currentPrice, specs.digits));
+   Print("Reference Price:       $", DoubleToString(referencePrice, specs.digits));
    Print("Grid Gap:              $", DoubleToString(currentGapSize, 2), " (", DoubleToString(GridGapPercent, 2), "%)");
    Print("╠══════════════════════════════════════════════════════════════╣");
    Print("║ POSITIONS                                                    ║");
@@ -971,7 +910,7 @@ void PrintDebugStatus()
    Print("╠══════════════════════════════════════════════════════════════╣");
    Print("║ PROFIT & RISK                                                ║");
    Print("╠══════════════════════════════════════════════════════════════╣");
-   Print("Floating P/L:          ", (totalProfit >= 0 ? "+" : ""), "$", DoubleToString(totalProfit, 2));
+   Print("Floating P/L:          $", DoubleToString(totalProfit, 2));
    Print("Equity:                $", DoubleToString(equity, 2));
    Print("Balance:               $", DoubleToString(balance, 2));
    Print("Drawdown:              ", DoubleToString(dd, 2), "%");
@@ -987,14 +926,14 @@ void OnChartEvent(const int id, const long &lparam, const double &dparam, const 
 {
    if(id == CHARTEVENT_KEYDOWN)
    {
-      // H key
+      // H key - toggle panel
       if(lparam == 72 || lparam == 104)
       {
          panelVisible = !panelVisible;
          TogglePanelVisibility();
          Print(panelVisible ? "👁️ Panel shown" : "👁️ Panel hidden");
       }
-      // D key
+      // D key - debug status
       else if(lparam == 68 || lparam == 100)
       {
          PrintDebugStatus();
@@ -1003,7 +942,7 @@ void OnChartEvent(const int id, const long &lparam, const double &dparam, const 
    
    if(id == CHARTEVENT_OBJECT_CLICK)
    {
-      // CLOSE button - Works even when EA is paused
+      // CLOSE button
       if(sparam == panelPrefix + "CloseBtn")
       {
          ObjectSetInteger(0, panelPrefix + "CloseBtn", OBJPROP_STATE, false);
@@ -1023,10 +962,9 @@ void OnChartEvent(const int id, const long &lparam, const double &dparam, const 
       {
          ObjectSetInteger(0, panelPrefix + "PauseBtn", OBJPROP_STATE, false);
          isPaused = !isPaused;
-         Print(isPaused ? "⏸️ EA PAUSED - No new positions will open" : "▶️ EA RESUMED - Trading active");
-         Print(isPaused ? "   (CLOSE and TAKE TP buttons still work)" : "");
+         Print(isPaused ? "⏸️ EA PAUSED" : "▶️ EA RESUMED");
       }
-      // TAKE TP button - Works even when EA is paused
+      // TAKE TP button
       else if(sparam == panelPrefix + "TPBtn")
       {
          ObjectSetInteger(0, panelPrefix + "TPBtn", OBJPROP_STATE, false);
@@ -1080,19 +1018,18 @@ void CreatePanel()
    int width = 280;
    int lineHeight = 20;
    
-   // Background - SOLID, ON TOP OF EVERYTHING
+   // Background
    ObjectCreate(0, panelPrefix + "Background", OBJ_RECTANGLE_LABEL, 0, 0, 0);
    ObjectSetInteger(0, panelPrefix + "Background", OBJPROP_XDISTANCE, x);
    ObjectSetInteger(0, panelPrefix + "Background", OBJPROP_YDISTANCE, y);
    ObjectSetInteger(0, panelPrefix + "Background", OBJPROP_XSIZE, width);
-   ObjectSetInteger(0, panelPrefix + "Background", OBJPROP_YSIZE, 310);  // Reduced height (removed REBUILD button)
+   ObjectSetInteger(0, panelPrefix + "Background", OBJPROP_YSIZE, 310);
    ObjectSetInteger(0, panelPrefix + "Background", OBJPROP_BGCOLOR, C'20,20,25');
    ObjectSetInteger(0, panelPrefix + "Background", OBJPROP_BORDER_TYPE, BORDER_FLAT);
    ObjectSetInteger(0, panelPrefix + "Background", OBJPROP_COLOR, clrGold);
    ObjectSetInteger(0, panelPrefix + "Background", OBJPROP_BACK, false);
    ObjectSetInteger(0, panelPrefix + "Background", OBJPROP_SELECTABLE, false);
    ObjectSetInteger(0, panelPrefix + "Background", OBJPROP_HIDDEN, true);
-   ObjectSetInteger(0, panelPrefix + "Background", OBJPROP_ZORDER, 0);
    
    int yPos = y + 10;
    
@@ -1104,7 +1041,7 @@ void CreatePanel()
    CreateLabel(panelPrefix + "Status", x + 10, yPos, "✅ ACTIVE", clrLimeGreen, 9, "Arial Black");
    yPos += lineHeight;
    
-   // Buttons - Single Row
+   // Buttons
    CreateButton(panelPrefix + "CloseBtn", x + 10, yPos, 85, 25, "CLOSE", clrRed, clrWhite);
    CreateButton(panelPrefix + "PauseBtn", x + 100, yPos, 85, 25, "PAUSE", clrOrange, clrWhite);
    CreateButton(panelPrefix + "TPBtn", x + 190, yPos, 80, 25, "TAKE TP", clrGreen, clrWhite);
@@ -1123,7 +1060,7 @@ void CreatePanel()
    
    // Grid
    CreateLabel(panelPrefix + "GridLabel", x + 10, yPos, "Grid Gap:", clrGold, 9, "Arial Bold");
-   CreateLabel(panelPrefix + "GridSpacing", x + 100, yPos, "0.3%", clrWhite, 9, "Arial Bold");
+   CreateLabel(panelPrefix + "GridSpacing", x + 100, yPos, "0%", clrWhite, 9, "Arial Bold");
    yPos += lineHeight;
    
    // Spread
@@ -1138,7 +1075,7 @@ void CreatePanel()
    
    // Positions
    CreateLabel(panelPrefix + "PosLabel", x + 10, yPos, "⚡ Positions:", clrGold, 9, "Arial Black");
-   CreateLabel(panelPrefix + "Positions", x + 100, yPos, "0/20", clrWhite, 9, "Arial Black");
+   CreateLabel(panelPrefix + "Positions", x + 100, yPos, "0/0", clrWhite, 9, "Arial Black");
    yPos += lineHeight + 5;
    
    // P/L
@@ -1161,9 +1098,8 @@ void CreatePanel()
    CreateLabel(panelPrefix + "DailyProfit", x + 100, yPos, "$0", clrWhite, 9, "Arial Bold");
    yPos += lineHeight + 10;
    
-   // TORAMA CAPITAL BRANDING - Bottom right inside panel with 10px right margin
-   // Using right anchor for proper alignment
-   int brandX = x + width - 10;  // 10px from right edge of panel
+   // TORAMA CAPITAL BRANDING
+   int brandX = x + width - 10;
    ObjectCreate(0, panelPrefix + "Brand", OBJ_LABEL, 0, 0, 0);
    ObjectSetInteger(0, panelPrefix + "Brand", OBJPROP_XDISTANCE, brandX);
    ObjectSetInteger(0, panelPrefix + "Brand", OBJPROP_YDISTANCE, yPos);
@@ -1171,21 +1107,20 @@ void CreatePanel()
    ObjectSetInteger(0, panelPrefix + "Brand", OBJPROP_FONTSIZE, 10);
    ObjectSetString(0, panelPrefix + "Brand", OBJPROP_FONT, "Arial Black");
    ObjectSetString(0, panelPrefix + "Brand", OBJPROP_TEXT, "TORAMA CAPITAL");
-   ObjectSetInteger(0, panelPrefix + "Brand", OBJPROP_ANCHOR, ANCHOR_RIGHT_UPPER);  // Right-aligned
+   ObjectSetInteger(0, panelPrefix + "Brand", OBJPROP_ANCHOR, ANCHOR_RIGHT_UPPER);
    ObjectSetInteger(0, panelPrefix + "Brand", OBJPROP_SELECTABLE, false);
    ObjectSetInteger(0, panelPrefix + "Brand", OBJPROP_BACK, false);
    ObjectSetInteger(0, panelPrefix + "Brand", OBJPROP_HIDDEN, true);
-   ObjectSetInteger(0, panelPrefix + "Brand", OBJPROP_ZORDER, 0);
 }
 
 //+------------------------------------------------------------------+
-//| FORMAT PRICE (REMOVE .00)                                         |
+//| FORMAT PRICE                                                      |
 //+------------------------------------------------------------------+
 string FormatPrice(double price, int digits)
 {
    string priceStr = DoubleToString(price, digits);
    
-   // Remove .00 or .0 at the end
+   // Remove trailing zeros
    if(StringFind(priceStr, ".") >= 0)
    {
       while(StringSubstr(priceStr, StringLen(priceStr) - 1) == "0")
@@ -1206,7 +1141,6 @@ void UpdatePanel()
    if(!ShowPanel) return;
    
    double currentPrice = (SymbolInfoDouble(_Symbol, SYMBOL_ASK) + SymbolInfoDouble(_Symbol, SYMBOL_BID)) / 2.0;
-   int digits = (int)SymbolInfoInteger(_Symbol, SYMBOL_DIGITS);
    
    // Status
    if(dailyTargetReached)
@@ -1221,7 +1155,7 @@ void UpdatePanel()
    }
    else if(isPaused)
    {
-      ObjectSetString(0, panelPrefix + "Status", OBJPROP_TEXT, "⏸️ PAUSED (Buttons Active)");
+      ObjectSetString(0, panelPrefix + "Status", OBJPROP_TEXT, "⏸️ PAUSED");
       ObjectSetInteger(0, panelPrefix + "Status", OBJPROP_COLOR, clrOrange);
    }
    else
@@ -1230,12 +1164,12 @@ void UpdatePanel()
       ObjectSetInteger(0, panelPrefix + "Status", OBJPROP_COLOR, clrLimeGreen);
    }
    
-   // Pause button text
+   // Pause button
    ObjectSetString(0, panelPrefix + "PauseBtn", OBJPROP_TEXT, isPaused ? "RESUME" : "PAUSE");
    ObjectSetInteger(0, panelPrefix + "PauseBtn", OBJPROP_BGCOLOR, isPaused ? clrGreen : clrOrange);
    
    // Price
-   ObjectSetString(0, panelPrefix + "Price", OBJPROP_TEXT, "$" + FormatPrice(currentPrice, digits));
+   ObjectSetString(0, panelPrefix + "Price", OBJPROP_TEXT, "$" + FormatPrice(currentPrice, specs.digits));
    
    // Grid
    ObjectSetString(0, panelPrefix + "GridSpacing", OBJPROP_TEXT,
@@ -1248,7 +1182,7 @@ void UpdatePanel()
    ObjectSetInteger(0, panelPrefix + "Spread", OBJPROP_COLOR, spreadColor);
    
    // Reference
-   ObjectSetString(0, panelPrefix + "RefPrice", OBJPROP_TEXT, "$" + FormatPrice(referencePrice, digits));
+   ObjectSetString(0, panelPrefix + "RefPrice", OBJPROP_TEXT, "$" + FormatPrice(referencePrice, specs.digits));
    
    // Positions
    ObjectSetString(0, panelPrefix + "Positions", OBJPROP_TEXT,
@@ -1296,9 +1230,8 @@ void CreateLabel(string name, int x, int y, string text, color clr, int fontSize
    ObjectSetString(0, name, OBJPROP_FONT, font);
    ObjectSetString(0, name, OBJPROP_TEXT, text);
    ObjectSetInteger(0, name, OBJPROP_SELECTABLE, false);
-   ObjectSetInteger(0, name, OBJPROP_BACK, false);     // Keep on front
-   ObjectSetInteger(0, name, OBJPROP_HIDDEN, true);    // Hide from object list
-   ObjectSetInteger(0, name, OBJPROP_ZORDER, 0);       // Top layer
+   ObjectSetInteger(0, name, OBJPROP_BACK, false);
+   ObjectSetInteger(0, name, OBJPROP_HIDDEN, true);
 }
 
 //+------------------------------------------------------------------+
@@ -1317,9 +1250,8 @@ void CreateButton(string name, int x, int y, int width, int height, string text,
    ObjectSetInteger(0, name, OBJPROP_BORDER_COLOR, clrGold);
    ObjectSetInteger(0, name, OBJPROP_FONTSIZE, 9);
    ObjectSetString(0, name, OBJPROP_FONT, "Arial Bold");
-   ObjectSetInteger(0, name, OBJPROP_BACK, false);     // Keep on front
-   ObjectSetInteger(0, name, OBJPROP_HIDDEN, true);    // Hide from object list
-   ObjectSetInteger(0, name, OBJPROP_ZORDER, 0);       // Top layer
+   ObjectSetInteger(0, name, OBJPROP_BACK, false);
+   ObjectSetInteger(0, name, OBJPROP_HIDDEN, true);
 }
 
 //+------------------------------------------------------------------+
