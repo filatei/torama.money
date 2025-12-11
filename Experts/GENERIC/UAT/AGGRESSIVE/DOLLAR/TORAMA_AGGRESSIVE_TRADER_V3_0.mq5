@@ -1,20 +1,21 @@
 //+------------------------------------------------------------------+
-//|                    TORAMA Aggressive Pending Orders EA v1.0      |
+//|                    TORAMA Aggressive Trader EA v1.0              |
 //|                                           TORAMA CAPITAL          |
 //|                                      https://www.torama.money     |
 //+------------------------------------------------------------------+
 #property copyright "TORAMA CAPITAL"
 #property link      "https://www.torama.money"
 #property version   "1.0"
-#property description "Aggressive Grid Trader with Pending Orders"
-#property description "Places BUY/SELL LIMIT orders at grid levels"
-#property description "Automatically replaces filled/closed orders"
+#property description "Aggressive Directional Grid Trader"
+#property description "Trades ONLY in chosen direction as price moves"
+#property description "Replaces closed positions automatically"
 #property description ""
 #property description "OPTIMIZED FOR: $100k Account | 0.01% Gap | 100 Max Positions"
-#property description "USES: Pending orders for precise grid execution"
+#property description "RISK: Each trade risks 0.5% balance (configurable)"
+#property description "SAFE: 100 positions × 0.5% = 50% max risk (emergency stop at 25%)"
 
 #define EA_VERSION "1.0"
-#define EA_NAME "TORAMA AGGRESSIVE PENDING"
+#define EA_NAME "TORAMA AGGRESSIVE TRADER"
 
 //+------------------------------------------------------------------+
 //| SETTINGS GUIDE FOR DIFFERENT ACCOUNT SIZES                       |
@@ -99,16 +100,7 @@ struct Position
    datetime entryTime;
 };
 
-struct PendingOrder
-{
-   ulong    ticket;
-   double   price;          // Pending order price
-   int      orderType;      // ORDER_TYPE_BUY_LIMIT or ORDER_TYPE_SELL_LIMIT
-   datetime createTime;
-};
-
 Position positions[];
-PendingOrder pendingOrders[];
 
 // Grid tracking
 double referencePrice = 0;              // Starting reference price
@@ -213,7 +205,6 @@ int OnInit()
    Print("Symbol: ", _Symbol);
    Print("Lot Size: ", validatedLotSize);
    Print("Max Positions: ", MaxPositions);
-   Print("Strategy: PENDING ORDERS (BUY/SELL LIMIT at grid levels)");
    
    // Log symbol specifications (critical for cent accounts)
    double contractSize = SymbolInfoDouble(_Symbol, SYMBOL_TRADE_CONTRACT_SIZE);
@@ -393,16 +384,12 @@ int OnInit()
 //+------------------------------------------------------------------+
 void OnDeinit(const int reason)
 {
-   // Cancel all pending orders on EA removal
-   CancelAllPendingOrders();
-   
    ObjectsDeleteAll(0, panelPrefix);
    ChartRedraw();
    
    Print("═══════════════════════════════════════");
    Print("👋 ", EA_NAME, " stopped");
    Print("Total trades: ", totalTrades);
-   Print("Pending orders canceled: ", ArraySize(pendingOrders));
    Print("═══════════════════════════════════════");
 }
 
@@ -483,9 +470,8 @@ void OnTick()
       return;
    }
    
-   // Sync positions and pending orders
+   // Sync positions
    SyncPositions();
-   SyncPendingOrders();
    
    // Calculate total profit
    CalculateTotalProfit();
@@ -493,9 +479,8 @@ void OnTick()
    // Check group TP/SL
    CheckGroupTPSL();
    
-   // Grid logic - maintain grid of pending orders
-   // Total positions + pending orders must not exceed MaxPositions
-   if(ArraySize(positions) + ArraySize(pendingOrders) < MaxPositions)
+   // Grid logic - only if under MaxPositions limit
+   if(ArraySize(positions) < MaxPositions)
    {
       CheckGrid();
    }
@@ -505,7 +490,7 @@ void OnTick()
 }
 
 //+------------------------------------------------------------------+
-//| MANAGE GRID - PENDING ORDERS VERSION                              |
+//| GRID LOGIC - REPLACES CLOSED POSITIONS                            |
 //+------------------------------------------------------------------+
 void CheckGrid()
 {
@@ -514,61 +499,69 @@ void CheckGrid()
    double currentPrice = (ask + bid) / 2.0;
    int digits = (int)SymbolInfoInteger(_Symbol, SYMBOL_DIGITS);
    
-   // Calculate how many grid levels we can create above and below
-   int totalSlots = MaxPositions;
-   int levelsAbove = totalSlots / 2;
-   int levelsBelow = totalSlots / 2;
+   // Find the nearest grid level to current price
+   double distanceFromReference = currentPrice - referencePrice;
+   int levelIndex = (int)MathRound(distanceFromReference / currentGapSize);
+   double nearestGridLevel = referencePrice + (levelIndex * currentGapSize);
    
-   // Place pending orders at grid levels
-   // Check each grid level and ensure there's an order or position there
-   for(int levelIndex = -levelsBelow; levelIndex <= levelsAbove; levelIndex++)
+   // Calculate how close we are to the nearest level
+   double distanceToNearestLevel = MathAbs(currentPrice - nearestGridLevel);
+   
+   // Adaptive trigger zone based on symbol characteristics
+   // For high-value symbols (like BTC), use tighter percentage
+   // For low-value symbols (like forex), use wider percentage
+   double triggerPercent = 0.05;  // Default 5%
+   
+   if(currentPrice > 10000)  // High-value symbols like BTC
    {
-      double gridLevel = referencePrice + (levelIndex * currentGapSize);
+      triggerPercent = 0.02;  // 2% trigger zone
+   }
+   else if(currentPrice > 1000)  // Medium-value like Gold
+   {
+      triggerPercent = 0.03;  // 3% trigger zone
+   }
+   else  // Low-value like Forex pairs
+   {
+      triggerPercent = 0.05;  // 5% trigger zone
+   }
+   
+   double triggerZone = currentGapSize * triggerPercent;
+   
+   // Only trigger if we're VERY close to a grid level
+   if(distanceToNearestLevel > triggerZone)
+      return;
+   
+   // Check if we already have a position near this grid level
+   // Compare actual position entry prices, not just distance from theoretical level
+   bool levelHasPosition = false;
+   double minDistanceBetweenPositions = currentGapSize * 0.8;  // Positions must be 80% of gap apart
+   
+   for(int i = 0; i < ArraySize(positions); i++)
+   {
+      // Check distance between this grid level and existing position
+      double distToExistingPosition = MathAbs(positions[i].entryPrice - nearestGridLevel);
       
-      // Skip if too far from current price (more than 10 levels away)
-      if(MathAbs(gridLevel - currentPrice) > currentGapSize * 10)
-         continue;
-      
-      // Check if we have a position or pending order at this level
-      bool hasPositionAtLevel = false;
-      bool hasPendingAtLevel = false;
-      
-      // Check positions
-      for(int i = 0; i < ArraySize(positions); i++)
+      if(distToExistingPosition < minDistanceBetweenPositions)
       {
-         if(MathAbs(positions[i].entryPrice - gridLevel) < currentGapSize * 0.8)
-         {
-            hasPositionAtLevel = true;
-            break;
-         }
-      }
-      
-      // Check pending orders
-      if(!hasPositionAtLevel)
-      {
-         for(int i = 0; i < ArraySize(pendingOrders); i++)
-         {
-            if(MathAbs(pendingOrders[i].price - gridLevel) < currentGapSize * 0.8)
-            {
-               hasPendingAtLevel = true;
-               break;
-            }
-         }
-      }
-      
-      // If no position or pending order at this level, create one
-      if(!hasPositionAtLevel && !hasPendingAtLevel)
-      {
-         // Check if total positions + pending orders < MaxPositions
-         if(ArraySize(positions) + ArraySize(pendingOrders) < MaxPositions)
-         {
-            PlacePendingOrder(gridLevel);
-         }
+         levelHasPosition = true;
+         break;
       }
    }
    
-   // Clean up pending orders that are too far from current price
-   CleanupDistantOrders(currentPrice);
+   // If no position at this level and under max, open one
+   if(!levelHasPosition && ArraySize(positions) < MaxPositions)
+   {
+      ENUM_ORDER_TYPE orderType = (Direction == BUYONLY) ? ORDER_TYPE_BUY : ORDER_TYPE_SELL;
+      double openPrice = (Direction == BUYONLY) ? ask : bid;
+      
+      if(OpenPosition(orderType, openPrice, nearestGridLevel))
+      {
+         string dirStr = (Direction == BUYONLY) ? "BUY" : "SELL";
+         Print("⚡ ", dirStr, " opened at grid level: $", DoubleToString(nearestGridLevel, digits));
+         Print("   Distance from level: $", DoubleToString(distanceToNearestLevel, 6));
+         Print("   Trigger zone: $", DoubleToString(triggerZone, 6), " (", DoubleToString(triggerPercent * 100, 1), "% of gap)");
+      }
+   }
 }
 
 //+------------------------------------------------------------------+
@@ -594,35 +587,6 @@ void SyncPositions()
             int size = ArraySize(positions);
             ArrayResize(positions, size + 1);
             positions[size] = pos;
-         }
-      }
-   }
-}
-
-//+------------------------------------------------------------------+
-//| SYNC PENDING ORDERS                                               |
-//+------------------------------------------------------------------+
-void SyncPendingOrders()
-{
-   ArrayResize(pendingOrders, 0);
-   
-   for(int i = OrdersTotal() - 1; i >= 0; i--)
-   {
-      ulong ticket = OrderGetTicket(i);
-      if(ticket > 0)
-      {
-         if(OrderGetString(ORDER_SYMBOL) == _Symbol && 
-            OrderGetInteger(ORDER_MAGIC) == MagicNumber)
-         {
-            PendingOrder order;
-            order.ticket = ticket;
-            order.price = OrderGetDouble(ORDER_PRICE_OPEN);
-            order.orderType = (int)OrderGetInteger(ORDER_TYPE);
-            order.createTime = (datetime)OrderGetInteger(ORDER_TIME_SETUP);
-            
-            int size = ArraySize(pendingOrders);
-            ArrayResize(pendingOrders, size + 1);
-            pendingOrders[size] = order;
          }
       }
    }
@@ -676,156 +640,7 @@ void CheckGroupTPSL()
 }
 
 //+------------------------------------------------------------------+
-//| PLACE PENDING ORDER AT GRID LEVEL                                 |
-//+------------------------------------------------------------------+
-bool PlacePendingOrder(double gridLevel)
-{
-   double currentPrice = (SymbolInfoDouble(_Symbol, SYMBOL_ASK) + SymbolInfoDouble(_Symbol, SYMBOL_BID)) / 2.0;
-   int digits = (int)SymbolInfoInteger(_Symbol, SYMBOL_DIGITS);
-   
-   // Determine order type based on direction and price level
-   ENUM_ORDER_TYPE orderType;
-   
-   if(Direction == BUYONLY)
-   {
-      // For BUY ONLY: place BUY LIMIT below current price
-      if(gridLevel < currentPrice)
-         orderType = ORDER_TYPE_BUY_LIMIT;
-      else
-         return false;  // Don't place buy limits above current price
-   }
-   else  // SELLONLY
-   {
-      // For SELL ONLY: place SELL LIMIT above current price
-      if(gridLevel > currentPrice)
-         orderType = ORDER_TYPE_SELL_LIMIT;
-      else
-         return false;  // Don't place sell limits below current price
-   }
-   
-   MqlTradeRequest request = {};
-   MqlTradeResult result = {};
-   
-   request.action = TRADE_ACTION_PENDING;
-   request.symbol = _Symbol;
-   request.volume = validatedLotSize;
-   request.type = orderType;
-   request.price = NormalizeDouble(gridLevel, digits);
-   request.magic = MagicNumber;
-   request.comment = StringFormat("PENDING_%.2f", gridLevel);
-   
-   // Get symbol specifications for TP/SL calculation
-   double contractSize = SymbolInfoDouble(_Symbol, SYMBOL_TRADE_CONTRACT_SIZE);
-   double valuePerDollar = validatedLotSize * contractSize;
-   
-   // Get broker's minimum stop level
-   long stopLevel = SymbolInfoInteger(_Symbol, SYMBOL_TRADE_STOPS_LEVEL);
-   double point = SymbolInfoDouble(_Symbol, SYMBOL_POINT);
-   double minStopDistance = stopLevel * point;
-   
-   // If broker returns 0, calculate reasonable minimum based on spread
-   if(minStopDistance == 0 || stopLevel == 0)
-   {
-      long spread = SymbolInfoInteger(_Symbol, SYMBOL_SPREAD);
-      minStopDistance = MathMax(spread * point * 2, point * 10);  // At least 2x spread or 10 points
-   }
-   
-   Print("📏 Stop Level Info:");
-   Print("   Broker Stop Level: ", stopLevel, " points");
-   Print("   Min Distance: $", DoubleToString(minStopDistance, digits));
-   Print("   Point: ", DoubleToString(point, digits));
-   
-   // Set TP based on dollar target
-   if(IndividualTPDollars > 0)
-   {
-      double tpDistance = IndividualTPDollars / valuePerDollar;
-      
-      Print("   Calculated TP Distance: $", DoubleToString(tpDistance, 2));
-      
-      // Ensure TP distance meets minimum requirement
-      if(tpDistance < minStopDistance)
-      {
-         Print("   ⚠️ TP too small ($", DoubleToString(tpDistance, 2), "), using minimum: $", DoubleToString(minStopDistance, 2));
-         tpDistance = minStopDistance * 1.5;  // Use 1.5x minimum for safety
-      }
-      
-      if(orderType == ORDER_TYPE_BUY_LIMIT)
-         request.tp = NormalizeDouble(gridLevel + tpDistance, digits);
-      else
-         request.tp = NormalizeDouble(gridLevel - tpDistance, digits);
-   }
-   
-   // Set SL based on dollar risk
-   if(IndividualSLDollars > 0)
-   {
-      double slDistance = IndividualSLDollars / valuePerDollar;
-      
-      Print("   Calculated SL Distance: $", DoubleToString(slDistance, 2));
-      
-      // Ensure SL distance meets minimum requirement
-      if(slDistance < minStopDistance)
-      {
-         Print("   ⚠️ SL too small ($", DoubleToString(slDistance, 2), "), using minimum: $", DoubleToString(minStopDistance, 2));
-         slDistance = minStopDistance * 1.5;  // Use 1.5x minimum for safety
-      }
-      
-      if(orderType == ORDER_TYPE_BUY_LIMIT)
-         request.sl = NormalizeDouble(gridLevel - slDistance, digits);
-      else
-         request.sl = NormalizeDouble(gridLevel + slDistance, digits);
-   }
-   
-   if(!OrderSend(request, result))
-   {
-      Print("❌ Pending order failed: ", result.retcode, " - ", result.comment);
-      Print("   Grid Level: $", DoubleToString(gridLevel, digits));
-      Print("   TP: $", DoubleToString(request.tp, digits));
-      Print("   SL: $", DoubleToString(request.sl, digits));
-      Print("   Min Stop Distance: $", DoubleToString(minStopDistance, digits));
-      return false;
-   }
-   
-   if(result.retcode == TRADE_RETCODE_DONE || result.retcode == TRADE_RETCODE_PLACED)
-   {
-      string typeStr = (orderType == ORDER_TYPE_BUY_LIMIT) ? "BUY LIMIT" : "SELL LIMIT";
-      Print("📍 ", typeStr, " placed at: $", DoubleToString(gridLevel, digits), " | Ticket: #", result.order);
-      if(request.tp > 0)
-         Print("   TP: $", DoubleToString(request.tp, digits), " | Target: $", DoubleToString(IndividualTPDollars, 2));
-      if(request.sl > 0)
-         Print("   SL: $", DoubleToString(request.sl, digits), " | Risk: $", DoubleToString(IndividualSLDollars, 2));
-      return true;
-   }
-   
-   return false;
-}
-
-//+------------------------------------------------------------------+
-//| CLEANUP DISTANT PENDING ORDERS                                    |
-//+------------------------------------------------------------------+
-void CleanupDistantOrders(double currentPrice)
-{
-   double maxDistance = currentGapSize * 15;  // Cancel orders more than 15 levels away
-   
-   for(int i = 0; i < ArraySize(pendingOrders); i++)
-   {
-      if(MathAbs(pendingOrders[i].price - currentPrice) > maxDistance)
-      {
-         MqlTradeRequest request = {};
-         MqlTradeResult result = {};
-         
-         request.action = TRADE_ACTION_REMOVE;
-         request.order = pendingOrders[i].ticket;
-         
-         if(OrderSend(request, result))
-         {
-            Print("🗑️ Removed distant pending order at: $", DoubleToString(pendingOrders[i].price, 2));
-         }
-      }
-   }
-}
-
-//+------------------------------------------------------------------+
-//| OPEN POSITION (MARKET ORDER - FALLBACK)                          |
+//| OPEN POSITION                                                     |
 //+------------------------------------------------------------------+
 bool OpenPosition(ENUM_ORDER_TYPE orderType, double price, double levelPrice)
 {
@@ -854,12 +669,30 @@ bool OpenPosition(ENUM_ORDER_TYPE orderType, double price, double levelPrice)
    double valuePerDollar = validatedLotSize * contractSize;
    int digits = (int)SymbolInfoInteger(_Symbol, SYMBOL_DIGITS);
    
+   // Get broker's minimum stop level
+   long stopLevel = SymbolInfoInteger(_Symbol, SYMBOL_TRADE_STOPS_LEVEL);
+   double point = SymbolInfoDouble(_Symbol, SYMBOL_POINT);
+   double minStopDistance = stopLevel * point;
+   
+   // If broker returns 0, calculate reasonable minimum based on spread
+   if(minStopDistance == 0 || stopLevel == 0)
+   {
+      long spread = SymbolInfoInteger(_Symbol, SYMBOL_SPREAD);
+      minStopDistance = MathMax(spread * point * 2, point * 10);  // At least 2x spread or 10 points
+   }
+   
    // Set TP based on dollar target
    if(IndividualTPDollars > 0)
    {
       // Calculate price distance needed to achieve target profit
       // For BTC 0.1 lot: $50 profit / $0.10 per dollar = $500 price distance
       double tpDistance = IndividualTPDollars / valuePerDollar;
+      
+      // Ensure TP distance meets minimum requirement
+      if(tpDistance < minStopDistance)
+      {
+         tpDistance = minStopDistance * 1.5;  // Use 1.5x minimum for safety
+      }
       
       if(orderType == ORDER_TYPE_BUY)
       {
@@ -878,6 +711,12 @@ bool OpenPosition(ENUM_ORDER_TYPE orderType, double price, double levelPrice)
       // For BTC 0.1 lot: $100 loss / $0.10 per dollar = $1000 price distance
       double slDistance = IndividualSLDollars / valuePerDollar;
       
+      // Ensure SL distance meets minimum requirement
+      if(slDistance < minStopDistance)
+      {
+         slDistance = minStopDistance * 1.5;  // Use 1.5x minimum for safety
+      }
+      
       // Apply SL
       if(orderType == ORDER_TYPE_BUY)
       {
@@ -892,13 +731,16 @@ bool OpenPosition(ENUM_ORDER_TYPE orderType, double price, double levelPrice)
       double slRisk = MathAbs(price - request.sl) * valuePerDollar;
       
       // Debug output
-      Print("💰 SL Calculation:");
+      Print("💰 TP/SL Calculation:");
+      Print("   Min Stop Distance: $", DoubleToString(minStopDistance, 2));
+      Print("   TP Target: $", DoubleToString(IndividualTPDollars, 2));
+      Print("   TP Distance: $", DoubleToString(MathAbs(price - request.tp), 2));
       Print("   SL Target Risk: $", DoubleToString(IndividualSLDollars, 2));
-      Print("   Lot Size: ", DoubleToString(validatedLotSize, 2));
-      Print("   Contract Size: ", DoubleToString(contractSize, 2));
-      Print("   Value per $1 move: $", DoubleToString(valuePerDollar, 4));
       Print("   SL Distance: $", DoubleToString(slDistance, 2));
+      Print("   Lot Size: ", DoubleToString(validatedLotSize, 2));
+      Print("   Value per $1 move: $", DoubleToString(valuePerDollar, 4));
       Print("   Entry: $", DoubleToString(price, digits));
+      Print("   TP: $", DoubleToString(request.tp, digits));
       Print("   SL: $", DoubleToString(request.sl, digits));
       Print("   Actual Risk: $", DoubleToString(slRisk, 2));
    }
@@ -989,39 +831,6 @@ void CloseProfitablePositions()
    
    Print("💰 Closed ", closed, " profitable positions");
    SyncPositions();
-}
-
-//+------------------------------------------------------------------+
-//| CANCEL ALL PENDING ORDERS                                         |
-//+------------------------------------------------------------------+
-void CancelAllPendingOrders()
-{
-   int canceled = 0;
-   
-   for(int i = OrdersTotal() - 1; i >= 0; i--)
-   {
-      ulong ticket = OrderGetTicket(i);
-      if(ticket > 0)
-      {
-         if(OrderGetString(ORDER_SYMBOL) == _Symbol && 
-            OrderGetInteger(ORDER_MAGIC) == MagicNumber)
-         {
-            MqlTradeRequest request = {};
-            MqlTradeResult result = {};
-            
-            request.action = TRADE_ACTION_REMOVE;
-            request.order = ticket;
-            
-            if(OrderSend(request, result))
-            {
-               canceled++;
-            }
-         }
-      }
-   }
-   
-   Print("🗑️ Canceled ", canceled, " pending orders");
-   SyncPendingOrders();
 }
 
 //+------------------------------------------------------------------+
@@ -1150,16 +959,15 @@ void OnChartEvent(const int id, const long &lparam, const double &dparam, const 
       if(sparam == panelPrefix + "CloseBtn")
       {
          ObjectSetInteger(0, panelPrefix + "CloseBtn", OBJPROP_STATE, false);
-         if(ArraySize(positions) > 0 || ArraySize(pendingOrders) > 0)
+         if(ArraySize(positions) > 0)
          {
-            Print("🔴 CLOSE button pressed - Closing all positions and canceling pending orders...");
+            Print("🔴 CLOSE button pressed - Closing all positions...");
             CloseAllPositions();
-            CancelAllPendingOrders();
-            Print("✅ All positions closed and pending orders canceled");
+            Print("✅ All positions closed");
          }
          else
          {
-            Print("ℹ️ No positions or pending orders to close");
+            Print("ℹ️ No positions to close");
          }
       }
       // PAUSE/RESUME button
@@ -1394,11 +1202,9 @@ void UpdatePanel()
    // Reference
    ObjectSetString(0, panelPrefix + "RefPrice", OBJPROP_TEXT, "$" + FormatPrice(referencePrice, digits));
    
-   // Positions (active + pending)
-   int totalActive = ArraySize(positions);
-   int totalPending = ArraySize(pendingOrders);
+   // Positions
    ObjectSetString(0, panelPrefix + "Positions", OBJPROP_TEXT,
-                   IntegerToString(totalActive) + "+" + IntegerToString(totalPending) + "/" + IntegerToString(MaxPositions));
+                   IntegerToString(ArraySize(positions)) + "/" + IntegerToString(MaxPositions));
    
    // P/L
    CalculateTotalProfit();
