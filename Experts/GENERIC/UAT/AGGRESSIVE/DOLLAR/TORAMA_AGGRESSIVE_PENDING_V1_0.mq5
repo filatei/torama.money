@@ -693,10 +693,19 @@ bool PlacePendingOrder(double gridLevel)
    double contractSize = SymbolInfoDouble(_Symbol, SYMBOL_TRADE_CONTRACT_SIZE);
    double valuePerDollar = validatedLotSize * contractSize;
    
+   // Get broker's minimum stop level
+   long stopLevel = SymbolInfoInteger(_Symbol, SYMBOL_TRADE_STOPS_LEVEL);
+   double point = SymbolInfoDouble(_Symbol, SYMBOL_POINT);
+   double minStopDistance = stopLevel * point;
+   
    // Set TP based on dollar target
    if(IndividualTPDollars > 0)
    {
       double tpDistance = IndividualTPDollars / valuePerDollar;
+      
+      // Ensure TP distance meets minimum requirement
+      if(tpDistance < minStopDistance)
+         tpDistance = minStopDistance * 1.2;  // Add 20% buffer
       
       if(orderType == ORDER_TYPE_BUY_LIMIT)
          request.tp = NormalizeDouble(gridLevel + tpDistance, digits);
@@ -709,6 +718,10 @@ bool PlacePendingOrder(double gridLevel)
    {
       double slDistance = IndividualSLDollars / valuePerDollar;
       
+      // Ensure SL distance meets minimum requirement
+      if(slDistance < minStopDistance)
+         slDistance = minStopDistance * 1.2;  // Add 20% buffer
+      
       if(orderType == ORDER_TYPE_BUY_LIMIT)
          request.sl = NormalizeDouble(gridLevel - slDistance, digits);
       else
@@ -718,6 +731,10 @@ bool PlacePendingOrder(double gridLevel)
    if(!OrderSend(request, result))
    {
       Print("❌ Pending order failed: ", result.retcode, " - ", result.comment);
+      Print("   Grid Level: $", DoubleToString(gridLevel, digits));
+      Print("   TP: $", DoubleToString(request.tp, digits));
+      Print("   SL: $", DoubleToString(request.sl, digits));
+      Print("   Min Stop Distance: $", DoubleToString(minStopDistance, digits));
       return false;
    }
    
@@ -725,6 +742,10 @@ bool PlacePendingOrder(double gridLevel)
    {
       string typeStr = (orderType == ORDER_TYPE_BUY_LIMIT) ? "BUY LIMIT" : "SELL LIMIT";
       Print("📍 ", typeStr, " placed at: $", DoubleToString(gridLevel, digits), " | Ticket: #", result.order);
+      if(request.tp > 0)
+         Print("   TP: $", DoubleToString(request.tp, digits), " | Target: $", DoubleToString(IndividualTPDollars, 2));
+      if(request.sl > 0)
+         Print("   SL: $", DoubleToString(request.sl, digits), " | Risk: $", DoubleToString(IndividualSLDollars, 2));
       return true;
    }
    
