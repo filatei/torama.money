@@ -1,18 +1,18 @@
 //+------------------------------------------------------------------+
-//|                    TORAMA Aggressive Trader EA v4.1              |
+//|                    TORAMA Aggressive Trader EA v4.3              |
 //|                                           TORAMA CAPITAL          |
 //|                                      https://www.torama.money     |
 //+------------------------------------------------------------------+
 #property copyright "TORAMA CAPITAL"
 #property link      "https://www.torama.money"
-#property version   "4.1"
+#property version   "4.3"
 #property description "Aggressive Directional Grid Trader"
 #property description "Trades ONLY in chosen direction as price moves"
 #property description "Replaces closed positions automatically"
 #property description ""
-#property description "V4.1: OPTIMIZED - Fixed TP/SL calculations, removed redundant code, improved error handling"
+#property description "V4.3: FINAL FIX - Using proven formula from percentage-based EA"
 
-#define EA_VERSION "4.1"
+#define EA_VERSION "4.3"
 #define EA_NAME "TORAMA AGGRESSIVE TRADER"
 
 //+------------------------------------------------------------------+
@@ -103,7 +103,6 @@ struct SymbolSpecs
    double maxLot;
    double lotStep;
    double minStopDistance;
-   double valuePerDollar;  // Profit/loss per $1 price move
 };
 
 SymbolSpecs specs;
@@ -136,9 +135,8 @@ int OnInit()
       return(INIT_FAILED);
    }
    
-   // Validate and normalize lot size
+   // Validate lot size
    validatedLotSize = ValidateLotSize(LotSize);
-   specs.valuePerDollar = validatedLotSize * specs.contractSize;
    
    Print("📊 CONFIGURATION:");
    Print("   Direction: ", Direction == BUYONLY ? "BUY ONLY" : "SELL ONLY");
@@ -186,19 +184,22 @@ int OnInit()
    Print("   Group TP: $", DoubleToString(GroupTPDollars, 2));
    Print("   Individual SL: ", IndividualSLDollars > 0 ? "$" + DoubleToString(IndividualSLDollars, 2) : "DISABLED");
    
-   // Calculate expected TP/SL distances
+   // Calculate expected TP/SL distances using correct formula
+   double pointValue = specs.tickValue / specs.tickSize;
+   double positionValue = pointValue * validatedLotSize;
+   
    if(IndividualTPDollars > 0)
    {
-      double tpDistance = IndividualTPDollars / specs.valuePerDollar;
+      double tpDistance = IndividualTPDollars / positionValue;
       double tpPercent = (tpDistance / referencePrice) * 100.0;
-      Print("   Expected TP Distance: $", DoubleToString(tpDistance, 3), " (", DoubleToString(tpPercent, 3), "%)");
+      Print("   Expected TP Distance: $", DoubleToString(tpDistance, 4), " (", DoubleToString(tpPercent, 3), "%)");
    }
    
    if(IndividualSLDollars > 0)
    {
-      double slDistance = IndividualSLDollars / specs.valuePerDollar;
+      double slDistance = IndividualSLDollars / positionValue;
       double slPercent = (slDistance / referencePrice) * 100.0;
-      Print("   Expected SL Distance: $", DoubleToString(slDistance, 3), " (", DoubleToString(slPercent, 3), "%)");
+      Print("   Expected SL Distance: $", DoubleToString(slDistance, 4), " (", DoubleToString(slPercent, 3), "%)");
    }
    
    MqlDateTime time;
@@ -655,30 +656,35 @@ bool OpenPosition(ENUM_ORDER_TYPE orderType, double price, double levelPrice)
    request.magic = MagicNumber;
    request.comment = StringFormat("AGG_%.2f", levelPrice);
    
-   // Validate value per dollar
-   if(specs.valuePerDollar <= 0)
-   {
-      Print("❌ ERROR: Invalid valuePerDollar: ", specs.valuePerDollar);
-      return false;
-   }
-   
    Print("📊 Opening ", (orderType == ORDER_TYPE_BUY ? "BUY" : "SELL"), " position:");
    Print("   Entry: $", DoubleToString(price, specs.digits));
    Print("   Lot Size: ", DoubleToString(validatedLotSize, 3));
-   Print("   Value per $1 move: $", DoubleToString(specs.valuePerDollar, 4));
+   Print("   Tick Value: $", DoubleToString(specs.tickValue, 4));
+   Print("   Tick Size: $", DoubleToString(specs.tickSize, 5));
+   
+   // Calculate point value (value per 1.0 price unit)
+   
+   // Calculate point value (value per 1.0 price unit)
+   double pointValue = specs.tickValue / specs.tickSize;
+   double positionValue = pointValue * validatedLotSize;
+   
+   Print("   Point Value: $", DoubleToString(pointValue, 4), " per 1.0 price unit");
+   Print("   Position Value: $", DoubleToString(positionValue, 4), " per 1.0 price move");
    
    // Set TP based on dollar target
    if(IndividualTPDollars > 0)
    {
-      // Calculate price distance for target profit
-      // Formula: Distance = Target$ / (LotSize × ContractSize)
-      double tpDistance = IndividualTPDollars / specs.valuePerDollar;
+      // CORRECT FORMULA (from percentage-based EA):
+      // Distance = Target$ / (PointValue × LotSize)
+      double tpDistance = IndividualTPDollars / positionValue;
+      
+      Print("   TP Target: $", DoubleToString(IndividualTPDollars, 2));
+      Print("   TP Distance: $", DoubleToString(tpDistance, 4), " (", DoubleToString((tpDistance/price)*100, 3), "%)");
       
       // Ensure meets minimum stop distance
       if(tpDistance < specs.minStopDistance)
       {
-         Print("   ⚠️ TP distance too small (", DoubleToString(tpDistance, 5), 
-               "), using minimum (", DoubleToString(specs.minStopDistance, 5), ")");
+         Print("   ⚠️ TP distance too small, adjusting to minimum");
          tpDistance = specs.minStopDistance * 1.5;
       }
       
@@ -687,9 +693,8 @@ bool OpenPosition(ENUM_ORDER_TYPE orderType, double price, double levelPrice)
       if(tpDistance > maxTPDistance)
       {
          Print("   ⚠️ WARNING: TP distance exceeds 10% of price!");
-         Print("   Requested: $", DoubleToString(tpDistance, 3));
-         Print("   Maximum: $", DoubleToString(maxTPDistance, 3));
-         Print("   Consider reducing IndividualTPDollars or increasing lot size");
+         Print("   This suggests IndividualTPDollars ($", DoubleToString(IndividualTPDollars, 2), 
+               ") is too high for lot size ", DoubleToString(validatedLotSize, 3));
          tpDistance = maxTPDistance;
       }
       
@@ -697,31 +702,33 @@ bool OpenPosition(ENUM_ORDER_TYPE orderType, double price, double levelPrice)
       if(orderType == ORDER_TYPE_BUY)
       {
          request.tp = NormalizeDouble(price + tpDistance, specs.digits);
-         Print("   TP: $", DoubleToString(request.tp, specs.digits), " (+", DoubleToString(tpDistance, 3), ")");
+         Print("   TP Level: $", DoubleToString(request.tp, specs.digits), " (+", DoubleToString(tpDistance, 4), ")");
       }
       else
       {
          request.tp = NormalizeDouble(price - tpDistance, specs.digits);
-         Print("   TP: $", DoubleToString(request.tp, specs.digits), " (-", DoubleToString(tpDistance, 3), ")");
+         Print("   TP Level: $", DoubleToString(request.tp, specs.digits), " (-", DoubleToString(tpDistance, 4), ")");
       }
       
       // Verify expected profit
-      double expectedProfit = tpDistance * specs.valuePerDollar;
-      Print("   Expected TP Profit: $", DoubleToString(expectedProfit, 2));
+      double expectedProfit = tpDistance * positionValue;
+      Print("   Verified TP Profit: $", DoubleToString(expectedProfit, 2));
    }
    
    // Set SL based on dollar risk
    if(IndividualSLDollars > 0)
    {
-      // Calculate price distance for max loss
-      // Formula: Distance = Risk$ / (LotSize × ContractSize)
-      double slDistance = IndividualSLDollars / specs.valuePerDollar;
+      // CORRECT FORMULA (from percentage-based EA):
+      // Distance = Risk$ / (PointValue × LotSize)
+      double slDistance = IndividualSLDollars / positionValue;
+      
+      Print("   SL Risk Target: $", DoubleToString(IndividualSLDollars, 2));
+      Print("   SL Distance: $", DoubleToString(slDistance, 4), " (", DoubleToString((slDistance/price)*100, 3), "%)");
       
       // Ensure meets minimum stop distance
       if(slDistance < specs.minStopDistance)
       {
-         Print("   ⚠️ SL distance too small (", DoubleToString(slDistance, 5), 
-               "), using minimum (", DoubleToString(specs.minStopDistance, 5), ")");
+         Print("   ⚠️ SL distance too small, adjusting to minimum");
          slDistance = specs.minStopDistance * 1.5;
       }
       
@@ -730,9 +737,10 @@ bool OpenPosition(ENUM_ORDER_TYPE orderType, double price, double levelPrice)
       if(slDistance > maxSLDistance)
       {
          Print("   ❌ ERROR: SL distance exceeds 20% of price!");
-         Print("   Requested: $", DoubleToString(slDistance, 3));
-         Print("   Maximum: $", DoubleToString(maxSLDistance, 3));
-         Print("   This indicates calculation error - trade NOT opened");
+         Print("   Requested SL: $", DoubleToString(IndividualSLDollars, 2), " risk");
+         Print("   Calculated distance: $", DoubleToString(slDistance, 4), " (", DoubleToString((slDistance/price)*100, 1), "%)");
+         Print("   This suggests IndividualSLDollars is too high for lot size ", DoubleToString(validatedLotSize, 3));
+         Print("   Trade NOT opened - adjust settings!");
          return false;
       }
       
@@ -740,24 +748,22 @@ bool OpenPosition(ENUM_ORDER_TYPE orderType, double price, double levelPrice)
       if(orderType == ORDER_TYPE_BUY)
       {
          request.sl = NormalizeDouble(price - slDistance, specs.digits);
-         Print("   SL: $", DoubleToString(request.sl, specs.digits), " (-", DoubleToString(slDistance, 3), ")");
+         Print("   SL Level: $", DoubleToString(request.sl, specs.digits), " (-", DoubleToString(slDistance, 4), ")");
       }
       else
       {
          request.sl = NormalizeDouble(price + slDistance, specs.digits);
-         Print("   SL: $", DoubleToString(request.sl, specs.digits), " (+", DoubleToString(slDistance, 3), ")");
+         Print("   SL Level: $", DoubleToString(request.sl, specs.digits), " (+", DoubleToString(slDistance, 4), ")");
       }
       
       // Verify expected loss
-      double expectedLoss = slDistance * specs.valuePerDollar;
-      Print("   Expected SL Risk: $", DoubleToString(expectedLoss, 2));
+      double expectedLoss = slDistance * positionValue;
+      Print("   Verified SL Risk: $", DoubleToString(expectedLoss, 2));
       
       // Final safety check
-      double actualSLDistance = MathAbs(price - request.sl);
-      if(actualSLDistance > price * 0.5)
+      if(slDistance > price * 0.5)
       {
          Print("❌ CRITICAL ERROR: SL is more than 50% away from entry!");
-         Print("   This trade will NOT be opened.");
          return false;
       }
    }
