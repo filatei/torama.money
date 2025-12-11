@@ -72,18 +72,18 @@ input ENUM_TRADE_DIRECTION Direction = BUYONLY;  // Trading Direction
 input group "=== GRID SETTINGS ==="
 input double   GridGapPercent = 0.01;             // Grid gap % (0.01 = tight, 0.3 = wide)
 input int      MaxPositions = 100;                // Maximum positions
-input double   LotSize = 0.1;                     // Lot size per position (0.2 for $100k account)
+input double   LotSize = 0.2;                     // Lot size per position (0.2 for $100k account)
 
 input group "=== TAKE PROFIT ==="
 input double   IndividualTPDollars = 50.0;        // Individual TP target ($50 per position)
 input double   GroupTPDollars = 200.0;            // Group TP target ($200 total profit closes all)
 
 input group "=== STOP LOSS ==="
-input double   IndividualSLDollars = 1000.0;       // SL risk per trade ($100 max loss, 0 = disabled)
+input double   IndividualSLDollars = 100.0;       // SL risk per trade ($100 max loss, 0 = disabled)
 
 input group "=== RISK MANAGEMENT ==="
-input double   MaxDrawdownPercent = 20.0;         // Max drawdown % (emergency stop)
-input double   DailyTargetPercent = 200.0;        // Daily profit target (% of start balance)
+input double   MaxDrawdownPercent = 25.0;         // Max drawdown % (emergency stop)
+input double   DailyTargetPercent = 100.0;        // Daily profit target (% of start balance)
 
 input group "=== SETTINGS ==="
 input int      MaxSpread = 2000;                  // Maximum spread (points)
@@ -507,16 +507,17 @@ void CheckGrid()
    if(distanceToNearestLevel > triggerZone)
       return;
    
-   // Check if we already have a position at this level
-   // A position is "at this level" if it's within 50% of the gap from the grid level
-   // This prevents multiple positions at the same grid level
+   // Check if we already have a position near this grid level
+   // Compare actual position entry prices, not just distance from theoretical level
    bool levelHasPosition = false;
-   double levelTolerance = currentGapSize * 0.5;  // 50% of gap = tight tolerance
+   double minDistanceBetweenPositions = currentGapSize * 0.8;  // Positions must be 80% of gap apart
    
    for(int i = 0; i < ArraySize(positions); i++)
    {
-      double entryDiff = MathAbs(positions[i].entryPrice - nearestGridLevel);
-      if(entryDiff < levelTolerance)
+      // Check distance between this grid level and existing position
+      double distToExistingPosition = MathAbs(positions[i].entryPrice - nearestGridLevel);
+      
+      if(distToExistingPosition < minDistanceBetweenPositions)
       {
          levelHasPosition = true;
          break;
