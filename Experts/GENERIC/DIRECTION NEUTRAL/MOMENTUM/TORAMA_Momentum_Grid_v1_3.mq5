@@ -5,8 +5,8 @@
 //+------------------------------------------------------------------+
 #property copyright "Copyright 2025, TORAMA CAPITAL"
 #property link      "https://torama.money"
-#property version   "1.20"
-#property description "Momentum Grid EA - Optimized & Enhanced Panel"
+#property version   "1.30"
+#property description "Momentum Grid EA - Closes ONLY profitable positions"
 #property description "Chart-based magic numbers | Press 'H' to toggle panel"
 
 //+------------------------------------------------------------------+
@@ -24,8 +24,8 @@ input double   GlobalTPDollars = 200.0;
 input double   GlobalSLDollars = 0.0;
 
 input group "=== MOMENTUM LOGIC ==="
-input int      ProfitableCountToClose = 5;
-input bool     CloseBothSidesOnProfit = false;
+input int      ProfitableCountToClose = 5;       // Close profitable when X positions profitable
+input bool     CloseBothSidesOnProfit = false;   // Close ALL positions when trigger reached
 
 input group "=== RISK MANAGEMENT ==="
 input double   SessionProfitPercent = 200.0;
@@ -291,15 +291,15 @@ void CheckProfitablePositions()
          profitSells++;
    
    if(profitBuys >= ProfitableCountToClose && ArraySize(buyPositions) > 0) {
-      Print("🎯 ", profitBuys, " BUY positions profitable");
+      Print("🎯 ", profitBuys, " BUY positions profitable - closing profitable only");
       if(CloseBothSidesOnProfit) CloseAllPositions();
-      else ClosePositionsSide(POSITION_TYPE_BUY);
+      else CloseProfitablePositionsOnly(POSITION_TYPE_BUY);
    }
    
    if(profitSells >= ProfitableCountToClose && ArraySize(sellPositions) > 0) {
-      Print("🎯 ", profitSells, " SELL positions profitable");
+      Print("🎯 ", profitSells, " SELL positions profitable - closing profitable only");
       if(CloseBothSidesOnProfit) CloseAllPositions();
-      else ClosePositionsSide(POSITION_TYPE_SELL);
+      else CloseProfitablePositionsOnly(POSITION_TYPE_SELL);
    }
 }
 
@@ -364,6 +364,33 @@ void ClosePositionsSide(ENUM_POSITION_TYPE targetType)
       if(OrderSend(req, res)) closed++;
    }
    Print("✅ Closed ", closed, " ", (targetType == POSITION_TYPE_BUY ? "BUY" : "SELL"), " positions");
+}
+
+void CloseProfitablePositionsOnly(ENUM_POSITION_TYPE targetType)
+{
+   int closed = 0;
+   for(int i = PositionsTotal() - 1; i >= 0; i--) {
+      ulong ticket = PositionGetTicket(i);
+      if(ticket <= 0 || PositionGetString(POSITION_SYMBOL) != _Symbol || 
+         PositionGetInteger(POSITION_MAGIC) != MagicNumber || 
+         PositionGetInteger(POSITION_TYPE) != targetType) continue;
+      
+      // Only close if position is profitable
+      if(PositionGetDouble(POSITION_PROFIT) <= 0) continue;
+      
+      MqlTradeRequest req = {}; MqlTradeResult res = {};
+      req.action = TRADE_ACTION_DEAL;
+      req.position = ticket;
+      req.symbol = _Symbol;
+      req.volume = PositionGetDouble(POSITION_VOLUME);
+      req.type = (targetType == POSITION_TYPE_BUY) ? ORDER_TYPE_SELL : ORDER_TYPE_BUY;
+      req.price = (req.type == ORDER_TYPE_SELL) ? SymbolInfoDouble(_Symbol, SYMBOL_BID) : SymbolInfoDouble(_Symbol, SYMBOL_ASK);
+      req.deviation = 50;
+      req.magic = MagicNumber;
+      
+      if(OrderSend(req, res)) closed++;
+   }
+   Print("✅ Closed ", closed, " profitable ", (targetType == POSITION_TYPE_BUY ? "BUY" : "SELL"), " positions");
 }
 
 void RebuildGrid()
