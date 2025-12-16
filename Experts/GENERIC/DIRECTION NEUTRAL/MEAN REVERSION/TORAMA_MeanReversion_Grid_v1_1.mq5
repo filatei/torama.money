@@ -429,7 +429,7 @@ void RebuildGrid()
 //+------------------------------------------------------------------+
 void CreatePanel()
 {
-   int x = 10, y = 20, w = 280, h = 360;  // Reduced from 420 to 360
+   int x = 10, y = 20, w = 280, h = 380;  // Slightly increased from 360 for larger fonts
    color bg = C'20,20,25', txt = clrWhite, hdr = C'255,150,0';  // Orange for mean reversion
    
    ObjectCreate(0, panelPrefix + "BG", OBJ_RECTANGLE_LABEL, 0, 0, 0);
@@ -446,37 +446,37 @@ void CreatePanel()
    ObjectSetInteger(0, panelPrefix + "BG", OBJPROP_HIDDEN, true);
    ObjectSetInteger(0, panelPrefix + "BG", OBJPROP_ZORDER, 0);
    
-   int cy = y + 8;  // Reduced top margin
+   int cy = y + 8;
    
-   CreateLbl("H", "══ TORAMA MEAN REVERSION ══", x + 10, cy, hdr, 9, "Arial Bold"); cy += 20;
-   CreateLbl("M", "Magic: " + IntegerToString(MagicNumber), x + 10, cy, txt, 7); 
-   CreateLbl("S", "Status: ACTIVE", x + 150, cy, clrLime, 7); cy += 16;  // Same line
+   CreateLbl("H", "══ TORAMA MEAN REVERSION ══", x + 10, cy, hdr, 10, "Arial Bold"); cy += 22;  // Increased from 9 to 10
+   CreateLbl("M", "Magic: " + IntegerToString(MagicNumber), x + 10, cy, txt, 8);  // Increased from 7 to 8
+   CreateLbl("S", "Status: ACTIVE", x + 150, cy, clrLime, 8); cy += 18;  // Increased from 7 to 8, spacing 16 to 18
    
-   CreateLbl("L1", "─────────────────────────────────", x + 10, cy, C'50,50,50', 8); cy += 14;
-   CreateLbl("GI", "GRID INFO", x + 10, cy, hdr, 8, "Arial Bold"); cy += 16;
-   CreateLbl("R", "Ref: 0.00", x + 10, cy, txt, 7); 
-   CreateLbl("G", "Gap: $0.00", x + 150, cy, txt, 7); cy += 16;  // Same line
-   CreateLbl("NB", "Next BUY: $0.00", x + 10, cy, clrDodgerBlue, 7); cy += 16;
-   CreateLbl("NS", "Next SELL: $0.00", x + 10, cy, clrOrangeRed, 7); cy += 16;
-   CreateLbl("BC", "BUY: 0/30", x + 10, cy, clrDodgerBlue, 7); 
-   CreateLbl("SC", "SELL: 0/30", x + 150, cy, clrOrangeRed, 7); cy += 16;  // Same line
+   CreateLbl("L1", "─────────────────────────────────", x + 10, cy, C'50,50,50', 8); cy += 15;  // Increased spacing
+   CreateLbl("GI", "GRID INFO", x + 10, cy, hdr, 9, "Arial Bold"); cy += 18;  // Increased from 8 to 9
+   CreateLbl("R", "Ref: 0.00", x + 10, cy, txt, 8);  // Increased from 7 to 8
+   CreateLbl("G", "Gap: $0.00", x + 150, cy, txt, 8); cy += 18;  // Increased from 7 to 8
+   CreateLbl("NB", "Next BUY: $0.00", x + 10, cy, clrDodgerBlue, 8); cy += 18;  // Increased from 7 to 8
+   CreateLbl("NS", "Next SELL: $0.00", x + 10, cy, clrOrangeRed, 8); cy += 18;  // Increased from 7 to 8
+   CreateLbl("BC", "BUY: 0/30", x + 10, cy, clrDodgerBlue, 8);  // Increased from 7 to 8
+   CreateLbl("SC", "SELL: 0/30", x + 150, cy, clrOrangeRed, 8); cy += 18;  // Increased from 7 to 8
    
-   CreateLbl("L2", "─────────────────────────────────", x + 10, cy, C'50,50,50', 8); cy += 14;
-   CreateLbl("PI", "P&L", x + 10, cy, hdr, 8, "Arial Bold"); cy += 16;
-   CreateLbl("BP", "BUY: $0.00", x + 10, cy, txt, 7); 
-   CreateLbl("SP", "SELL: $0.00", x + 150, cy, txt, 7); cy += 16;  // Same line
-   CreateLbl("TP", "Total: $0.00", x + 10, cy, txt, 7, "Arial Bold"); cy += 16;
-   CreateLbl("SS", "Session: $0/$0", x + 10, cy, txt, 7); cy += 16;
+   CreateLbl("L2", "─────────────────────────────────", x + 10, cy, C'50,50,50', 8); cy += 15;
+   CreateLbl("PI", "P&L", x + 10, cy, hdr, 9, "Arial Bold"); cy += 18;  // Increased from 8 to 9
+   CreateLbl("BP", "BUY: $0.00", x + 10, cy, txt, 8);  // Increased from 7 to 8
+   CreateLbl("SP", "SELL: $0.00", x + 150, cy, txt, 8); cy += 18;  // Increased from 7 to 8
+   CreateLbl("TP", "Total: $0.00", x + 10, cy, txt, 9, "Arial Bold"); cy += 18;  // Increased from 7 to 9
+   CreateLbl("SS", "Session: $0/$0", x + 10, cy, txt, 8); cy += 18;  // Increased from 7 to 8
    
-   CreateLbl("L3", "─────────────────────────────────", x + 10, cy, C'50,50,50', 8); cy += 14;
-   CreateLbl("CT", "CONTROLS", x + 10, cy, hdr, 8, "Arial Bold"); cy += 18;
+   CreateLbl("L3", "─────────────────────────────────", x + 10, cy, C'50,50,50', 8); cy += 15;
+   CreateLbl("CT", "CONTROLS", x + 10, cy, hdr, 9, "Arial Bold"); cy += 20;  // Increased from 8 to 9
    
-   CreateBtn("CBB", "BUY", x + 10, cy, 60, 22, clrDodgerBlue);
-   CreateBtn("CSB", "SELL", x + 75, cy, 60, 22, clrOrangeRed);
-   CreateBtn("CAB", "ALL", x + 140, cy, 60, 22, clrRed);
-   CreateBtn("RB", "Rebuild", x + 205, cy, 65, 22, clrGold); cy += 26;
-   CreateBtn("PB", "Pause/Resume", x + 10, cy, 260, 22, clrOrange); cy += 26;
-   CreateLbl("F", "Press 'H' to hide", x + 10, cy, C'100,100,100', 7);
+   CreateBtn("CBB", "BUY", x + 10, cy, 60, 24, clrDodgerBlue);  // Height increased from 22 to 24
+   CreateBtn("CSB", "SELL", x + 75, cy, 60, 24, clrOrangeRed);
+   CreateBtn("CAB", "ALL", x + 140, cy, 60, 24, clrRed);
+   CreateBtn("RB", "Rebuild", x + 205, cy, 65, 24, clrGold); cy += 28;  // Spacing increased
+   CreateBtn("PB", "Pause/Resume", x + 10, cy, 260, 24, clrOrange); cy += 28;
+   CreateLbl("F", "Press 'H' to hide", x + 10, cy, C'100,100,100', 8);  // Increased from 7 to 8
    
    ChartRedraw(0);
 }
@@ -510,7 +510,7 @@ void CreateBtn(string id, string text, int x, int y, int w, int h, color clr)
    ObjectSetInteger(0, name, OBJPROP_COLOR, clrWhite);
    ObjectSetInteger(0, name, OBJPROP_BGCOLOR, clr);
    ObjectSetInteger(0, name, OBJPROP_BORDER_COLOR, clrWhite);
-   ObjectSetInteger(0, name, OBJPROP_FONTSIZE, 8);
+   ObjectSetInteger(0, name, OBJPROP_FONTSIZE, 9);  // Increased from 8 to 9
    ObjectSetString(0, name, OBJPROP_FONT, "Arial Bold");
    ObjectSetInteger(0, name, OBJPROP_CORNER, CORNER_LEFT_UPPER);
    ObjectSetInteger(0, name, OBJPROP_SELECTABLE, false);
