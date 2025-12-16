@@ -1,0 +1,25 @@
+; TORAMA Mean Reversion Grid EA v1.2
+; Optimized for XAUUSD with $300,000 account
+; Recommended for range-bound markets
+
+GridSpacingPercent=0.30
+MaxPositionsPerSide=25
+LotSize=0.10
+
+TradingDirection=0
+
+IndividualTPDollars=50.00
+IndividualSLDollars=0.00
+GlobalTPDollars=500.00
+GlobalSLDollars=0.00
+
+ProfitableCountToClose=5
+CloseBothSidesOnProfit=false
+
+SessionProfitPercent=10.00
+ResetSessionDaily=true
+MaxDrawdownPercent=15.00
+
+MaxSpread=200
+BaseMagicNumber=77750
+ShowPanel=true
