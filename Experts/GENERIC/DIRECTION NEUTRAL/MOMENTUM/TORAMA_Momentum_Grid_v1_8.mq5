@@ -1,41 +1,45 @@
 //+------------------------------------------------------------------+
-//|                                  TORAMA_MeanReversion_Grid_v1_0.mq5 |
+//|                                      TORAMA_Momentum_Grid_v1_2.mq5 |
 //|                                      Copyright 2025, TORAMA CAPITAL |
 //|                                               https://torama.money |
 //+------------------------------------------------------------------+
 #property copyright "Copyright 2025, TORAMA CAPITAL"
 #property link      "https://torama.money"
-#property version   "1.10"
-#property description "Mean Reversion Grid - Shows next BUY/SELL levels"
-#property description "Chart-based magic numbers | Press 'H' to toggle panel"
+#property version   "1.80"
+#property description "Momentum Grid EA - BUYONLY/SELLONLY direction control"
+#property description "Cycle tracking & auto-pause | Chart-based magic"
 
 //+------------------------------------------------------------------+
 //| INPUT PARAMETERS                                                  |
 //+------------------------------------------------------------------+
 input group "=== GRID SETTINGS ==="
-input double   GridSpacingPercent = 0.30;       // Grid spacing % of price
-input int      MaxPositionsPerSide = 30;        // Max positions per side (BUY or SELL)
-input double   LotSize = 0.01;                  // Lot size per position
+input double   GridSpacingPercent = 0.30;
+input int      MaxPositionsPerSide = 30;
+input double   LotSize = 0.01;
+
+input group "=== TRADING DIRECTION ==="
+input string   TradingDirection = "BOTH";        // Trading direction: BOTH, BUYONLY, SELLONLY
 
 input group "=== PROFIT TARGETS (Dollars) ==="
-input double   IndividualTPDollars = 50.0;      // Individual TP in dollars per position
-input double   IndividualSLDollars = 0.0;       // Individual SL in dollars (0 = disabled)
-input double   GlobalTPDollars = 200.0;         // Global TP in dollars for all positions
-input double   GlobalSLDollars = 0.0;           // Global SL in dollars (0 = disabled)
+input double   IndividualTPDollars = 50.0;
+input double   IndividualSLDollars = 0.0;
+input double   GlobalTPDollars = 200.0;
+input double   GlobalSLDollars = 0.0;
 
-input group "=== MEAN REVERSION LOGIC ==="
-input int      ProfitableCountToClose = 5;      // Close profitable when X positions profitable
-input bool     CloseBothSidesOnProfit = false;  // Close ALL positions when trigger reached
+input group "=== MOMENTUM LOGIC ==="
+input int      ProfitableCountToClose = 5;       // Close profitable when X positions profitable
+input bool     CloseBothSidesOnProfit = false;   // Close ALL positions when trigger reached
+input int      MaxConsecutiveCycles = 5;         // Max consecutive cycles before pausing that direction
 
 input group "=== RISK MANAGEMENT ==="
-input double   SessionProfitPercent = 200.0;    // Session profit target (% of starting balance)
-input bool     ResetSessionDaily = true;        // Reset session profit daily
-input double   MaxDrawdownPercent = 15.0;       // Max drawdown % (emergency stop)
+input double   SessionProfitPercent = 200.0;
+input bool     ResetSessionDaily = true;
+input double   MaxDrawdownPercent = 15.0;
 
 input group "=== SETTINGS ==="
-input int      MaxSpread = 2000;                // Maximum spread (points)
-input int      BaseMagicNumber = 77750;         // Base magic number (modified per chart)
-input bool     ShowPanel = true;                // Show info panel
+input int      MaxSpread = 2000;
+input int      BaseMagicNumber = 77740;
+input bool     ShowPanel = true;
 
 //+------------------------------------------------------------------+
 //| GLOBAL VARIABLES                                                  |
@@ -45,13 +49,18 @@ PositionInfo buyPositions[], sellPositions[];
 
 int MagicNumber = 0;
 double referencePrice = 0, lastBuyLevel = 0, lastSellLevel = 0;
-double lowestBuyLevel = 0, highestSellLevel = 0;
 double sessionStartBalance = 0, sessionProfit = 0, sessionProfitTarget = 0;
 double pointValue, tickValue, tickSize, minLot, maxLot, lotStep;
 double normalizedLotSize = 0, currentGapSize = 0;
 int digits = 0, currentDay = 0, lastTotalPositions = 0;
 bool sessionTargetReached = false, needsRebuild = false, isPaused = false, panelVisible = true;
-string panelPrefix = "MRP_";
+string panelPrefix = "MP_";
+
+// Cycle tracking variables
+int consecutiveBuyCycles = 0;      // Count of consecutive BUY cycles
+int consecutiveSellCycles = 0;     // Count of consecutive SELL cycles
+bool buyDirectionPaused = false;   // BUY direction paused flag
+bool sellDirectionPaused = false;  // SELL direction paused flag
 
 //+------------------------------------------------------------------+
 //| INITIALIZATION                                                    |
@@ -61,28 +70,37 @@ int OnInit()
    MagicNumber = (BaseMagicNumber * 10000) + (int)(ChartID() % 10000);
    ChartSetInteger(0, CHART_EVENT_MOUSE_MOVE, false);
    
+   // Initialize session
    sessionStartBalance = AccountInfoDouble(ACCOUNT_BALANCE);
    sessionProfitTarget = sessionStartBalance * SessionProfitPercent / 100.0;
    MqlDateTime time; TimeToStruct(TimeCurrent(), time); currentDay = time.day;
    
+   // Get symbol properties
    if(!InitSymbolProps()) return INIT_FAILED;
    
    referencePrice = (SymbolInfoDouble(_Symbol, SYMBOL_ASK) + SymbolInfoDouble(_Symbol, SYMBOL_BID)) / 2.0;
    currentGapSize = referencePrice * (GridSpacingPercent / 100.0);
    normalizedLotSize = NormalizeLot(LotSize);
    
+   // Validate and normalize trading direction
+   string dir = TradingDirection;
+   StringToUpper(dir);
+   if(dir != "BOTH" && dir != "BUYONLY" && dir != "SELLONLY") {
+      Print("⚠️ WARNING: Invalid TradingDirection '", TradingDirection, "' - using BOTH");
+      dir = "BOTH";
+   }
+   
+   // Print startup info
    Print("╔═══════════════════════════════════════════╗");
-   Print("║  TORAMA MEAN REVERSION GRID v1.0         ║");
+   Print("║  TORAMA MOMENTUM GRID v1.7               ║");
    Print("╚═══════════════════════════════════════════╝");
    Print("Chart ID: ", ChartID(), " | Magic: ", MagicNumber);
    Print("Symbol: ", _Symbol, " | Ref Price: ", DoubleToString(referencePrice, digits));
    Print("Gap: ", GridSpacingPercent, "% = $", DoubleToString(currentGapSize, 2));
    Print("Lot: ", DoubleToString(normalizedLotSize, 2), " | TP: $", IndividualTPDollars);
+   Print("Direction: ", dir, " | Max Cycles: ", MaxConsecutiveCycles);
    Print("Session Target: ", SessionProfitPercent, "% = $", DoubleToString(sessionProfitTarget, 2));
    Print("═══════════════════════════════════════════");
-   Print("📉 MEAN REVERSION MODE");
-   Print("Strategy: SELL rising prices, BUY falling prices");
-   Print("Logic: Expect price to revert to reference");
    
    SyncPositions();
    if(ShowPanel) CreatePanel();
@@ -91,6 +109,9 @@ int OnInit()
    return INIT_SUCCEEDED;
 }
 
+//+------------------------------------------------------------------+
+//| DEINITIALIZATION                                                  |
+//+------------------------------------------------------------------+
 void OnDeinit(const int reason) { if(ShowPanel) ObjectsDeleteAll(0, panelPrefix); }
 
 //+------------------------------------------------------------------+
@@ -100,6 +121,7 @@ void OnTick()
 {
    if(ShowPanel && panelVisible) UpdatePanel();
    
+   // Daily reset check
    if(ResetSessionDaily) {
       MqlDateTime time; TimeToStruct(TimeCurrent(), time);
       if(time.day != currentDay) {
@@ -113,17 +135,44 @@ void OnTick()
    
    if(isPaused || sessionTargetReached) return;
    
-   // Grid rebuild logic
+   // Grid rebuild logic - check if either side fully closed
    int buyCount = ArraySize(buyPositions);
    int sellCount = ArraySize(sellPositions);
    int currentTotal = buyCount + sellCount;
    
+   // Rebuild if all positions closed OR if one side went from positions to zero
    static int lastBuyCount = 0;
    static int lastSellCount = 0;
    
    if(currentTotal == 0 && lastTotalPositions > 0) needsRebuild = true;
-   if(buyCount == 0 && lastBuyCount > 0) needsRebuild = true;
-   if(sellCount == 0 && lastSellCount > 0) needsRebuild = true;
+   
+   // BUY side cleared - count as cycle and check pause
+   if(buyCount == 0 && lastBuyCount > 0) {
+      needsRebuild = true;
+      consecutiveBuyCycles++;
+      consecutiveSellCycles = 0;  // Reset SELL counter
+      Print("🔄 BUY Cycle #", consecutiveBuyCycles, " completed");
+      
+      if(consecutiveBuyCycles >= MaxConsecutiveCycles) {
+         buyDirectionPaused = true;
+         Print("⏸ BUY direction PAUSED after ", MaxConsecutiveCycles, " consecutive cycles");
+         Print("💡 Manual intervention required: Click 'Resume BUY' button");
+      }
+   }
+   
+   // SELL side cleared - count as cycle and check pause
+   if(sellCount == 0 && lastSellCount > 0) {
+      needsRebuild = true;
+      consecutiveSellCycles++;
+      consecutiveBuyCycles = 0;  // Reset BUY counter
+      Print("🔄 SELL Cycle #", consecutiveSellCycles, " completed");
+      
+      if(consecutiveSellCycles >= MaxConsecutiveCycles) {
+         sellDirectionPaused = true;
+         Print("⏸ SELL direction PAUSED after ", MaxConsecutiveCycles, " consecutive cycles");
+         Print("💡 Manual intervention required: Click 'Resume SELL' button");
+      }
+   }
    
    if(needsRebuild) { RebuildGrid(); needsRebuild = false; }
    
@@ -136,6 +185,7 @@ void OnTick()
    double currentProfit = CalcTotalProfit();
    sessionProfit = AccountInfoDouble(ACCOUNT_BALANCE) - sessionStartBalance;
    
+   // Risk checks
    if((sessionProfit / sessionStartBalance) * 100.0 < -MaxDrawdownPercent) {
       Print("🚨 EMERGENCY STOP: Drawdown limit");
       CloseAllPositions(); isPaused = true; return;
@@ -160,7 +210,7 @@ void OnTick()
    
    if(SymbolInfoInteger(_Symbol, SYMBOL_SPREAD) > MaxSpread) return;
    
-   CheckMeanReversionSignals();
+   CheckMomentumSignals();
 }
 
 //+------------------------------------------------------------------+
@@ -214,10 +264,7 @@ void SyncPositions()
    }
 }
 
-//+------------------------------------------------------------------+
-//| MEAN REVERSION SIGNALS - OPPOSITE OF MOMENTUM                    |
-//+------------------------------------------------------------------+
-void CheckMeanReversionSignals()
+void CheckMomentumSignals()
 {
    double ask = SymbolInfoDouble(_Symbol, SYMBOL_ASK);
    double bid = SymbolInfoDouble(_Symbol, SYMBOL_BID);
@@ -225,28 +272,28 @@ void CheckMeanReversionSignals()
    
    double currentPrice = (ask + bid) / 2.0;
    
-   // MEAN REVERSION: SELL when price rises (expect it to fall back)
-   if(currentPrice > referencePrice) {
-      double nextLevel = (lastSellLevel == 0) ? referencePrice + currentGapSize : lastSellLevel + currentGapSize;
-      if(currentPrice >= nextLevel && ArraySize(sellPositions) < MaxPositionsPerSide) {
-         if(OpenPosition(ORDER_TYPE_SELL, bid)) {
-            lastSellLevel = nextLevel;
-            if(nextLevel > highestSellLevel) highestSellLevel = nextLevel;
-            Print("📉 SELL (mean reversion) #", ArraySize(sellPositions), " @ ", DoubleToString(bid, digits));
-            Print("   Logic: Price rising → SELL expecting reversion");
+   // Normalize direction string
+   string dir = TradingDirection;
+   StringToUpper(dir);
+   
+   // BUY momentum (only if not paused and direction allows)
+   if(currentPrice > referencePrice && !buyDirectionPaused && (dir == "BOTH" || dir == "BUYONLY")) {
+      double nextLevel = (lastBuyLevel == 0) ? referencePrice + currentGapSize : lastBuyLevel + currentGapSize;
+      if(currentPrice >= nextLevel && ArraySize(buyPositions) < MaxPositionsPerSide) {
+         if(OpenPosition(ORDER_TYPE_BUY, ask)) {
+            lastBuyLevel = nextLevel;
+            Print("📈 BUY #", ArraySize(buyPositions), " @ ", DoubleToString(ask, digits));
          }
       }
    }
    
-   // MEAN REVERSION: BUY when price falls (expect it to rise back)
-   if(currentPrice < referencePrice) {
-      double nextLevel = (lastBuyLevel == 0) ? referencePrice - currentGapSize : lastBuyLevel - currentGapSize;
-      if(currentPrice <= nextLevel && ArraySize(buyPositions) < MaxPositionsPerSide) {
-         if(OpenPosition(ORDER_TYPE_BUY, ask)) {
-            lastBuyLevel = nextLevel;
-            if(nextLevel < lowestBuyLevel || lowestBuyLevel == 0) lowestBuyLevel = nextLevel;
-            Print("📈 BUY (mean reversion) #", ArraySize(buyPositions), " @ ", DoubleToString(ask, digits));
-            Print("   Logic: Price falling → BUY expecting reversion");
+   // SELL momentum (only if not paused and direction allows)
+   if(currentPrice < referencePrice && !sellDirectionPaused && (dir == "BOTH" || dir == "SELLONLY")) {
+      double nextLevel = (lastSellLevel == 0) ? referencePrice - currentGapSize : lastSellLevel - currentGapSize;
+      if(currentPrice <= nextLevel && ArraySize(sellPositions) < MaxPositionsPerSide) {
+         if(OpenPosition(ORDER_TYPE_SELL, bid)) {
+            lastSellLevel = nextLevel;
+            Print("📉 SELL #", ArraySize(sellPositions), " @ ", DoubleToString(bid, digits));
          }
       }
    }
@@ -263,15 +310,22 @@ bool OpenPosition(ENUM_ORDER_TYPE type, double price)
    request.price = price;
    request.deviation = 50;
    request.magic = MagicNumber;
-   request.comment = "ToramaMeanRev";
+   request.comment = "ToramaMomentum";
    
    if(IndividualTPDollars > 0) {
+      // Get contract size - but some brokers return 1 instead of actual size
       double contractSize = SymbolInfoDouble(_Symbol, SYMBOL_TRADE_CONTRACT_SIZE);
+      
+      // If contractSize is 1 or invalid, calculate from tick value
+      // For gold: tickValue = $10 per lot per $1 move
+      // contractSize = tickValue / tickSize
       if(contractSize <= 1.0) {
          double tvPerLot = SymbolInfoDouble(_Symbol, SYMBOL_TRADE_TICK_VALUE);
          double ts = SymbolInfoDouble(_Symbol, SYMBOL_TRADE_TICK_SIZE);
          if(ts > 0) contractSize = tvPerLot / ts;
       }
+      
+      // Calculate price distance for target profit
       double tpDist = IndividualTPDollars / (normalizedLotSize * contractSize);
       request.tp = NormalizeDouble((type == ORDER_TYPE_BUY) ? price + tpDist : price - tpDist, digits);
    }
@@ -389,6 +443,7 @@ void CloseProfitablePositionsOnly(ENUM_POSITION_TYPE targetType)
          PositionGetInteger(POSITION_MAGIC) != MagicNumber || 
          PositionGetInteger(POSITION_TYPE) != targetType) continue;
       
+      // Only close if position is profitable
       if(PositionGetDouble(POSITION_PROFIT) <= 0) continue;
       
       MqlTradeRequest req = {}; MqlTradeResult res = {};
@@ -411,7 +466,6 @@ void RebuildGrid()
    Print("🔄 REBUILDING GRID...");
    ArrayResize(buyPositions, 0); ArrayResize(sellPositions, 0);
    lastBuyLevel = 0; lastSellLevel = 0;
-   lowestBuyLevel = 0; highestSellLevel = 0;
    
    double ask = SymbolInfoDouble(_Symbol, SYMBOL_ASK);
    double bid = SymbolInfoDouble(_Symbol, SYMBOL_BID);
@@ -429,9 +483,10 @@ void RebuildGrid()
 //+------------------------------------------------------------------+
 void CreatePanel()
 {
-   int x = 10, y = 20, w = 280, h = 380;  // Slightly increased from 360 for larger fonts
-   color bg = C'20,20,25', txt = clrWhite, hdr = C'255,150,0';  // Orange for mean reversion
+   int x = 10, y = 20, w = 280, h = 430;  // Increased for taller buttons
+   color bg = C'20,20,25', txt = clrWhite, hdr = C'0,150,255';
    
+   // Solid background with border
    ObjectCreate(0, panelPrefix + "BG", OBJ_RECTANGLE_LABEL, 0, 0, 0);
    ObjectSetInteger(0, panelPrefix + "BG", OBJPROP_XDISTANCE, x);
    ObjectSetInteger(0, panelPrefix + "BG", OBJPROP_YDISTANCE, y);
@@ -448,9 +503,9 @@ void CreatePanel()
    
    int cy = y + 8;
    
-   CreateLbl("H", "══ TORAMA MEAN REVERSION ══", x + 10, cy, hdr, 10, "Arial Bold"); cy += 22;  // Increased from 9 to 10
+   CreateLbl("H", "═══ TORAMA MOMENTUM GRID ═══", x + 10, cy, hdr, 10, "Arial Bold"); cy += 22;  // Increased from 9 to 10
    CreateLbl("M", "Magic: " + IntegerToString(MagicNumber), x + 10, cy, txt, 8);  // Increased from 7 to 8
-   CreateLbl("S", "Status: ACTIVE", x + 150, cy, clrLime, 8); cy += 18;  // Increased from 7 to 8, spacing 16 to 18
+   CreateLbl("S", "Status: ACTIVE", x + 150, cy, clrLime, 8); cy += 18;  // Increased from 7 to 8
    
    CreateLbl("L1", "─────────────────────────────────", x + 10, cy, C'50,50,50', 8); cy += 15;  // Increased spacing
    CreateLbl("GI", "GRID INFO", x + 10, cy, hdr, 9, "Arial Bold"); cy += 18;  // Increased from 8 to 9
@@ -460,6 +515,9 @@ void CreatePanel()
    CreateLbl("NS", "Next SELL: $0.00", x + 10, cy, clrOrangeRed, 8); cy += 18;  // Increased from 7 to 8
    CreateLbl("BC", "BUY: 0/30", x + 10, cy, clrDodgerBlue, 8);  // Increased from 7 to 8
    CreateLbl("SC", "SELL: 0/30", x + 150, cy, clrOrangeRed, 8); cy += 18;  // Increased from 7 to 8
+   
+   // Cycle tracking display
+   CreateLbl("CC", "Cycles: B:0/5  S:0/5", x + 10, cy, clrGold, 8); cy += 18;
    
    CreateLbl("L2", "─────────────────────────────────", x + 10, cy, C'50,50,50', 8); cy += 15;
    CreateLbl("PI", "P&L", x + 10, cy, hdr, 9, "Arial Bold"); cy += 18;  // Increased from 8 to 9
@@ -471,11 +529,13 @@ void CreatePanel()
    CreateLbl("L3", "─────────────────────────────────", x + 10, cy, C'50,50,50', 8); cy += 15;
    CreateLbl("CT", "CONTROLS", x + 10, cy, hdr, 9, "Arial Bold"); cy += 20;  // Increased from 8 to 9
    
-   CreateBtn("CBB", "BUY", x + 10, cy, 60, 24, clrDodgerBlue);  // Height increased from 22 to 24
-   CreateBtn("CSB", "SELL", x + 75, cy, 60, 24, clrOrangeRed);
-   CreateBtn("CAB", "ALL", x + 140, cy, 60, 24, clrRed);
-   CreateBtn("RB", "Rebuild", x + 205, cy, 65, 24, clrGold); cy += 28;  // Spacing increased
-   CreateBtn("PB", "Pause/Resume", x + 10, cy, 260, 24, clrOrange); cy += 28;
+   CreateBtn("CBB", "BUY", x + 10, cy, 60, 26, C'30,120,220');  // Darker blue, taller button
+   CreateBtn("CSB", "SELL", x + 75, cy, 60, 26, C'220,50,50');  // Darker red
+   CreateBtn("CAB", "ALL", x + 140, cy, 60, 26, C'180,30,30');  // Dark red
+   CreateBtn("RB", "Rebuild", x + 205, cy, 65, 26, C'200,160,0'); cy += 30;  // Darker gold
+   CreateBtn("RBB", "Resume BUY", x + 10, cy, 125, 26, C'30,120,220');  // Darker blue
+   CreateBtn("RSB", "Resume SELL", x + 140, cy, 130, 26, C'220,50,50'); cy += 30;  // Darker red
+   CreateBtn("PB", "Pause/Resume", x + 10, cy, 260, 26, C'220,130,0'); cy += 30;  // Darker orange
    CreateLbl("F", "Press 'H' to hide", x + 10, cy, C'100,100,100', 8);  // Increased from 7 to 8
    
    ChartRedraw(0);
@@ -507,11 +567,11 @@ void CreateBtn(string id, string text, int x, int y, int w, int h, color clr)
    ObjectSetInteger(0, name, OBJPROP_XSIZE, w);
    ObjectSetInteger(0, name, OBJPROP_YSIZE, h);
    ObjectSetString(0, name, OBJPROP_TEXT, text);
-   ObjectSetInteger(0, name, OBJPROP_COLOR, clrWhite);
+   ObjectSetInteger(0, name, OBJPROP_COLOR, clrWhite);  // White text for contrast
    ObjectSetInteger(0, name, OBJPROP_BGCOLOR, clr);
-   ObjectSetInteger(0, name, OBJPROP_BORDER_COLOR, clrWhite);
-   ObjectSetInteger(0, name, OBJPROP_FONTSIZE, 9);  // Increased from 8 to 9
-   ObjectSetString(0, name, OBJPROP_FONT, "Arial Bold");
+   ObjectSetInteger(0, name, OBJPROP_BORDER_COLOR, C'80,80,85');  // Subtle border
+   ObjectSetInteger(0, name, OBJPROP_FONTSIZE, 10);  // Increased from 9 to 10
+   ObjectSetString(0, name, OBJPROP_FONT, "Arial Black");  // Bolder font for visibility
    ObjectSetInteger(0, name, OBJPROP_CORNER, CORNER_LEFT_UPPER);
    ObjectSetInteger(0, name, OBJPROP_SELECTABLE, false);
    ObjectSetInteger(0, name, OBJPROP_HIDDEN, true);
@@ -535,21 +595,21 @@ void UpdatePanel()
    double nextBuyLevel = 0;
    double nextSellLevel = 0;
    
-   // Mean Reversion: BUY below reference, SELL above reference
-   if(currentPrice < referencePrice) {
-      // Price falling - next BUY level
-      nextBuyLevel = (lastBuyLevel == 0) ? referencePrice - currentGapSize : lastBuyLevel - currentGapSize;
+   // Momentum: BUY above reference, SELL below reference
+   if(currentPrice > referencePrice) {
+      // Price rising - next BUY level
+      nextBuyLevel = (lastBuyLevel == 0) ? referencePrice + currentGapSize : lastBuyLevel + currentGapSize;
    } else {
-      // Price at or above reference - show first BUY level below
-      nextBuyLevel = (lastBuyLevel == 0) ? referencePrice - currentGapSize : lastBuyLevel;
+      // Price at or below reference - show first BUY level above
+      nextBuyLevel = (lastBuyLevel == 0) ? referencePrice + currentGapSize : lastBuyLevel;
    }
    
-   if(currentPrice > referencePrice) {
-      // Price rising - next SELL level
-      nextSellLevel = (lastSellLevel == 0) ? referencePrice + currentGapSize : lastSellLevel + currentGapSize;
+   if(currentPrice < referencePrice) {
+      // Price falling - next SELL level
+      nextSellLevel = (lastSellLevel == 0) ? referencePrice - currentGapSize : lastSellLevel - currentGapSize;
    } else {
-      // Price at or below reference - show first SELL level above
-      nextSellLevel = (lastSellLevel == 0) ? referencePrice + currentGapSize : lastSellLevel;
+      // Price at or above reference - show first SELL level below
+      nextSellLevel = (lastSellLevel == 0) ? referencePrice - currentGapSize : lastSellLevel;
    }
    
    ObjectSetString(0, panelPrefix + "NB", OBJPROP_TEXT, "Next BUY: $" + DoubleToString(nextBuyLevel, digits));
@@ -558,6 +618,19 @@ void UpdatePanel()
    int bc = ArraySize(buyPositions), sc = ArraySize(sellPositions);
    ObjectSetString(0, panelPrefix + "BC", OBJPROP_TEXT, "BUY: " + IntegerToString(bc) + "/" + IntegerToString(MaxPositionsPerSide));
    ObjectSetString(0, panelPrefix + "SC", OBJPROP_TEXT, "SELL: " + IntegerToString(sc) + "/" + IntegerToString(MaxPositionsPerSide));
+   
+   // Update cycle tracking display
+   string cycleText = "Cycles: B:" + IntegerToString(consecutiveBuyCycles) + "/" + IntegerToString(MaxConsecutiveCycles);
+   cycleText += "  S:" + IntegerToString(consecutiveSellCycles) + "/" + IntegerToString(MaxConsecutiveCycles);
+   ObjectSetString(0, panelPrefix + "CC", OBJPROP_TEXT, cycleText);
+   
+   // Color code based on pause status
+   color cycleColor = clrGold;
+   if(buyDirectionPaused) cycleColor = clrOrangeRed;
+   else if(sellDirectionPaused) cycleColor = clrOrangeRed;
+   else if(consecutiveBuyCycles >= MaxConsecutiveCycles - 1 || consecutiveSellCycles >= MaxConsecutiveCycles - 1) 
+      cycleColor = clrOrange;  // Warning color
+   ObjectSetInteger(0, panelPrefix + "CC", OBJPROP_COLOR, cycleColor);
    
    double bp = 0, sp = 0;
    for(int i = 0; i < bc; i++)
@@ -604,6 +677,20 @@ void OnChartEvent(const int id, const long &lparam, const double &dparam, const 
       else if(sparam == panelPrefix + "CSB") { ClosePositionsSide(POSITION_TYPE_SELL); ObjectSetInteger(0, sparam, OBJPROP_STATE, false); }
       else if(sparam == panelPrefix + "CAB") { CloseAllPositions(); ObjectSetInteger(0, sparam, OBJPROP_STATE, false); }
       else if(sparam == panelPrefix + "RB") { RebuildGrid(); ObjectSetInteger(0, sparam, OBJPROP_STATE, false); }
+      else if(sparam == panelPrefix + "RBB") {
+         // Resume BUY direction
+         buyDirectionPaused = false;
+         consecutiveBuyCycles = 0;
+         ObjectSetInteger(0, sparam, OBJPROP_STATE, false);
+         Print("▶ BUY direction RESUMED - cycle counter reset");
+      }
+      else if(sparam == panelPrefix + "RSB") {
+         // Resume SELL direction
+         sellDirectionPaused = false;
+         consecutiveSellCycles = 0;
+         ObjectSetInteger(0, sparam, OBJPROP_STATE, false);
+         Print("▶ SELL direction RESUMED - cycle counter reset");
+      }
       else if(sparam == panelPrefix + "PB") {
          isPaused = !isPaused;
          ObjectSetInteger(0, sparam, OBJPROP_STATE, false);
