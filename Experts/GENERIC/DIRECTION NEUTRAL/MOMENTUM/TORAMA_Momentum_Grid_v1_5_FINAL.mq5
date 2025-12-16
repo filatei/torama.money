@@ -5,8 +5,8 @@
 //+------------------------------------------------------------------+
 #property copyright "Copyright 2025, TORAMA CAPITAL"
 #property link      "https://torama.money"
-#property version   "1.30"
-#property description "Momentum Grid EA - Closes ONLY profitable positions"
+#property version   "1.50"
+#property description "Momentum Grid EA - FIXED broker-specific TP/SL"
 #property description "Chart-based magic numbers | Press 'H' to toggle panel"
 
 //+------------------------------------------------------------------+
@@ -264,12 +264,31 @@ bool OpenPosition(ENUM_ORDER_TYPE type, double price)
    request.comment = "ToramaMomentum";
    
    if(IndividualTPDollars > 0) {
-      double tpDist = (IndividualTPDollars / tickValue) * tickSize;
+      // Get contract size - but some brokers return 1 instead of actual size
+      double contractSize = SymbolInfoDouble(_Symbol, SYMBOL_TRADE_CONTRACT_SIZE);
+      
+      // If contractSize is 1 or invalid, calculate from tick value
+      // For gold: tickValue = $10 per lot per $1 move
+      // contractSize = tickValue / tickSize
+      if(contractSize <= 1.0) {
+         double tvPerLot = SymbolInfoDouble(_Symbol, SYMBOL_TRADE_TICK_VALUE);
+         double ts = SymbolInfoDouble(_Symbol, SYMBOL_TRADE_TICK_SIZE);
+         if(ts > 0) contractSize = tvPerLot / ts;
+      }
+      
+      // Calculate price distance for target profit
+      double tpDist = IndividualTPDollars / (normalizedLotSize * contractSize);
       request.tp = NormalizeDouble((type == ORDER_TYPE_BUY) ? price + tpDist : price - tpDist, digits);
    }
    
    if(IndividualSLDollars > 0) {
-      double slDist = (IndividualSLDollars / tickValue) * tickSize;
+      double contractSize = SymbolInfoDouble(_Symbol, SYMBOL_TRADE_CONTRACT_SIZE);
+      if(contractSize <= 1.0) {
+         double tvPerLot = SymbolInfoDouble(_Symbol, SYMBOL_TRADE_TICK_VALUE);
+         double ts = SymbolInfoDouble(_Symbol, SYMBOL_TRADE_TICK_SIZE);
+         if(ts > 0) contractSize = tvPerLot / ts;
+      }
+      double slDist = IndividualSLDollars / (normalizedLotSize * contractSize);
       request.sl = NormalizeDouble((type == ORDER_TYPE_BUY) ? price - slDist : price + slDist, digits);
    }
    
