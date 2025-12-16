@@ -18,7 +18,8 @@ input int      MaxPositionsPerSide = 30;        // Max positions per side (BUY o
 input double   LotSize = 0.01;                  // Lot size per position
 
 input group "=== TRADING DIRECTION ==="
-input string   TradingDirection = "BOTH";        // Trading direction: BOTH, BUYONLY, SELLONLY
+enum ENUM_TRADE_DIRECTION { BOTH, BUYONLY, SELLONLY };
+input ENUM_TRADE_DIRECTION TradingDirection = BOTH;  // Trading direction
 
 input group "=== PROFIT TARGETS (Dollars) ==="
 input double   IndividualTPDollars = 50.0;      // Individual TP in dollars per position
@@ -74,13 +75,10 @@ int OnInit()
    currentGapSize = referencePrice * (GridSpacingPercent / 100.0);
    normalizedLotSize = NormalizeLot(LotSize);
    
-   // Validate and normalize trading direction
-   string dir = TradingDirection;
-   StringToUpper(dir);
-   if(dir != "BOTH" && dir != "BUYONLY" && dir != "SELLONLY") {
-      Print("⚠️ WARNING: Invalid TradingDirection '", TradingDirection, "' - using BOTH");
-      dir = "BOTH";
-   }
+   // Get direction string for display
+   string dir = "BOTH";
+   if(TradingDirection == BUYONLY) dir = "BUYONLY";
+   else if(TradingDirection == SELLONLY) dir = "SELLONLY";
    
    Print("╔═══════════════════════════════════════════╗");
    Print("║  TORAMA MEAN REVERSION GRID v1.2         ║");
@@ -237,12 +235,8 @@ void CheckMeanReversionSignals()
    
    double currentPrice = (ask + bid) / 2.0;
    
-   // Normalize direction string
-   string dir = TradingDirection;
-   StringToUpper(dir);
-   
    // MEAN REVERSION: SELL when price rises (expect it to fall back) - only if direction allows
-   if(currentPrice > referencePrice && (dir == "BOTH" || dir == "SELLONLY")) {
+   if(currentPrice > referencePrice && (TradingDirection == BOTH || TradingDirection == SELLONLY)) {
       double nextLevel = (lastSellLevel == 0) ? referencePrice + currentGapSize : lastSellLevel + currentGapSize;
       if(currentPrice >= nextLevel && ArraySize(sellPositions) < MaxPositionsPerSide) {
          if(OpenPosition(ORDER_TYPE_SELL, bid)) {
@@ -255,7 +249,7 @@ void CheckMeanReversionSignals()
    }
    
    // MEAN REVERSION: BUY when price falls (expect it to rise back) - only if direction allows
-   if(currentPrice < referencePrice && (dir == "BOTH" || dir == "BUYONLY")) {
+   if(currentPrice < referencePrice && (TradingDirection == BOTH || TradingDirection == BUYONLY)) {
       double nextLevel = (lastBuyLevel == 0) ? referencePrice - currentGapSize : lastBuyLevel - currentGapSize;
       if(currentPrice <= nextLevel && ArraySize(buyPositions) < MaxPositionsPerSide) {
          if(OpenPosition(ORDER_TYPE_BUY, ask)) {
