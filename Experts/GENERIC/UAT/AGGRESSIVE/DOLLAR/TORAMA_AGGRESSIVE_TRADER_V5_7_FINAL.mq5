@@ -33,10 +33,27 @@ enum ENUM_EXHAUSTION_ACTION
 
 input group "=== DIRECTION & ATR MODE SWITCHING ==="
 input ENUM_TRADE_DIRECTION StartDirection = BUYONLY;  // Starting Direction
-input bool     EnableATRSwitch = true;                // Enable ATR-based mode switching
-input int      ATRPeriod = 14;                        // ATR Period for mode switching
-input double   ATRThresholdPercent = 70.0;            // ATR Threshold % (70 = 0.7 × ATR)
-input bool     CloseOnModeSwitch = false;             // Close positions on mode switch
+ bool     EnableATRSwitch = false;                // Enable ATR-based mode switching
+ int      ATRPeriod = 14;                        // ATR Period for mode switching
+ double   ATRThresholdPercent = 70.0;            // ATR Threshold % (70 = 0.7 × ATR)
+ bool     CloseOnModeSwitch = false;             // Close positions on mode switch
+
+
+input group "=== GRID SETTINGS ==="
+input double   GridGapPercent = 0.01;                 // Grid gap % (0.01 = tight, 0.3 = wide)
+input int      MaxPositions = 100;                    // Maximum positions
+input double   LotSize = 0.2;                         // Lot size per position
+
+input group "=== TAKE PROFIT ==="
+input double   IndividualTPDollars = 100.0;            // Individual TP target ($50 per position)
+input double   GroupTPDollars = 200.0;                // Group TP target ($200 total profit closes all)
+
+input group "=== STOP LOSS ==="
+input double   IndividualSLDollars = 0.0;           // SL risk per trade ($100 max loss, 0 = disabled)
+
+input group "=== RISK MANAGEMENT ==="
+input double   MaxDrawdownPercent = 25.0;             // Max drawdown % (emergency stop)
+input double   DailyTargetPercent = 200.0;            // Daily profit target (% of start balance)
 
 input group "=== TREND EXHAUSTION DETECTION (NEW v5.7) ==="
 input bool     EnableExhaustionDetection = true;      // Enable trend exhaustion detection
@@ -49,25 +66,9 @@ input double   ProfitProtectionPercent = 5.0;         // Protect profit % (5 = c
 input double   ATRContractionPercent = 50.0;          // ATR squeeze % (50 = ATR drops to 50% of average)
 input int      ATRContractionPeriod = 20;             // Period to measure ATR average
 
-input group "=== GRID SETTINGS ==="
-input double   GridGapPercent = 0.01;                 // Grid gap % (0.01 = tight, 0.3 = wide)
-input int      MaxPositions = 100;                    // Maximum positions
-input double   LotSize = 0.2;                         // Lot size per position
-
-input group "=== TAKE PROFIT ==="
-input double   IndividualTPDollars = 50.0;            // Individual TP target ($50 per position)
-input double   GroupTPDollars = 200.0;                // Group TP target ($200 total profit closes all)
-
-input group "=== STOP LOSS ==="
-input double   IndividualSLDollars = 100.0;           // SL risk per trade ($100 max loss, 0 = disabled)
-
-input group "=== RISK MANAGEMENT ==="
-input double   MaxDrawdownPercent = 25.0;             // Max drawdown % (emergency stop)
-input double   DailyTargetPercent = 100.0;            // Daily profit target (% of start balance)
-
 input group "=== SETTINGS ==="
 input int      MaxSpread = 2000;                      // Maximum spread (points)
-input bool     ShowPanel = true;                      // Show info panel
+bool     ShowPanel = true;                      // Show info panel
 
 //+------------------------------------------------------------------+
 //| GLOBAL VARIABLES                                                  |
