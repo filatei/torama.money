@@ -17,6 +17,10 @@ struct SPanelData
    double gapDollar;
    double nextBuyLevel;
    double nextSellLevel;
+   double nextBuyLevelUp;
+   double nextBuyLevelDown;
+   double nextSellLevelUp;
+   double nextSellLevelDown;
    double referencePrice;
    int positionsCount;
    int maxPositions;
@@ -126,7 +130,7 @@ void CToramaPanel::CreateBackground()
    ObjectSetInteger(0, bgName, OBJPROP_XDISTANCE, m_xBase);
    ObjectSetInteger(0, bgName, OBJPROP_YDISTANCE, m_yBase);
    ObjectSetInteger(0, bgName, OBJPROP_XSIZE, m_width);
-   ObjectSetInteger(0, bgName, OBJPROP_YSIZE, 560);  // Reduced from 620 to 560
+   ObjectSetInteger(0, bgName, OBJPROP_YSIZE, 600);  // Increased from 560 to 600 for extra rows
    ObjectSetInteger(0, bgName, OBJPROP_BGCOLOR, m_bgColor);
    ObjectSetInteger(0, bgName, OBJPROP_BORDER_TYPE, BORDER_FLAT);
    ObjectSetInteger(0, bgName, OBJPROP_COLOR, m_borderColor);
@@ -237,12 +241,20 @@ void CToramaPanel::CreateLabels()
    CreateLabel(m_prefix + "NextLabel", labelX, y, "NEXT LEVELS", m_headerColor, 9, "Arial Bold");
    y += m_rowHeight;
    
-   CreateLabel(m_prefix + "NextBuyLabel", labelX, y, "↓ Next Buy:", m_labelColor, 8, "Arial");
-   CreateLabel(m_prefix + "NextBuy", valueX, y, "$0.00", clrDodgerBlue, 9, "Arial Bold", true);
+   CreateLabel(m_prefix + "NextBuyUpLabel", labelX, y, "↑ Buy Up:", m_labelColor, 8, "Arial");
+   CreateLabel(m_prefix + "NextBuyUp", valueX, y, "$0.00", clrDodgerBlue, 9, "Arial Bold", true);
    y += m_rowHeight;
    
-   CreateLabel(m_prefix + "NextSellLabel", labelX, y, "↑ Next Sell:", m_labelColor, 8, "Arial");
-   CreateLabel(m_prefix + "NextSell", valueX, y, "$0.00", clrOrangeRed, 9, "Arial Bold", true);
+   CreateLabel(m_prefix + "NextBuyDownLabel", labelX, y, "↓ Buy Down:", m_labelColor, 8, "Arial");
+   CreateLabel(m_prefix + "NextBuyDown", valueX, y, "$0.00", clrDodgerBlue, 9, "Arial Bold", true);
+   y += m_rowHeight;
+   
+   CreateLabel(m_prefix + "NextSellUpLabel", labelX, y, "↑ Sell Up:", m_labelColor, 8, "Arial");
+   CreateLabel(m_prefix + "NextSellUp", valueX, y, "$0.00", clrOrangeRed, 9, "Arial Bold", true);
+   y += m_rowHeight;
+   
+   CreateLabel(m_prefix + "NextSellDownLabel", labelX, y, "↓ Sell Down:", m_labelColor, 8, "Arial");
+   CreateLabel(m_prefix + "NextSellDown", valueX, y, "$0.00", clrOrangeRed, 9, "Arial Bold", true);
    y += m_rowHeight + 3;  // Reduced from 5
    
    // POSITIONS SECTION
@@ -416,25 +428,51 @@ void CToramaPanel::Update(SPanelData &data)
    
    // Next levels
    if(data.currentDirection == 0) {  // BUY ONLY
-      if(data.nextBuyLevel > 0) {
-         ObjectSetString(0, m_prefix + "NextBuy", OBJPROP_TEXT, "$" + FormatPrice(data.nextBuyLevel, data.digits));
-         ObjectSetInteger(0, m_prefix + "NextBuy", OBJPROP_COLOR, clrDodgerBlue);
+      // Show both buy levels
+      if(data.nextBuyLevelUp > 0) {
+         ObjectSetString(0, m_prefix + "NextBuyUp", OBJPROP_TEXT, "$" + FormatPrice(data.nextBuyLevelUp, data.digits));
+         ObjectSetInteger(0, m_prefix + "NextBuyUp", OBJPROP_COLOR, clrDodgerBlue);
       } else {
-         ObjectSetString(0, m_prefix + "NextBuy", OBJPROP_TEXT, "N/A");
-         ObjectSetInteger(0, m_prefix + "NextBuy", OBJPROP_COLOR, clrGray);
+         ObjectSetString(0, m_prefix + "NextBuyUp", OBJPROP_TEXT, "N/A");
+         ObjectSetInteger(0, m_prefix + "NextBuyUp", OBJPROP_COLOR, clrGray);
       }
-      ObjectSetString(0, m_prefix + "NextSell", OBJPROP_TEXT, "N/A");
-      ObjectSetInteger(0, m_prefix + "NextSell", OBJPROP_COLOR, clrGray);
+      
+      if(data.nextBuyLevelDown > 0) {
+         ObjectSetString(0, m_prefix + "NextBuyDown", OBJPROP_TEXT, "$" + FormatPrice(data.nextBuyLevelDown, data.digits));
+         ObjectSetInteger(0, m_prefix + "NextBuyDown", OBJPROP_COLOR, clrDodgerBlue);
+      } else {
+         ObjectSetString(0, m_prefix + "NextBuyDown", OBJPROP_TEXT, "N/A");
+         ObjectSetInteger(0, m_prefix + "NextBuyDown", OBJPROP_COLOR, clrGray);
+      }
+      
+      // Hide sell levels
+      ObjectSetString(0, m_prefix + "NextSellUp", OBJPROP_TEXT, "N/A");
+      ObjectSetInteger(0, m_prefix + "NextSellUp", OBJPROP_COLOR, clrGray);
+      ObjectSetString(0, m_prefix + "NextSellDown", OBJPROP_TEXT, "N/A");
+      ObjectSetInteger(0, m_prefix + "NextSellDown", OBJPROP_COLOR, clrGray);
    } else {  // SELL ONLY
-      if(data.nextSellLevel > 0) {
-         ObjectSetString(0, m_prefix + "NextSell", OBJPROP_TEXT, "$" + FormatPrice(data.nextSellLevel, data.digits));
-         ObjectSetInteger(0, m_prefix + "NextSell", OBJPROP_COLOR, clrOrangeRed);
+      // Show both sell levels
+      if(data.nextSellLevelUp > 0) {
+         ObjectSetString(0, m_prefix + "NextSellUp", OBJPROP_TEXT, "$" + FormatPrice(data.nextSellLevelUp, data.digits));
+         ObjectSetInteger(0, m_prefix + "NextSellUp", OBJPROP_COLOR, clrOrangeRed);
       } else {
-         ObjectSetString(0, m_prefix + "NextSell", OBJPROP_TEXT, "N/A");
-         ObjectSetInteger(0, m_prefix + "NextSell", OBJPROP_COLOR, clrGray);
+         ObjectSetString(0, m_prefix + "NextSellUp", OBJPROP_TEXT, "N/A");
+         ObjectSetInteger(0, m_prefix + "NextSellUp", OBJPROP_COLOR, clrGray);
       }
-      ObjectSetString(0, m_prefix + "NextBuy", OBJPROP_TEXT, "N/A");
-      ObjectSetInteger(0, m_prefix + "NextBuy", OBJPROP_COLOR, clrGray);
+      
+      if(data.nextSellLevelDown > 0) {
+         ObjectSetString(0, m_prefix + "NextSellDown", OBJPROP_TEXT, "$" + FormatPrice(data.nextSellLevelDown, data.digits));
+         ObjectSetInteger(0, m_prefix + "NextSellDown", OBJPROP_COLOR, clrOrangeRed);
+      } else {
+         ObjectSetString(0, m_prefix + "NextSellDown", OBJPROP_TEXT, "N/A");
+         ObjectSetInteger(0, m_prefix + "NextSellDown", OBJPROP_COLOR, clrGray);
+      }
+      
+      // Hide buy levels
+      ObjectSetString(0, m_prefix + "NextBuyUp", OBJPROP_TEXT, "N/A");
+      ObjectSetInteger(0, m_prefix + "NextBuyUp", OBJPROP_COLOR, clrGray);
+      ObjectSetString(0, m_prefix + "NextBuyDown", OBJPROP_TEXT, "N/A");
+      ObjectSetInteger(0, m_prefix + "NextBuyDown", OBJPROP_COLOR, clrGray);
    }
    
    // Positions

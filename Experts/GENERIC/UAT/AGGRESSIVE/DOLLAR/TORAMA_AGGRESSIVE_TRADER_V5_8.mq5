@@ -541,4 +541,3 @@ void OnTick() {
 void OnChartEvent(const int id, const long &lparam, const double &dparam, const string &sparam) {
    if(panel != NULL) panel.OnChartEvent(id, lparam, dparam, sparam);
 }
-//+------------------------------------------------------------------+
