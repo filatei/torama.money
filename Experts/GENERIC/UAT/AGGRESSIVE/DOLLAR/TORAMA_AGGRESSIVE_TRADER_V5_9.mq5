@@ -120,7 +120,7 @@ void CreatePanel() {
    ObjectSetInteger(0, bgName, OBJPROP_XDISTANCE, panelX);
    ObjectSetInteger(0, bgName, OBJPROP_YDISTANCE, panelY);
    ObjectSetInteger(0, bgName, OBJPROP_XSIZE, panelWidth);
-   ObjectSetInteger(0, bgName, OBJPROP_YSIZE, 600);
+   ObjectSetInteger(0, bgName, OBJPROP_YSIZE, 560);  // Reduced from 600 to 560
    ObjectSetInteger(0, bgName, OBJPROP_BGCOLOR, bgColor);
    ObjectSetInteger(0, bgName, OBJPROP_BORDER_TYPE, BORDER_FLAT);
    ObjectSetInteger(0, bgName, OBJPROP_COLOR, borderColor);
@@ -211,20 +211,23 @@ void CreatePanel() {
    ObjectSetInteger(0, sep3, OBJPROP_ZORDER, 1001);
    y += 10;
    
-   // NEXT LEVELS
+   // NEXT LEVELS (2 columns: Buy left, Sell right)
    CreateLabel(panelPrefix + "NextLabel", labelX, y, "NEXT LEVELS", headerColor, 9, "Arial Bold");
    y += panelRowHeight;
-   CreateLabel(panelPrefix + "NextBuyUpLabel", labelX, y, "↑ Buy Up:", labelColor, 8, "Arial");
-   CreateLabel(panelPrefix + "NextBuyUp", valueX, y, "$0.00", clrDodgerBlue, 9, "Arial Bold");
+   
+   int leftCol = labelX;
+   int rightCol = labelX + 130;
+   
+   CreateLabel(panelPrefix + "NextBuyUpLabel", leftCol, y, "↑ Buy Up:", labelColor, 8, "Arial");
+   CreateLabel(panelPrefix + "NextBuyUp", leftCol + 70, y, "$0.00", clrDodgerBlue, 8, "Arial Bold");
+   CreateLabel(panelPrefix + "NextSellUpLabel", rightCol, y, "↑ Sell Up:", labelColor, 8, "Arial");
+   CreateLabel(panelPrefix + "NextSellUp", rightCol + 70, y, "$0.00", clrOrangeRed, 8, "Arial Bold");
    y += panelRowHeight;
-   CreateLabel(panelPrefix + "NextBuyDownLabel", labelX, y, "↓ Buy Down:", labelColor, 8, "Arial");
-   CreateLabel(panelPrefix + "NextBuyDown", valueX, y, "$0.00", clrDodgerBlue, 9, "Arial Bold");
-   y += panelRowHeight;
-   CreateLabel(panelPrefix + "NextSellUpLabel", labelX, y, "↑ Sell Up:", labelColor, 8, "Arial");
-   CreateLabel(panelPrefix + "NextSellUp", valueX, y, "$0.00", clrOrangeRed, 9, "Arial Bold");
-   y += panelRowHeight;
-   CreateLabel(panelPrefix + "NextSellDownLabel", labelX, y, "↓ Sell Down:", labelColor, 8, "Arial");
-   CreateLabel(panelPrefix + "NextSellDown", valueX, y, "$0.00", clrOrangeRed, 9, "Arial Bold");
+   
+   CreateLabel(panelPrefix + "NextBuyDownLabel", leftCol, y, "↓ Buy Down:", labelColor, 8, "Arial");
+   CreateLabel(panelPrefix + "NextBuyDown", leftCol + 70, y, "$0.00", clrDodgerBlue, 8, "Arial Bold");
+   CreateLabel(panelPrefix + "NextSellDownLabel", rightCol, y, "↓ Sell Down:", labelColor, 8, "Arial");
+   CreateLabel(panelPrefix + "NextSellDown", rightCol + 70, y, "$0.00", clrOrangeRed, 8, "Arial Bold");
    y += panelRowHeight + 3;
    
    // Separator 4
@@ -345,7 +348,7 @@ void UpdatePanel() {
    ObjectSetString(0, panelPrefix + "GapDollar", OBJPROP_TEXT, "$" + FormatPrice(currentGapSize, specs.digits));
    ObjectSetString(0, panelPrefix + "RefPrice", OBJPROP_TEXT, "$" + FormatPrice(referencePrice, specs.digits));
    
-   // Next levels
+   // Next levels (2 columns)
    if(CurrentDirection == BUYONLY) {
       if(nextBuyLevelUp > 0) {
          ObjectSetString(0, panelPrefix + "NextBuyUp", OBJPROP_TEXT, "$" + FormatPrice(nextBuyLevelUp, specs.digits));
