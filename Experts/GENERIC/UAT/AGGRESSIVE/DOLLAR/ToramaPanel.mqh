@@ -82,7 +82,7 @@ CToramaPanel::CToramaPanel()
    m_xBase = 20;
    m_yBase = 30;
    m_width = 280;
-   m_rowHeight = 22;
+   m_rowHeight = 20;              // Reduced from 22 to 20
    m_bgColor = C'15,15,20';           // Dark background
    m_borderColor = C'218,165,32';      // Gold border
    m_headerColor = C'218,165,32';      // Gold header
@@ -126,7 +126,7 @@ void CToramaPanel::CreateBackground()
    ObjectSetInteger(0, bgName, OBJPROP_XDISTANCE, m_xBase);
    ObjectSetInteger(0, bgName, OBJPROP_YDISTANCE, m_yBase);
    ObjectSetInteger(0, bgName, OBJPROP_XSIZE, m_width);
-   ObjectSetInteger(0, bgName, OBJPROP_YSIZE, 620);
+   ObjectSetInteger(0, bgName, OBJPROP_YSIZE, 560);  // Reduced from 620 to 560
    ObjectSetInteger(0, bgName, OBJPROP_BGCOLOR, m_bgColor);
    ObjectSetInteger(0, bgName, OBJPROP_BORDER_TYPE, BORDER_FLAT);
    ObjectSetInteger(0, bgName, OBJPROP_COLOR, m_borderColor);
@@ -142,13 +142,13 @@ void CToramaPanel::CreateBackground()
 //+------------------------------------------------------------------+
 void CToramaPanel::CreateHeader()
 {
-   int y = m_yBase + 10;
+   int y = m_yBase + 8;  // Reduced from 10
    
    // EA Name
    CreateLabel(m_prefix + "Title", m_xBase + 10, y, "TORAMA AGGRESSIVE", m_headerColor, 11, "Arial Black");
-   y += 20;
+   y += 18;  // Reduced from 20
    CreateLabel(m_prefix + "Title2", m_xBase + 10, y, "TRADER v5.8", m_headerColor, 11, "Arial Black");
-   y += 25;
+   y += 20;  // Reduced from 25
    
    // Separator line
    string sepName = m_prefix + "Sep1";
@@ -171,7 +171,7 @@ void CToramaPanel::CreateHeader()
 //+------------------------------------------------------------------+
 void CToramaPanel::CreateLabels()
 {
-   int y = m_yBase + 70;
+   int y = m_yBase + 60;  // Reduced from 70
    int labelX = m_xBase + 15;
    int valueX = m_xBase + m_width - 95;
    
@@ -185,7 +185,7 @@ void CToramaPanel::CreateLabels()
    
    CreateLabel(m_prefix + "StateLabel", labelX, y, "State:", m_labelColor, 8, "Arial");
    CreateLabel(m_prefix + "State", valueX, y, "ACTIVE", clrLimeGreen, 9, "Arial Bold", true);
-   y += m_rowHeight + 5;
+   y += m_rowHeight + 3;  // Reduced from 5
    
    // GRID SECTION
    string sepName2 = m_prefix + "Sep2";
@@ -216,7 +216,7 @@ void CToramaPanel::CreateLabels()
    
    CreateLabel(m_prefix + "RefPriceLabel", labelX, y, "Reference:", m_labelColor, 8, "Arial");
    CreateLabel(m_prefix + "RefPrice", valueX, y, "$0.00", m_textColor, 9, "Arial Bold", true);
-   y += m_rowHeight + 5;
+   y += m_rowHeight + 3;  // Reduced from 5
    
    // NEXT LEVELS SECTION
    string sepName3 = m_prefix + "Sep3";
@@ -243,7 +243,7 @@ void CToramaPanel::CreateLabels()
    
    CreateLabel(m_prefix + "NextSellLabel", labelX, y, "↑ Next Sell:", m_labelColor, 8, "Arial");
    CreateLabel(m_prefix + "NextSell", valueX, y, "$0.00", clrOrangeRed, 9, "Arial Bold", true);
-   y += m_rowHeight + 5;
+   y += m_rowHeight + 3;  // Reduced from 5
    
    // POSITIONS SECTION
    string sepName4 = m_prefix + "Sep4";
@@ -270,7 +270,7 @@ void CToramaPanel::CreateLabels()
    
    CreateLabel(m_prefix + "AccountLotsLabel", labelX, y, "Account Lots:", m_labelColor, 8, "Arial");
    CreateLabel(m_prefix + "AccLots", valueX, y, "B:0 S:0", m_textColor, 8, "Arial Bold", true);
-   y += m_rowHeight + 5;
+   y += m_rowHeight + 3;  // Reduced from 5
    
    // P&L SECTION
    string sepName5 = m_prefix + "Sep5";
@@ -305,7 +305,7 @@ void CToramaPanel::CreateLabels()
    
    CreateLabel(m_prefix + "DailyPLLabel", labelX, y, "Daily P/L:", m_labelColor, 8, "Arial");
    CreateLabel(m_prefix + "DailyProfit", valueX, y, "+$0.00", m_textColor, 9, "Arial Bold", true);
-   y += m_rowHeight + 5;
+   y += m_rowHeight + 3;  // Reduced from 5
    
    // STATISTICS SECTION
    string sepName6 = m_prefix + "Sep6";
@@ -328,11 +328,11 @@ void CToramaPanel::CreateLabels()
    
    CreateLabel(m_prefix + "SwitchLabel", labelX, y, "Mode Switches:", m_labelColor, 8, "Arial");
    CreateLabel(m_prefix + "SwitchCount", valueX, y, "0", m_textColor, 9, "Arial Bold", true);
-   y += m_rowHeight + 10;
+   y += m_rowHeight + 8;  // Reduced from 10
    
    // TORAMA BRANDING
    CreateLabel(m_prefix + "Brand", labelX, y, "TORAMA CAPITAL", C'218,165,32', 8, "Arial Bold");
-   y += 18;
+   y += 16;  // Reduced from 18
    CreateLabel(m_prefix + "Website", labelX, y, "www.torama.money", C'150,150,150', 7, "Arial");
 }
 
