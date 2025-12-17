@@ -1303,6 +1303,37 @@ void CheckGroupTP()
 }
 
 //+------------------------------------------------------------------+
+//| CLOSE PROFITABLE TRADES ONLY (NEW in v5.7)                       |
+//+------------------------------------------------------------------+
+void CloseProfitableTrades()
+{
+   Print("💰 Closing profitable trades only...");
+   
+   int closed = 0;
+   double totalProfitClosed = 0;
+   
+   for(int i = ArraySize(positions) - 1; i >= 0; i--)
+   {
+      if(PositionSelectByTicket(positions[i].ticket))
+      {
+         double profit = PositionGetDouble(POSITION_PROFIT);
+         
+         if(profit > 0)
+         {
+            if(ClosePosition(positions[i].ticket))
+            {
+               closed++;
+               totalProfitClosed += profit;
+            }
+         }
+      }
+   }
+   
+   Print("✅ Closed ", closed, " profitable trades | Total profit: $", DoubleToString(totalProfitClosed, 2));
+   SyncPositions();
+}
+
+//+------------------------------------------------------------------+
 //| CLOSE ALL POSITIONS                                               |
 //+------------------------------------------------------------------+
 void CloseAllPositions()
@@ -1361,12 +1392,18 @@ void OnChartEvent(const int id, const long &lparam, const double &dparam, const 
       {
          isPaused = !isPaused;
          ObjectSetInteger(0, panelPrefix + "PauseBtn", OBJPROP_STATE, false);
+         Print(isPaused ? "⏸️ EA PAUSED" : "▶️ EA RESUMED");
          UpdatePanel();
       }
-      else if(sparam == panelPrefix + "CloseBtn")
+      else if(sparam == panelPrefix + "CloseAllBtn")
       {
          CloseAllPositions();
-         ObjectSetInteger(0, panelPrefix + "CloseBtn", OBJPROP_STATE, false);
+         ObjectSetInteger(0, panelPrefix + "CloseAllBtn", OBJPROP_STATE, false);
+      }
+      else if(sparam == panelPrefix + "CloseProfitBtn")
+      {
+         CloseProfitableTrades();
+         ObjectSetInteger(0, panelPrefix + "CloseProfitBtn", OBJPROP_STATE, false);
       }
       else if(sparam == panelPrefix + "SwitchBtn")
       {
@@ -1412,6 +1449,9 @@ void OnChartEvent(const int id, const long &lparam, const double &dparam, const 
 //+------------------------------------------------------------------+
 void ShowHidePanel()
 {
+   // Hide/show background first
+   ObjectSetInteger(0, panelPrefix + "Background", OBJPROP_TIMEFRAMES, panelVisible ? OBJ_ALL_PERIODS : OBJ_NO_PERIODS);
+   
    int total = ObjectsTotal(0, 0, OBJ_LABEL);
    
    for(int i = 0; i < total; i++)
@@ -1470,105 +1510,143 @@ void CreatePanel()
 {
    int x = 10;
    int y = 30;
-   int lineHeight = 20;
+   int lineHeight = 16;
    
-   CreateLabel(panelPrefix + "Header", x, y, "TORAMA AGGRESSIVE TRADER v" + EA_VERSION, clrGold, 10, "Arial Bold");
-   y += lineHeight + 5;
+   // Calculate panel dimensions - more compact
+   int panelWidth = 280;
+   int panelHeight = 380;  // Increased slightly for branding
    
-   // Status
-   CreateLabel(panelPrefix + "StatusLabel", x, y, "Status:", clrWhite, 9, "Arial");
-   CreateLabel(panelPrefix + "Status", x + 80, y, "ACTIVE", clrLimeGreen, 9, "Arial Bold");
+   // Create fully solid background rectangle (NO transparency)
+   ObjectCreate(0, panelPrefix + "Background", OBJ_RECTANGLE_LABEL, 0, 0, 0);
+   ObjectSetInteger(0, panelPrefix + "Background", OBJPROP_XDISTANCE, x - 5);
+   ObjectSetInteger(0, panelPrefix + "Background", OBJPROP_YDISTANCE, y - 5);
+   ObjectSetInteger(0, panelPrefix + "Background", OBJPROP_XSIZE, panelWidth);
+   ObjectSetInteger(0, panelPrefix + "Background", OBJPROP_YSIZE, panelHeight);
+   ObjectSetInteger(0, panelPrefix + "Background", OBJPROP_BGCOLOR, C'20,20,20');  // Dark gray, fully solid
+   ObjectSetInteger(0, panelPrefix + "Background", OBJPROP_BORDER_TYPE, BORDER_FLAT);
+   ObjectSetInteger(0, panelPrefix + "Background", OBJPROP_BORDER_COLOR, clrGold);
+   ObjectSetInteger(0, panelPrefix + "Background", OBJPROP_COLOR, clrGold);
+   ObjectSetInteger(0, panelPrefix + "Background", OBJPROP_WIDTH, 2);
+   ObjectSetInteger(0, panelPrefix + "Background", OBJPROP_BACK, false);  // Always on top
+   ObjectSetInteger(0, panelPrefix + "Background", OBJPROP_SELECTABLE, false);
+   ObjectSetInteger(0, panelPrefix + "Background", OBJPROP_HIDDEN, true);
+   ObjectSetInteger(0, panelPrefix + "Background", OBJPROP_CORNER, CORNER_LEFT_UPPER);
+   ObjectSetInteger(0, panelPrefix + "Background", OBJPROP_ZORDER, 0);  // Top layer
+   
+   // Header - Professional font
+   CreateLabel(panelPrefix + "Header", x, y, "TORAMA AGGRESSIVE v" + EA_VERSION, clrGold, 10, "Arial Black");
+   y += lineHeight + 2;
+   
+   // Status line - Professional fonts
+   CreateLabel(panelPrefix + "StatusLabel", x, y, "Status:", clrWhite, 8, "Consolas");
+   CreateLabel(panelPrefix + "Status", x + 60, y, "ACTIVE", clrLimeGreen, 8, "Consolas Bold");
+   CreateLabel(panelPrefix + "Direction", x + 140, y, "BUY", clrDodgerBlue, 8, "Consolas Bold");
    y += lineHeight;
    
-   // Exhaustion status (NEW in v5.7)
-   CreateLabel(panelPrefix + "ExhaustionLabel", x, y, "Exhaustion:", clrWhite, 9, "Arial");
-   CreateLabel(panelPrefix + "Exhaustion", x + 80, y, "NO", clrLimeGreen, 9, "Arial Bold");
+   // Exhaustion status
+   CreateLabel(panelPrefix + "ExhaustionLabel", x, y, "Safety:", clrWhite, 8, "Consolas");
+   CreateLabel(panelPrefix + "Exhaustion", x + 60, y, "OK", clrLimeGreen, 8, "Consolas Bold");
    y += lineHeight;
    
-   // Direction
-   CreateLabel(panelPrefix + "DirLabel", x, y, "Direction:", clrWhite, 9, "Arial");
-   CreateLabel(panelPrefix + "Direction", x + 80, y, "BUY ONLY", clrDodgerBlue, 9, "Arial Bold");
+   // RSI and Losses on same line
+   CreateLabel(panelPrefix + "RSILabel", x, y, "RSI:", clrWhite, 8, "Consolas");
+   CreateLabel(panelPrefix + "RSI", x + 40, y, "50", clrWhite, 8, "Consolas");
+   CreateLabel(panelPrefix + "LossesLabel", x + 100, y, "Loss:", clrWhite, 8, "Consolas");
+   CreateLabel(panelPrefix + "Losses", x + 140, y, "0", clrWhite, 8, "Consolas");
+   y += lineHeight + 3;
+   
+   // === GRID SETTINGS SECTION ===
+   CreateLabel(panelPrefix + "GridHeader", x, y, "── GRID ──", clrGold, 9, "Arial Black");
    y += lineHeight;
    
-   // RSI (NEW in v5.7)
-   CreateLabel(panelPrefix + "RSILabel", x, y, "RSI:", clrWhite, 9, "Arial");
-   CreateLabel(panelPrefix + "RSI", x + 80, y, "50.0", clrWhite, 9, "Arial");
+   // Gap % and Dollar
+   CreateLabel(panelPrefix + "GapPercentLabel", x, y, "Gap:", clrWhite, 8, "Consolas");
+   CreateLabel(panelPrefix + "GapPercent", x + 45, y, "0.00%", clrLimeGreen, 8, "Consolas Bold");
+   CreateLabel(panelPrefix + "GapDollar", x + 120, y, "$0.00", clrLimeGreen, 8, "Consolas Bold");
    y += lineHeight;
-   
-   // Consecutive Losses (NEW in v5.7)
-   CreateLabel(panelPrefix + "LossesLabel", x, y, "Losses Row:", clrWhite, 9, "Arial");
-   CreateLabel(panelPrefix + "Losses", x + 80, y, "0", clrWhite, 9, "Arial");
-   y += lineHeight + 5;
-   
-   // ATR Reversal Prices
-   if(EnableATRSwitch)
-   {
-      CreateLabel(panelPrefix + "ReversalLabel", x, y, "ATR Switch:", clrWhite, 9, "Arial");
-      y += lineHeight;
-      
-      CreateLabel(panelPrefix + "ReversalSellLabel", x + 10, y, "→ SELL:", clrWhite, 8, "Arial");
-      CreateLabel(panelPrefix + "ReversalSell", x + 70, y, "$0.00", clrOrangeRed, 8, "Arial");
-      y += lineHeight;
-      
-      CreateLabel(panelPrefix + "ReversalBuyLabel", x + 10, y, "→ BUY:", clrWhite, 8, "Arial");
-      CreateLabel(panelPrefix + "ReversalBuy", x + 70, y, "$0.00", clrDodgerBlue, 8, "Arial");
-      y += lineHeight;
-   }
-   
-   // Next Levels
-   CreateLabel(panelPrefix + "NextLevelsLabel", x, y, "Next Levels:", clrGold, 9, "Arial Bold");
-   y += lineHeight;
-   
-   CreateLabel(panelPrefix + "NextBuyLabel", x + 10, y, "Next BUY:", clrWhite, 8, "Arial");
-   CreateLabel(panelPrefix + "NextBuy", x + 80, y, "$0.00", clrDodgerBlue, 9, "Arial Bold");
-   y += lineHeight;
-   
-   CreateLabel(panelPrefix + "NextSellLabel", x + 10, y, "Next SELL:", clrWhite, 8, "Arial");
-   CreateLabel(panelPrefix + "NextSell", x + 80, y, "$0.00", clrOrangeRed, 9, "Arial Bold");
-   y += lineHeight + 5;
    
    // Reference Price
-   CreateLabel(panelPrefix + "RefLabel", x, y, "Reference:", clrWhite, 9, "Arial");
-   CreateLabel(panelPrefix + "RefPrice", x + 80, y, "$0.00", clrLimeGreen, 9, "Arial");
+   CreateLabel(panelPrefix + "RefLabel", x, y, "Ref:", clrWhite, 8, "Consolas");
+   CreateLabel(panelPrefix + "RefPrice", x + 45, y, "$0.00", clrWhite, 8, "Consolas Bold");
+   y += lineHeight + 3;
+   
+   // === NEXT LEVELS SECTION ===
+   CreateLabel(panelPrefix + "NextHeader", x, y, "── NEXT LEVELS ──", clrGold, 9, "Arial Black");
    y += lineHeight;
    
-   // Positions
-   CreateLabel(panelPrefix + "PosLabel", x, y, "EA Positions:", clrWhite, 9, "Arial");
-   CreateLabel(panelPrefix + "Positions", x + 100, y, "0/100", clrLimeGreen, 9, "Arial");
+   // Next BUY levels (up and down)
+   CreateLabel(panelPrefix + "NextBuyLabel", x, y, "BUY ▲:", clrDodgerBlue, 8, "Consolas Bold");
+   CreateLabel(panelPrefix + "NextBuyUp", x + 60, y, "$0.00", clrDodgerBlue, 8, "Consolas");
    y += lineHeight;
    
-   // Account Lots
-   CreateLabel(panelPrefix + "AccLabel", x, y, "Account Lots:", clrWhite, 9, "Arial");
-   CreateLabel(panelPrefix + "AccCounts", x + 100, y, "B:0 S:0", clrLimeGreen, 9, "Arial");
+   CreateLabel(panelPrefix + "NextBuyDownLabel", x, y, "BUY ▼:", clrDodgerBlue, 8, "Consolas Bold");
+   CreateLabel(panelPrefix + "NextBuyDown", x + 60, y, "$0.00", clrDodgerBlue, 8, "Consolas");
    y += lineHeight;
    
-   // P/L
-   CreateLabel(panelPrefix + "PnLLabel", x, y, "P/L:", clrWhite, 9, "Arial");
-   CreateLabel(panelPrefix + "PnL", x + 80, y, "+$0.00", clrLimeGreen, 9, "Arial Bold");
+   // Next SELL levels (up and down)
+   CreateLabel(panelPrefix + "NextSellLabel", x, y, "SELL ▲:", clrOrangeRed, 8, "Consolas Bold");
+   CreateLabel(panelPrefix + "NextSellUp", x + 60, y, "$0.00", clrOrangeRed, 8, "Consolas");
    y += lineHeight;
    
-   // Equity
-   CreateLabel(panelPrefix + "EquityLabel", x, y, "Equity:", clrWhite, 9, "Arial");
-   CreateLabel(panelPrefix + "Equity", x + 80, y, "$0.00", clrLimeGreen, 9, "Arial");
+   CreateLabel(panelPrefix + "NextSellDownLabel", x, y, "SELL ▼:", clrOrangeRed, 8, "Consolas Bold");
+   CreateLabel(panelPrefix + "NextSellDown", x + 60, y, "$0.00", clrOrangeRed, 8, "Consolas");
+   y += lineHeight + 3;
+   
+   // === POSITIONS SECTION ===
+   CreateLabel(panelPrefix + "PosHeader", x, y, "── POSITIONS ──", clrGold, 9, "Arial Black");
    y += lineHeight;
    
-   // Drawdown
-   CreateLabel(panelPrefix + "DDLabel", x, y, "Drawdown:", clrWhite, 9, "Arial");
-   CreateLabel(panelPrefix + "DD", x + 80, y, "0%", clrLimeGreen, 9, "Arial");
+   // EA Positions and Account Lots on same line
+   CreateLabel(panelPrefix + "PosLabel", x, y, "EA:", clrWhite, 8, "Consolas");
+   CreateLabel(panelPrefix + "Positions", x + 40, y, "0/100", clrWhite, 8, "Consolas");
+   CreateLabel(panelPrefix + "AccLabel", x + 110, y, "Acc:", clrWhite, 8, "Consolas");
+   CreateLabel(panelPrefix + "AccCounts", x + 145, y, "B:0 S:0", clrWhite, 8, "Consolas");
+   y += lineHeight + 3;
+   
+   // === PROFIT/LOSS SECTION ===
+   CreateLabel(panelPrefix + "PLHeader", x, y, "── P/L ──", clrGold, 9, "Arial Black");
    y += lineHeight;
    
-   // Daily Profit
-   CreateLabel(panelPrefix + "DailyLabel", x, y, "Daily:", clrWhite, 9, "Arial");
-   CreateLabel(panelPrefix + "DailyProfit", x + 80, y, "+$0.00", clrLimeGreen, 9, "Arial");
-   y += lineHeight + 10;
+   // Current P/L and Equity on same line
+   CreateLabel(panelPrefix + "PnLLabel", x, y, "P/L:", clrWhite, 8, "Consolas");
+   CreateLabel(panelPrefix + "PnL", x + 40, y, "+$0.00", clrLimeGreen, 8, "Consolas Bold");
+   CreateLabel(panelPrefix + "EquityLabel", x + 135, y, "Eq:", clrWhite, 8, "Consolas");
+   CreateLabel(panelPrefix + "Equity", x + 165, y, "$0", clrWhite, 8, "Consolas");
+   y += lineHeight;
    
-   // Control buttons
-   CreateButton(panelPrefix + "PauseBtn", x, y, 70, 25, "PAUSE", clrNavy, clrWhite);
-   CreateButton(panelPrefix + "CloseBtn", x + 80, y, 70, 25, "CLOSE ALL", clrDarkRed, clrWhite);
-   CreateButton(panelPrefix + "SwitchBtn", x + 160, y, 80, 25, "SWITCH", clrDarkSlateGray, clrGold);
+   // Drawdown and Daily on same line
+   CreateLabel(panelPrefix + "DDLabel", x, y, "DD:", clrWhite, 8, "Consolas");
+   CreateLabel(panelPrefix + "DD", x + 40, y, "0%", clrLimeGreen, 8, "Consolas Bold");
+   CreateLabel(panelPrefix + "DailyLabel", x + 105, y, "Day:", clrWhite, 8, "Consolas");
+   CreateLabel(panelPrefix + "DailyProfit", x + 145, y, "+$0", clrLimeGreen, 8, "Consolas Bold");
+   y += lineHeight + 8;
    
-   y += 30;
-   CreateButton(panelPrefix + "ResumeBtn", x, y, 160, 25, "RESUME (R)", clrDarkGreen, clrWhite);
+   // DD Trigger Price
+   CreateLabel(panelPrefix + "DDTriggerLabel", x, y, "DD@:", clrOrangeRed, 7, "Consolas Bold");
+   CreateLabel(panelPrefix + "DDTrigger", x + 40, y, "$0.00", clrOrangeRed, 7, "Consolas");
+   
+   // === CONTROL BUTTONS ===
+   // Row 1: Pause and Close All
+   CreateButton(panelPrefix + "PauseBtn", x, y, 80, 22, "PAUSE", clrNavy, clrWhite);
+   CreateButton(panelPrefix + "CloseAllBtn", x + 90, y, 80, 22, "CLOSE ALL", clrDarkRed, clrWhite);
+   CreateButton(panelPrefix + "SwitchBtn", x + 180, y, 85, 22, "SWITCH", clrDarkSlateGray, clrGold);
+   
+   y += 27;
+   
+   // Row 2: Close Profitable and Resume
+   CreateButton(panelPrefix + "CloseProfitBtn", x, y, 130, 22, "CLOSE PROFIT", clrDarkGreen, clrWhite);
+   CreateButton(panelPrefix + "ResumeBtn", x + 140, y, 125, 22, "RESUME (R)", clrDarkOliveGreen, clrWhite);
+   
+   y += 32;
+   
+   // === TORAMA CAPITAL BRANDING (Bottom Right) ===
+   // Calculate position for right-aligned branding with 10px right margin
+   int brandingX = x + panelWidth - 155;  // 155px width + 10px margin from right edge
+   
+   CreateLabel(panelPrefix + "BrandingLabel", brandingX, y, "TORAMA", clrGold, 11, "Arial Black");
+   CreateLabel(panelPrefix + "BrandingLabel2", brandingX + 65, y, "CAPITAL", clrGold, 11, "Arial Black");
+   y += 16;
+   CreateLabel(panelPrefix + "BrandingURL", brandingX + 10, y, "money.torama.biz", C'180,180,180', 7, "Consolas");
    
    ChartRedraw();
 }
@@ -1579,6 +1657,10 @@ void CreatePanel()
 void UpdatePanel()
 {
    if(!ShowPanel) return;
+   
+   double ask = SymbolInfoDouble(_Symbol, SYMBOL_ASK);
+   double bid = SymbolInfoDouble(_Symbol, SYMBOL_BID);
+   double currentPrice = (ask + bid) / 2.0;
    
    // Status
    string statusText = "ACTIVE";
@@ -1603,70 +1685,97 @@ void UpdatePanel()
    ObjectSetString(0, panelPrefix + "Status", OBJPROP_TEXT, statusText);
    ObjectSetInteger(0, panelPrefix + "Status", OBJPROP_COLOR, statusColor);
    
-   // Exhaustion status (NEW in v5.7)
-   string exhaustionText = "NO";
+   // Direction
+   string dirText = (CurrentDirection == BUYONLY) ? "BUY" : "SELL";
+   color dirColor = (CurrentDirection == BUYONLY) ? clrDodgerBlue : clrOrangeRed;
+   ObjectSetString(0, panelPrefix + "Direction", OBJPROP_TEXT, dirText);
+   ObjectSetInteger(0, panelPrefix + "Direction", OBJPROP_COLOR, dirColor);
+   
+   // Exhaustion status
+   string exhaustionText = "OK";
    color exhaustionColor = clrLimeGreen;
    
    if(trendExhausted)
    {
-      exhaustionText = exhaustionReason;
+      if(StringFind(exhaustionReason, "RSI") >= 0)
+         exhaustionText = "RSI";
+      else if(StringFind(exhaustionReason, "Loss") >= 0)
+         exhaustionText = "LOSS";
+      else if(StringFind(exhaustionReason, "Profit") >= 0)
+         exhaustionText = "PROFIT";
+      else if(StringFind(exhaustionReason, "ATR") >= 0)
+         exhaustionText = "ATR";
+      else
+         exhaustionText = "PAUSED";
+      
       exhaustionColor = clrOrange;
    }
    
    ObjectSetString(0, panelPrefix + "Exhaustion", OBJPROP_TEXT, exhaustionText);
    ObjectSetInteger(0, panelPrefix + "Exhaustion", OBJPROP_COLOR, exhaustionColor);
    
-   // Direction
-   string dirText = (CurrentDirection == BUYONLY) ? "BUY ONLY" : "SELL ONLY";
-   color dirColor = (CurrentDirection == BUYONLY) ? clrDodgerBlue : clrOrangeRed;
-   ObjectSetString(0, panelPrefix + "Direction", OBJPROP_TEXT, dirText);
-   ObjectSetInteger(0, panelPrefix + "Direction", OBJPROP_COLOR, dirColor);
-   
-   // RSI (NEW in v5.7)
+   // RSI
    color rsiColor = clrWhite;
    if(CurrentDirection == BUYONLY && currentRSI > RSIOverBought - 5)
       rsiColor = clrOrange;
    else if(CurrentDirection == SELLONLY && currentRSI < RSIOverSold + 5)
       rsiColor = clrOrange;
    
-   ObjectSetString(0, panelPrefix + "RSI", OBJPROP_TEXT, DoubleToString(currentRSI, 1));
+   ObjectSetString(0, panelPrefix + "RSI", OBJPROP_TEXT, DoubleToString(currentRSI, 0));
    ObjectSetInteger(0, panelPrefix + "RSI", OBJPROP_COLOR, rsiColor);
    
-   // Consecutive Losses (NEW in v5.7)
+   // Consecutive Losses
    color lossColor = consecutiveLosses >= ConsecutiveLossLimit - 1 ? clrRed : 
                      consecutiveLosses >= ConsecutiveLossLimit / 2 ? clrOrange : clrWhite;
    
    ObjectSetString(0, panelPrefix + "Losses", OBJPROP_TEXT, IntegerToString(consecutiveLosses));
    ObjectSetInteger(0, panelPrefix + "Losses", OBJPROP_COLOR, lossColor);
    
-   // Next Levels
+   // === GRID SECTION ===
+   ObjectSetString(0, panelPrefix + "GapPercent", OBJPROP_TEXT, DoubleToString(GridGapPercent, 2) + "%");
+   ObjectSetString(0, panelPrefix + "GapDollar", OBJPROP_TEXT, "$" + FormatPrice(currentGapSize, specs.digits));
+   ObjectSetString(0, panelPrefix + "RefPrice", OBJPROP_TEXT, "$" + FormatPrice(referencePrice, specs.digits));
+   
+   // === NEXT LEVELS - SHOW BOTH UP AND DOWN ===
+   double distanceFromReference = currentPrice - referencePrice;
+   int currentLevelIndex = (int)MathRound(distanceFromReference / currentGapSize);
+   
+   double nextBuyUp = referencePrice + ((currentLevelIndex + 1) * currentGapSize);
+   double nextBuyDown = referencePrice + ((currentLevelIndex - 1) * currentGapSize);
+   double nextSellUp = referencePrice + ((currentLevelIndex + 1) * currentGapSize);
+   double nextSellDown = referencePrice + ((currentLevelIndex - 1) * currentGapSize);
+   
    if(CurrentDirection == BUYONLY)
    {
-      if(nextBuyLevel > 0)
-      {
-         ObjectSetString(0, panelPrefix + "NextBuy", OBJPROP_TEXT, "$" + FormatPrice(nextBuyLevel, specs.digits));
-         ObjectSetInteger(0, panelPrefix + "NextBuy", OBJPROP_COLOR, clrDodgerBlue);
-      }
-      
-      ObjectSetString(0, panelPrefix + "NextSell", OBJPROP_TEXT, "N/A");
-      ObjectSetInteger(0, panelPrefix + "NextSell", OBJPROP_COLOR, clrGray);
+      ObjectSetString(0, panelPrefix + "NextBuyUp", OBJPROP_TEXT, "$" + FormatPrice(nextBuyUp, specs.digits));
+      ObjectSetInteger(0, panelPrefix + "NextBuyUp", OBJPROP_COLOR, clrDodgerBlue);
+      ObjectSetString(0, panelPrefix + "NextBuyDown", OBJPROP_TEXT, "$" + FormatPrice(nextBuyDown, specs.digits));
+      ObjectSetInteger(0, panelPrefix + "NextBuyDown", OBJPROP_COLOR, clrDodgerBlue);
    }
    else
    {
-      if(nextSellLevel > 0)
-      {
-         ObjectSetString(0, panelPrefix + "NextSell", OBJPROP_TEXT, "$" + FormatPrice(nextSellLevel, specs.digits));
-         ObjectSetInteger(0, panelPrefix + "NextSell", OBJPROP_COLOR, clrOrangeRed);
-      }
-      
-      ObjectSetString(0, panelPrefix + "NextBuy", OBJPROP_TEXT, "N/A");
-      ObjectSetInteger(0, panelPrefix + "NextBuy", OBJPROP_COLOR, clrGray);
+      ObjectSetString(0, panelPrefix + "NextBuyUp", OBJPROP_TEXT, "N/A");
+      ObjectSetInteger(0, panelPrefix + "NextBuyUp", OBJPROP_COLOR, clrGray);
+      ObjectSetString(0, panelPrefix + "NextBuyDown", OBJPROP_TEXT, "N/A");
+      ObjectSetInteger(0, panelPrefix + "NextBuyDown", OBJPROP_COLOR, clrGray);
    }
    
-   // Reference
-   ObjectSetString(0, panelPrefix + "RefPrice", OBJPROP_TEXT, "$" + FormatPrice(referencePrice, specs.digits));
+   if(CurrentDirection == SELLONLY)
+   {
+      ObjectSetString(0, panelPrefix + "NextSellUp", OBJPROP_TEXT, "$" + FormatPrice(nextSellUp, specs.digits));
+      ObjectSetInteger(0, panelPrefix + "NextSellUp", OBJPROP_COLOR, clrOrangeRed);
+      ObjectSetString(0, panelPrefix + "NextSellDown", OBJPROP_TEXT, "$" + FormatPrice(nextSellDown, specs.digits));
+      ObjectSetInteger(0, panelPrefix + "NextSellDown", OBJPROP_COLOR, clrOrangeRed);
+   }
+   else
+   {
+      ObjectSetString(0, panelPrefix + "NextSellUp", OBJPROP_TEXT, "N/A");
+      ObjectSetInteger(0, panelPrefix + "NextSellUp", OBJPROP_COLOR, clrGray);
+      ObjectSetString(0, panelPrefix + "NextSellDown", OBJPROP_TEXT, "N/A");
+      ObjectSetInteger(0, panelPrefix + "NextSellDown", OBJPROP_COLOR, clrGray);
+   }
    
-   // Positions
+   // === POSITIONS SECTION ===
    ObjectSetString(0, panelPrefix + "Positions", OBJPROP_TEXT,
                    IntegerToString(ArraySize(positions)) + "/" + IntegerToString(MaxPositions));
    
@@ -1693,46 +1802,32 @@ void UpdatePanel()
    
    double netPosition = totalBuyLots - totalSellLots;
    string netText = "";
-   color netColor = clrWhite;
    
    if(MathAbs(netPosition) < 0.01)
-   {
       netText = "(0)";
-      netColor = clrWhite;
-   }
    else if(netPosition > 0)
-   {
-      netText = "(+" + DoubleToString(netPosition, 2) + "B)";
-      netColor = clrDodgerBlue;
-   }
+      netText = "(+" + DoubleToString(netPosition, 1) + "B)";
    else
-   {
-      netText = "(" + DoubleToString(MathAbs(netPosition), 2) + "S)";
-      netColor = clrOrangeRed;
-   }
+      netText = "(" + DoubleToString(MathAbs(netPosition), 1) + "S)";
    
-   string accLotsText = "B:" + DoubleToString(totalBuyLots, 2) + " S:" + DoubleToString(totalSellLots, 2) + " " + netText;
+   string accLotsText = "B:" + DoubleToString(totalBuyLots, 1) + " S:" + DoubleToString(totalSellLots, 1) + " " + netText;
    ObjectSetString(0, panelPrefix + "AccCounts", OBJPROP_TEXT, accLotsText);
-   ObjectSetInteger(0, panelPrefix + "AccCounts", OBJPROP_COLOR, netColor);
    
-   // P/L
+   // === P/L SECTION ===
    CalculateTotalProfit();
    color pnlColor = (totalProfit >= 0) ? clrLimeGreen : clrRed;
    ObjectSetString(0, panelPrefix + "PnL", OBJPROP_TEXT,
-                   (totalProfit >= 0 ? "+" : "") + "$" + FormatPrice(totalProfit, 2));
+                   (totalProfit >= 0 ? "+" : "") + "$" + FormatPrice(totalProfit, 0));
    ObjectSetInteger(0, panelPrefix + "PnL", OBJPROP_COLOR, pnlColor);
    
-   // Equity
    double equity = AccountInfoDouble(ACCOUNT_EQUITY);
-   ObjectSetString(0, panelPrefix + "Equity", OBJPROP_TEXT, "$" + FormatPrice(equity, 2));
+   ObjectSetString(0, panelPrefix + "Equity", OBJPROP_TEXT, "$" + FormatPrice(equity, 0));
    
-   // Drawdown
    double dd = (peakEquity > 0) ? ((equity - peakEquity) / peakEquity * 100) : 0;
    color ddColor = (dd >= -5) ? clrLimeGreen : (dd >= -10) ? clrYellow : clrRed;
    ObjectSetString(0, panelPrefix + "DD", OBJPROP_TEXT, FormatPrice(dd, 1) + "%");
    ObjectSetInteger(0, panelPrefix + "DD", OBJPROP_COLOR, ddColor);
    
-   // Daily Profit
    double currentBalance = AccountInfoDouble(ACCOUNT_BALANCE);
    dailyProfit = currentBalance - dailyStartBalance;
    
@@ -1740,8 +1835,40 @@ void UpdatePanel()
                       (dailyProfit >= 0) ? clrLimeGreen : clrRed;
    
    ObjectSetString(0, panelPrefix + "DailyProfit", OBJPROP_TEXT,
-                   (dailyProfit >= 0 ? "+" : "") + "$" + FormatPrice(dailyProfit, 2));
+                   (dailyProfit >= 0 ? "+" : "") + "$" + FormatPrice(dailyProfit, 0));
    ObjectSetInteger(0, panelPrefix + "DailyProfit", OBJPROP_COLOR, dailyColor);
+   
+   // DD Trigger Price calculation
+   double ddTriggerEquity = peakEquity * (1.0 - MaxDrawdownPercent / 100.0);
+   double plNeededForDDTrigger = ddTriggerEquity - equity;
+   double ddTriggerPrice = currentPrice;
+   
+   if(ArraySize(positions) > 0)
+   {
+      double totalVolume = 0;
+      for(int i = 0; i < ArraySize(positions); i++)
+      {
+         if(PositionSelectByTicket(positions[i].ticket))
+            totalVolume += PositionGetDouble(POSITION_VOLUME);
+      }
+      
+      if(totalVolume > 0)
+      {
+         double pointValue = specs.tickValue / specs.tickSize;
+         double plPerPointMove = pointValue * totalVolume;
+         
+         if(plPerPointMove > 0)
+         {
+            double pointsMoveToDDTrigger = plNeededForDDTrigger / plPerPointMove;
+            ddTriggerPrice = currentPrice + (CurrentDirection == BUYONLY ? pointsMoveToDDTrigger : -pointsMoveToDDTrigger);
+         }
+      }
+   }
+   
+   ObjectSetString(0, panelPrefix + "DDTrigger", OBJPROP_TEXT, "$" + FormatPrice(ddTriggerPrice, specs.digits));
+   
+   // Update button text
+   ObjectSetString(0, panelPrefix + "PauseBtn", OBJPROP_TEXT, isPaused ? "RESUME" : "PAUSE");
 }
 
 //+------------------------------------------------------------------+
