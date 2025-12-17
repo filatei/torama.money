@@ -748,18 +748,26 @@ bool OpenPosition(ENUM_ORDER_TYPE type, double price) {
    request.magic = MagicNumber;
    
    if(IndividualSLDollars > 0) {
-      double pointValue = specs.tickValue / specs.tickSize;
-      double slPoints = (IndividualSLDollars / validatedLotSize) / pointValue;
-      double slDistance = slPoints * specs.point;
+      // Calculate how much price must move to hit SL in dollars
+      // Profit/Loss = (Price Movement) × Contract Size × Lot Size × (Tick Value / Tick Size)
+      // Price Movement = Dollars / (Contract Size × Lot Size × Tick Value / Tick Size)
+      double valuePerPoint = specs.contractSize * validatedLotSize * (specs.tickValue / specs.tickSize);
+      double slDistance = IndividualSLDollars / valuePerPoint;
+      slDistance = NormalizeDouble(slDistance, specs.digits);
       slDistance = MathMax(slDistance, specs.minStopDistance);
+      
       request.sl = type == ORDER_TYPE_BUY ? price - slDistance : price + slDistance;
    }
    
    if(IndividualTPDollars > 0) {
-      double pointValue = specs.tickValue / specs.tickSize;
-      double tpPoints = (IndividualTPDollars / validatedLotSize) / pointValue;
-      double tpDistance = tpPoints * specs.point;
+      // Calculate how much price must move to hit TP in dollars
+      // Profit/Loss = (Price Movement) × Contract Size × Lot Size × (Tick Value / Tick Size)
+      // Price Movement = Dollars / (Contract Size × Lot Size × Tick Value / Tick Size)
+      double valuePerPoint = specs.contractSize * validatedLotSize * (specs.tickValue / specs.tickSize);
+      double tpDistance = IndividualTPDollars / valuePerPoint;
+      tpDistance = NormalizeDouble(tpDistance, specs.digits);
       tpDistance = MathMax(tpDistance, specs.minStopDistance);
+      
       request.tp = type == ORDER_TYPE_BUY ? price + tpDistance : price - tpDistance;
    }
    
