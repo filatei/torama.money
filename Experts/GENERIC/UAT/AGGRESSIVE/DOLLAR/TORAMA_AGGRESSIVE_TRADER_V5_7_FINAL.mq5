@@ -1510,11 +1510,11 @@ void CreatePanel()
 {
    int x = 10;
    int y = 30;
-   int lineHeight = 16;
+   int lineHeight = 18;
    
    // Calculate panel dimensions - more compact
    int panelWidth = 280;
-   int panelHeight = 380;  // Increased slightly for branding
+   int panelHeight = 400;  // Increased slightly for branding
    
    // Create fully solid background rectangle (NO transparency)
    ObjectCreate(0, panelPrefix + "Background", OBJ_RECTANGLE_LABEL, 0, 0, 0);
@@ -1560,9 +1560,9 @@ void CreatePanel()
    y += lineHeight;
    
    // Gap % and Dollar
-   CreateLabel(panelPrefix + "GapPercentLabel", x, y, "Gap:", clrWhite, 8, "Consolas");
-   CreateLabel(panelPrefix + "GapPercent", x + 45, y, "0.00%", clrLimeGreen, 8, "Consolas Bold");
-   CreateLabel(panelPrefix + "GapDollar", x + 120, y, "$0.00", clrLimeGreen, 8, "Consolas Bold");
+   CreateLabel(panelPrefix + "GapPercentLabel", x, y, "Gap:", clrWhite, 9, "Consolas");
+   CreateLabel(panelPrefix + "GapPercent", x + 45, y, "0.00%", clrLimeGreen, 9, "Consolas Bold");
+   CreateLabel(panelPrefix + "GapDollar", x + 120, y, "$0.00", clrLimeGreen, 9, "Consolas Bold");
    y += lineHeight;
    
    // Reference Price
@@ -1608,15 +1608,15 @@ void CreatePanel()
    y += lineHeight;
    
    // Current P/L and Equity on same line
-   CreateLabel(panelPrefix + "PnLLabel", x, y, "P/L:", clrWhite, 8, "Consolas");
-   CreateLabel(panelPrefix + "PnL", x + 40, y, "+$0.00", clrLimeGreen, 8, "Consolas Bold");
+   CreateLabel(panelPrefix + "PnLLabel", x, y, "P/L:", clrWhite, 9, "Consolas");
+   CreateLabel(panelPrefix + "PnL", x + 40, y, "+$0.00", clrLimeGreen, 9, "Consolas Bold");
    CreateLabel(panelPrefix + "EquityLabel", x + 135, y, "Eq:", clrWhite, 8, "Consolas");
    CreateLabel(panelPrefix + "Equity", x + 165, y, "$0", clrWhite, 8, "Consolas");
    y += lineHeight;
    
    // Drawdown and Daily on same line
-   CreateLabel(panelPrefix + "DDLabel", x, y, "DD:", clrWhite, 8, "Consolas");
-   CreateLabel(panelPrefix + "DD", x + 40, y, "0%", clrLimeGreen, 8, "Consolas Bold");
+   CreateLabel(panelPrefix + "DDLabel", x, y, "DD:", clrWhite, 9, "Consolas");
+   CreateLabel(panelPrefix + "DD", x + 40, y, "0%", clrLimeGreen, 9, "Consolas Bold");
    CreateLabel(panelPrefix + "DailyLabel", x + 105, y, "Day:", clrWhite, 8, "Consolas");
    CreateLabel(panelPrefix + "DailyProfit", x + 145, y, "+$0", clrLimeGreen, 8, "Consolas Bold");
    y += lineHeight + 8;
@@ -1637,16 +1637,19 @@ void CreatePanel()
    CreateButton(panelPrefix + "CloseProfitBtn", x, y, 130, 22, "CLOSE PROFIT", clrDarkGreen, clrWhite);
    CreateButton(panelPrefix + "ResumeBtn", x + 140, y, 125, 22, "RESUME (R)", clrDarkOliveGreen, clrWhite);
    
-   y += 32;
+   y += 30;
    
    // === TORAMA CAPITAL BRANDING (Bottom Right) ===
-   // Calculate position for right-aligned branding with 10px right margin
-   int brandingX = x + panelWidth - 155;  // 155px width + 10px margin from right edge
+   int brandingX = x + panelWidth - 165;
    
-   CreateLabel(panelPrefix + "BrandingLabel", brandingX, y, "TORAMA", clrGold, 11, "Arial Black");
-   CreateLabel(panelPrefix + "BrandingLabel2", brandingX + 65, y, "CAPITAL", clrGold, 11, "Arial Black");
+   // © TORAMA CAPITAL with proper spacing
+   CreateLabel(panelPrefix + "Copyright", brandingX, y, "©", clrGold, 11, "Arial");
+   CreateLabel(panelPrefix + "BrandingLabel", brandingX + 15, y, "TORAMA", clrGold, 11, "Arial Black");
+   CreateLabel(panelPrefix + "BrandingLabel2", brandingX + 85, y, "CAPITAL", clrGold, 11, "Arial Black");
    y += 16;
-   CreateLabel(panelPrefix + "BrandingURL", brandingX + 10, y, "money.torama.biz", C'180,180,180', 7, "Consolas");
+   
+   // Email
+   CreateLabel(panelPrefix + "BrandingEmail", brandingX + 10, y, "ea@torama.money", C'180,180,180', 8, "Consolas");
    
    ChartRedraw();
 }
