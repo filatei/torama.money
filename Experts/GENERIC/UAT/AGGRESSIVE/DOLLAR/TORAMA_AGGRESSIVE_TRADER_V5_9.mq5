@@ -497,6 +497,14 @@ bool InitializeSymbolSpecs() {
    specs.lotStep = SymbolInfoDouble(_Symbol, SYMBOL_VOLUME_STEP);
    specs.minStopDistance = specs.stopLevel * specs.point;
    
+   // Debug logging
+   Print("📊 SYMBOL SPECIFICATIONS:");
+   Print("   Contract Size: ", specs.contractSize);
+   Print("   Tick Value: ", specs.tickValue);
+   Print("   Tick Size: ", specs.tickSize);
+   Print("   Point: ", specs.point);
+   Print("   Digits: ", specs.digits);
+   
    return (specs.contractSize > 0 && specs.tickValue > 0 && specs.tickSize > 0);
 }
 
@@ -748,27 +756,29 @@ bool OpenPosition(ENUM_ORDER_TYPE type, double price) {
    request.magic = MagicNumber;
    
    if(IndividualSLDollars > 0) {
-      // Calculate how much price must move to hit SL in dollars
-      // Profit/Loss = (Price Movement) × Contract Size × Lot Size × (Tick Value / Tick Size)
-      // Price Movement = Dollars / (Contract Size × Lot Size × Tick Value / Tick Size)
-      double valuePerPoint = specs.contractSize * validatedLotSize * (specs.tickValue / specs.tickSize);
-      double slDistance = IndividualSLDollars / valuePerPoint;
+      // For forex/metals: Profit = (ClosingPrice - OpeningPrice) × ContractSize × Lots
+      // We need: SL_Distance such that: SL_Distance × ContractSize × Lots = IndividualSLDollars
+      // Therefore: SL_Distance = IndividualSLDollars / (ContractSize × Lots)
+      double slDistance = IndividualSLDollars / (specs.contractSize * validatedLotSize);
       slDistance = NormalizeDouble(slDistance, specs.digits);
       slDistance = MathMax(slDistance, specs.minStopDistance);
       
       request.sl = type == ORDER_TYPE_BUY ? price - slDistance : price + slDistance;
+      
+      Print("💰 SL Calculation: $", IndividualSLDollars, " = ", slDistance, " price distance");
    }
    
    if(IndividualTPDollars > 0) {
-      // Calculate how much price must move to hit TP in dollars
-      // Profit/Loss = (Price Movement) × Contract Size × Lot Size × (Tick Value / Tick Size)
-      // Price Movement = Dollars / (Contract Size × Lot Size × Tick Value / Tick Size)
-      double valuePerPoint = specs.contractSize * validatedLotSize * (specs.tickValue / specs.tickSize);
-      double tpDistance = IndividualTPDollars / valuePerPoint;
+      // For forex/metals: Profit = (ClosingPrice - OpeningPrice) × ContractSize × Lots
+      // We need: TP_Distance such that: TP_Distance × ContractSize × Lots = IndividualTPDollars
+      // Therefore: TP_Distance = IndividualTPDollars / (ContractSize × Lots)
+      double tpDistance = IndividualTPDollars / (specs.contractSize * validatedLotSize);
       tpDistance = NormalizeDouble(tpDistance, specs.digits);
       tpDistance = MathMax(tpDistance, specs.minStopDistance);
       
       request.tp = type == ORDER_TYPE_BUY ? price + tpDistance : price - tpDistance;
+      
+      Print("💰 TP Calculation: $", IndividualTPDollars, " = ", tpDistance, " price distance | Entry: ", price, " | TP: ", request.tp);
    }
    
    if(!OrderSend(request, result)) return false;
