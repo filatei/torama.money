@@ -19,7 +19,7 @@ enum ENUM_TRADE_DIRECTION { BUYONLY, SELLONLY };
 
 input group "=== DIRECTION & ATR MODE SWITCHING ==="
 input ENUM_TRADE_DIRECTION StartDirection = BUYONLY;
-input bool     EnableATRSwitch = true;
+input bool     EnableATRSwitch = false;               // Enable ATR-based mode switching (DEFAULT: OFF)
 input int      ATRPeriod = 14;
 input double   ATRThresholdPercent = 70.0;
 input bool     CloseOnModeSwitch = false;
@@ -34,7 +34,7 @@ input double   IndividualTPDollars = 50.0;
 input double   GroupTPDollars = 200.0;
 
 input group "=== STOP LOSS ==="
-input double   IndividualSLDollars = 100.0;
+input double   IndividualSLDollars = 0.0;             // SL risk per trade (0 = DISABLED)
 
 input group "=== RISK MANAGEMENT ==="
 input double   MaxDrawdownPercent = 25.0;
