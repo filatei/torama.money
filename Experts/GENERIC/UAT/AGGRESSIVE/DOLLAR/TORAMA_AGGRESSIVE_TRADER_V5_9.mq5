@@ -120,7 +120,7 @@ void CreatePanel() {
    ObjectSetInteger(0, bgName, OBJPROP_XDISTANCE, panelX);
    ObjectSetInteger(0, bgName, OBJPROP_YDISTANCE, panelY);
    ObjectSetInteger(0, bgName, OBJPROP_XSIZE, panelWidth);
-   ObjectSetInteger(0, bgName, OBJPROP_YSIZE, 480);  // Reduced from 560 to 480
+   ObjectSetInteger(0, bgName, OBJPROP_YSIZE, 380);  // Reduced from 480 to 380
    ObjectSetInteger(0, bgName, OBJPROP_BGCOLOR, bgColor);
    ObjectSetInteger(0, bgName, OBJPROP_BORDER_TYPE, BORDER_FLAT);
    ObjectSetInteger(0, bgName, OBJPROP_COLOR, borderColor);
@@ -130,15 +130,15 @@ void CreatePanel() {
    ObjectSetInteger(0, bgName, OBJPROP_HIDDEN, true);
    ObjectSetInteger(0, bgName, OBJPROP_ZORDER, 1000);
    
-   int y = panelY + 6;  // Reduced from 8
+   int y = panelY + 6;
    int labelX = panelX + 15;
    int valueX = panelX + panelWidth - 95;
    
    // Header
-   CreateLabel(panelPrefix + "Title", panelX + 10, y, "TORAMA AGGRESSIVE", headerColor, 10, "Arial Black");  // Font 11->10
-   y += 16;  // Reduced from 18
-   CreateLabel(panelPrefix + "Title2", panelX + 10, y, "TRADER v5.9", headerColor, 10, "Arial Black");  // Font 11->10
-   y += 18;  // Reduced from 20
+   CreateLabel(panelPrefix + "Title", panelX + 10, y, "TORAMA AGGRESSIVE", headerColor, 10, "Arial Black");
+   y += 16;
+   CreateLabel(panelPrefix + "Title2", panelX + 10, y, "TRADER v5.9", headerColor, 10, "Arial Black");
+   y += 18;
    
    // Separator 1
    string sep1 = panelPrefix + "Sep1";
@@ -180,20 +180,42 @@ void CreatePanel() {
    ObjectSetInteger(0, sep2, OBJPROP_BACK, false);
    ObjectSetInteger(0, sep2, OBJPROP_HIDDEN, true);
    ObjectSetInteger(0, sep2, OBJPROP_ZORDER, 1001);
-   y += 7;  // Reduced from 10
+   y += 7;
    
-   // GRID SETTINGS
-   CreateLabel(panelPrefix + "GridLabel", labelX, y, "GRID SETTINGS", headerColor, 9, "Arial Bold");
-   y += panelRowHeight;
-   CreateLabel(panelPrefix + "GapPercentLabel", labelX, y, "Gap %:", labelColor, 8, "Arial");
-   CreateLabel(panelPrefix + "GapPercent", valueX, y, "0.00%", clrWhite, 9, "Arial Bold");
-   y += panelRowHeight;
-   CreateLabel(panelPrefix + "GapDollarLabel", labelX, y, "Gap $:", labelColor, 8, "Arial");
-   CreateLabel(panelPrefix + "GapDollar", valueX, y, "$0.00", clrWhite, 9, "Arial Bold");
-   y += panelRowHeight;
-   CreateLabel(panelPrefix + "RefPriceLabel", labelX, y, "Reference:", labelColor, 8, "Arial");
-   CreateLabel(panelPrefix + "RefPrice", valueX, y, "$0.00", clrWhite, 9, "Arial Bold");
-   y += panelRowHeight + 2;  // Reduced from 3
+   // GRID SETTINGS & NEXT LEVELS (Side by Side - 2 columns)
+   int leftColX = labelX;
+   int rightColX = labelX + 135;
+   int startY = y;
+   
+   // LEFT COLUMN - GRID SETTINGS
+   CreateLabel(panelPrefix + "GridLabel", leftColX, y, "GRID SETTINGS", headerColor, 8, "Arial Bold");
+   y += 18;
+   CreateLabel(panelPrefix + "GapPercentLabel", leftColX, y, "Gap %:", labelColor, 7, "Arial");
+   CreateLabel(panelPrefix + "GapPercent", leftColX + 50, y, "0.00%", clrWhite, 8, "Arial Bold");
+   y += 17;
+   CreateLabel(panelPrefix + "GapDollarLabel", leftColX, y, "Gap $:", labelColor, 7, "Arial");
+   CreateLabel(panelPrefix + "GapDollar", leftColX + 50, y, "$0.00", clrWhite, 8, "Arial Bold");
+   y += 17;
+   CreateLabel(panelPrefix + "RefPriceLabel", leftColX, y, "Reference:", labelColor, 7, "Arial");
+   CreateLabel(panelPrefix + "RefPrice", leftColX + 50, y, "$0.00", clrWhite, 8, "Arial Bold");
+   
+   // RIGHT COLUMN - NEXT LEVELS
+   y = startY;
+   CreateLabel(panelPrefix + "NextLabel", rightColX, y, "NEXT LEVELS", headerColor, 8, "Arial Bold");
+   y += 18;
+   CreateLabel(panelPrefix + "NextBuyUpLabel", rightColX, y, "↑ Buy:", labelColor, 7, "Arial");
+   CreateLabel(panelPrefix + "NextBuyUp", rightColX + 50, y, "$0.00", clrDodgerBlue, 8, "Arial Bold");
+   y += 17;
+   CreateLabel(panelPrefix + "NextBuyDownLabel", rightColX, y, "↓ Buy:", labelColor, 7, "Arial");
+   CreateLabel(panelPrefix + "NextBuyDown", rightColX + 50, y, "$0.00", clrDodgerBlue, 8, "Arial Bold");
+   y += 17;
+   CreateLabel(panelPrefix + "NextSellUpLabel", rightColX, y, "↑ Sell:", labelColor, 7, "Arial");
+   CreateLabel(panelPrefix + "NextSellUp", rightColX + 50, y, "$0.00", clrOrangeRed, 8, "Arial Bold");
+   y += 17;
+   CreateLabel(panelPrefix + "NextSellDownLabel", rightColX, y, "↓ Sell:", labelColor, 7, "Arial");
+   CreateLabel(panelPrefix + "NextSellDown", rightColX + 50, y, "$0.00", clrOrangeRed, 8, "Arial Bold");
+   
+   y += 19;  // Move to next section
    
    // Separator 3
    string sep3 = panelPrefix + "Sep3";
@@ -209,26 +231,28 @@ void CreatePanel() {
    ObjectSetInteger(0, sep3, OBJPROP_BACK, false);
    ObjectSetInteger(0, sep3, OBJPROP_HIDDEN, true);
    ObjectSetInteger(0, sep3, OBJPROP_ZORDER, 1001);
-   y += 7;  // Reduced from 10
+   y += 7;
    
-   // NEXT LEVELS (2 columns: Buy left, Sell right)
-   CreateLabel(panelPrefix + "NextLabel", labelX, y, "NEXT LEVELS", headerColor, 9, "Arial Bold");
-   y += panelRowHeight;
+   // POSITIONS & STATISTICS (Side by Side - 2 columns)
+   startY = y;
    
-   int leftCol = labelX;
-   int rightCol = labelX + 130;
+   // LEFT COLUMN - POSITIONS
+   CreateLabel(panelPrefix + "PosLabel", leftColX, y, "POSITIONS", headerColor, 8, "Arial Bold");
+   y += 18;
+   CreateLabel(panelPrefix + "PositionsLabel", leftColX, y, "EA Pos:", labelColor, 7, "Arial");
+   CreateLabel(panelPrefix + "Positions", leftColX + 50, y, "0/100", clrWhite, 8, "Arial Bold");
+   y += 17;
+   CreateLabel(panelPrefix + "AccountLotsLabel", leftColX, y, "Acc Lots:", labelColor, 7, "Arial");
+   CreateLabel(panelPrefix + "AccLots", leftColX + 50, y, "B:0 S:0", clrWhite, 7, "Arial Bold");
    
-   CreateLabel(panelPrefix + "NextBuyUpLabel", leftCol, y, "↑ Buy Up:", labelColor, 8, "Arial");
-   CreateLabel(panelPrefix + "NextBuyUp", leftCol + 70, y, "$0.00", clrDodgerBlue, 8, "Arial Bold");
-   CreateLabel(panelPrefix + "NextSellUpLabel", rightCol, y, "↑ Sell Up:", labelColor, 8, "Arial");
-   CreateLabel(panelPrefix + "NextSellUp", rightCol + 70, y, "$0.00", clrOrangeRed, 8, "Arial Bold");
-   y += panelRowHeight;
+   // RIGHT COLUMN - STATISTICS
+   y = startY;
+   CreateLabel(panelPrefix + "StatsLabel", rightColX, y, "STATISTICS", headerColor, 8, "Arial Bold");
+   y += 18;
+   CreateLabel(panelPrefix + "SwitchLabel", rightColX, y, "Switches:", labelColor, 7, "Arial");
+   CreateLabel(panelPrefix + "SwitchCount", rightColX + 50, y, "0", clrWhite, 8, "Arial Bold");
    
-   CreateLabel(panelPrefix + "NextBuyDownLabel", leftCol, y, "↓ Buy Down:", labelColor, 8, "Arial");
-   CreateLabel(panelPrefix + "NextBuyDown", leftCol + 70, y, "$0.00", clrDodgerBlue, 8, "Arial Bold");
-   CreateLabel(panelPrefix + "NextSellDownLabel", rightCol, y, "↓ Sell Down:", labelColor, 8, "Arial");
-   CreateLabel(panelPrefix + "NextSellDown", rightCol + 70, y, "$0.00", clrOrangeRed, 8, "Arial Bold");
-   y += panelRowHeight + 2;  // Reduced from 3
+   y += 19;
    
    // Separator 4
    string sep4 = panelPrefix + "Sep4";
@@ -244,35 +268,9 @@ void CreatePanel() {
    ObjectSetInteger(0, sep4, OBJPROP_BACK, false);
    ObjectSetInteger(0, sep4, OBJPROP_HIDDEN, true);
    ObjectSetInteger(0, sep4, OBJPROP_ZORDER, 1001);
-   y += 7;  // Reduced from 10
+   y += 7;
    
-   // POSITIONS
-   CreateLabel(panelPrefix + "PosLabel", labelX, y, "POSITIONS", headerColor, 9, "Arial Bold");
-   y += panelRowHeight;
-   CreateLabel(panelPrefix + "PositionsLabel", labelX, y, "EA Positions:", labelColor, 8, "Arial");
-   CreateLabel(panelPrefix + "Positions", valueX, y, "0/100", clrWhite, 9, "Arial Bold");
-   y += panelRowHeight;
-   CreateLabel(panelPrefix + "AccountLotsLabel", labelX, y, "Account Lots:", labelColor, 8, "Arial");
-   CreateLabel(panelPrefix + "AccLots", valueX, y, "B:0 S:0", clrWhite, 8, "Arial Bold");
-   y += panelRowHeight + 2;  // Reduced from 3
-   
-   // Separator 5
-   string sep5 = panelPrefix + "Sep5";
-   ObjectCreate(0, sep5, OBJ_EDIT, 0, 0, 0);
-   ObjectSetInteger(0, sep5, OBJPROP_XDISTANCE, panelX + 10);
-   ObjectSetInteger(0, sep5, OBJPROP_YDISTANCE, y);
-   ObjectSetInteger(0, sep5, OBJPROP_XSIZE, panelWidth - 20);
-   ObjectSetInteger(0, sep5, OBJPROP_YSIZE, 1);
-   ObjectSetInteger(0, sep5, OBJPROP_BGCOLOR, C'50,50,60');
-   ObjectSetInteger(0, sep5, OBJPROP_BORDER_TYPE, BORDER_FLAT);
-   ObjectSetInteger(0, sep5, OBJPROP_READONLY, true);
-   ObjectSetInteger(0, sep5, OBJPROP_SELECTABLE, false);
-   ObjectSetInteger(0, sep5, OBJPROP_BACK, false);
-   ObjectSetInteger(0, sep5, OBJPROP_HIDDEN, true);
-   ObjectSetInteger(0, sep5, OBJPROP_ZORDER, 1001);
-   y += 7;  // Reduced from 10
-   
-   // PROFIT & LOSS
+   // PROFIT & LOSS (Full Width)
    CreateLabel(panelPrefix + "PLLabel", labelX, y, "PROFIT & LOSS", headerColor, 9, "Arial Bold");
    y += panelRowHeight;
    CreateLabel(panelPrefix + "TotalPLLabel", labelX, y, "Total P/L:", labelColor, 8, "Arial");
@@ -286,35 +284,11 @@ void CreatePanel() {
    y += panelRowHeight;
    CreateLabel(panelPrefix + "DailyPLLabel", labelX, y, "Daily P/L:", labelColor, 8, "Arial");
    CreateLabel(panelPrefix + "DailyProfit", valueX, y, "+$0.00", clrWhite, 9, "Arial Bold");
-   y += panelRowHeight + 2;  // Reduced from 3
    
-   // Separator 6
-   string sep6 = panelPrefix + "Sep6";
-   ObjectCreate(0, sep6, OBJ_EDIT, 0, 0, 0);
-   ObjectSetInteger(0, sep6, OBJPROP_XDISTANCE, panelX + 10);
-   ObjectSetInteger(0, sep6, OBJPROP_YDISTANCE, y);
-   ObjectSetInteger(0, sep6, OBJPROP_XSIZE, panelWidth - 20);
-   ObjectSetInteger(0, sep6, OBJPROP_YSIZE, 1);
-   ObjectSetInteger(0, sep6, OBJPROP_BGCOLOR, C'50,50,60');
-   ObjectSetInteger(0, sep6, OBJPROP_BORDER_TYPE, BORDER_FLAT);
-   ObjectSetInteger(0, sep6, OBJPROP_READONLY, true);
-   ObjectSetInteger(0, sep6, OBJPROP_SELECTABLE, false);
-   ObjectSetInteger(0, sep6, OBJPROP_BACK, false);
-   ObjectSetInteger(0, sep6, OBJPROP_HIDDEN, true);
-   ObjectSetInteger(0, sep6, OBJPROP_ZORDER, 1001);
-   y += 7;  // Reduced from 10
-   
-   // STATISTICS
-   CreateLabel(panelPrefix + "StatsLabel", labelX, y, "STATISTICS", headerColor, 9, "Arial Bold");
-   y += panelRowHeight;
-   CreateLabel(panelPrefix + "SwitchLabel", labelX, y, "Mode Switches:", labelColor, 8, "Arial");
-   CreateLabel(panelPrefix + "SwitchCount", valueX, y, "0", clrWhite, 9, "Arial Bold");
-   y += panelRowHeight + 6;  // Reduced from 8
-   
-   // BRANDING
-   CreateLabel(panelPrefix + "Brand", labelX, y, "TORAMA CAPITAL", C'218,165,32', 8, "Arial Bold");
-   y += 14;  // Reduced from 16
-   CreateLabel(panelPrefix + "Website", labelX, y, "www.torama.money", C'150,150,150', 7, "Arial");
+   // BRANDING - Bottom Right Corner (Bold)
+   int brandingY = panelY + 380 - 20;  // 20px from bottom
+   int brandingX = panelX + panelWidth - 135;  // Right aligned
+   CreateLabel(panelPrefix + "Brand", brandingX, brandingY, "TORAMA CAPITAL", C'218,165,32', 9, "Arial Black");
 }
 
 //+------------------------------------------------------------------+
@@ -755,30 +729,30 @@ bool OpenPosition(ENUM_ORDER_TYPE type, double price) {
    request.deviation = 10;
    request.magic = MagicNumber;
    
+   // Calculate point value (value per 1.0 price unit move)
+   double pointValue = specs.tickValue / specs.tickSize;
+   double positionValue = pointValue * validatedLotSize;
+   
    if(IndividualSLDollars > 0) {
-      // Profit/Loss formula: (Price Movement) × (Contract Size) × (Lot Size) × (Tick Value / Tick Size)
-      // Rearranging: Price Movement = Dollars / (Contract Size × Lot Size × Tick Value / Tick Size)
-      double valuePerPriceUnit = specs.contractSize * validatedLotSize * (specs.tickValue / specs.tickSize);
-      double slDistance = IndividualSLDollars / valuePerPriceUnit;
+      // Distance = Risk$ / (PointValue × LotSize)
+      double slDistance = IndividualSLDollars / positionValue;
       slDistance = NormalizeDouble(slDistance, specs.digits);
       slDistance = MathMax(slDistance, specs.minStopDistance);
       
       request.sl = type == ORDER_TYPE_BUY ? price - slDistance : price + slDistance;
       
-      Print("💰 SL Calc: $", IndividualSLDollars, " / ", valuePerPriceUnit, " = ", slDistance, " | SL: ", request.sl);
+      Print("💰 SL Calc: $", IndividualSLDollars, " / ", positionValue, " = ", slDistance, " | Entry: ", price, " | SL: ", request.sl);
    }
    
    if(IndividualTPDollars > 0) {
-      // Profit/Loss formula: (Price Movement) × (Contract Size) × (Lot Size) × (Tick Value / Tick Size)
-      // Rearranging: Price Movement = Dollars / (Contract Size × Lot Size × Tick Value / Tick Size)
-      double valuePerPriceUnit = specs.contractSize * validatedLotSize * (specs.tickValue / specs.tickSize);
-      double tpDistance = IndividualTPDollars / valuePerPriceUnit;
+      // Distance = Target$ / (PointValue × LotSize)
+      double tpDistance = IndividualTPDollars / positionValue;
       tpDistance = NormalizeDouble(tpDistance, specs.digits);
       tpDistance = MathMax(tpDistance, specs.minStopDistance);
       
       request.tp = type == ORDER_TYPE_BUY ? price + tpDistance : price - tpDistance;
       
-      Print("💰 TP Calc: $", IndividualTPDollars, " / ", valuePerPriceUnit, " = ", tpDistance, " | Entry: ", price, " | TP: ", request.tp);
+      Print("💰 TP Calc: $", IndividualTPDollars, " / ", positionValue, " = ", tpDistance, " | Entry: ", price, " | TP: ", request.tp);
    }
    
    if(!OrderSend(request, result)) return false;
