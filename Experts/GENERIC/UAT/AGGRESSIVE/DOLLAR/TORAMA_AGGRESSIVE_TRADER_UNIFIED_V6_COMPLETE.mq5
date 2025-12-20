@@ -878,12 +878,8 @@ void CheckGroupTP()
 //+------------------------------------------------------------------+
 bool OpenPositionUnified(ENUM_ORDER_TYPE orderType, double price, double lotSize, double levelPrice)
 {
-   // Verify we are not at max for this side (checked in caller, but double-check)
-   // This function is called with specific side intent
-   {
-      Print("🛑 Cannot open position - MaxPositionsPerSide limit reached (", MaxPositionsPerSide, ")");
-      return false;
-   }
+   // Note: MaxPositions check is done in CheckGridUnified before calling this function
+   // This function focuses on actually placing the order
    
    MqlTradeRequest request = {};
    MqlTradeResult result = {};
