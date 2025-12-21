@@ -1521,6 +1521,38 @@ string FormatPrice(double price, int digits)
          priceStr = StringSubstr(priceStr, 0, StringLen(priceStr) - 1);
    }
    
+   // Add thousands separator for numbers >= 1000
+   int dotPos = StringFind(priceStr, ".");
+   string intPart = (dotPos >= 0) ? StringSubstr(priceStr, 0, dotPos) : priceStr;
+   string decPart = (dotPos >= 0) ? StringSubstr(priceStr, dotPos) : "";
+   
+   // Check if negative
+   bool isNegative = false;
+   if(StringSubstr(intPart, 0, 1) == "-")
+   {
+      isNegative = true;
+      intPart = StringSubstr(intPart, 1);
+   }
+   
+   // Add commas to integer part
+   if(StringLen(intPart) >= 4)
+   {
+      string result = "";
+      int len = StringLen(intPart);
+      
+      for(int i = 0; i < len; i++)
+      {
+         if(i > 0 && (len - i) % 3 == 0)
+            result += ",";
+         result += StringSubstr(intPart, i, 1);
+      }
+      
+      intPart = result;
+   }
+   
+   // Reconstruct with sign
+   priceStr = (isNegative ? "-" : "") + intPart + decPart;
+   
    return priceStr;
 }
 
