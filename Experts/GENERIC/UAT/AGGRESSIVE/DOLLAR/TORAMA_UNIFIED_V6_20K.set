@@ -1,0 +1,74 @@
+; TORAMA Aggressive Trader UNIFIED V6.0
+; Optimized for $20,000 ACCOUNT (Conservative)
+; Symbol: XAUUSD (Gold) / BTCUSD
+; Generated: 2025-12-20
+; 
+; STRATEGY: Tight grid with moderate lot scaling
+; Expected Monthly Return: 8-15%
+; Expected Max Drawdown: 12-18%
+
+; === GRID SETTINGS ===
+GridGapPercent=0.01
+||0||1||20||0.005000||0.100000||0.005000||N||
+MaxPositionsPerSide=12
+||0||1||20||5||25||1||N||
+BaseLotSize=0.10
+||0||1||20||0.01||1.00||0.01||N||
+
+; === DYNAMIC LOT SCALING ===
+EnableLotScaling=true
+||0||1||1||0||1||1||N||
+ScaleMultiplier_70=1.5
+||0||1||20||1.0||3.0||0.5||N||
+ScaleMultiplier_85=2.0
+||0||1||20||1.0||4.0||0.5||N||
+ScaleMultiplier_95=2.5
+||0||1||20||1.0||5.0||0.5||N||
+MaxLotMultiplier=4.0
+||0||1||20||2.0||8.0||0.5||N||
+WinningSideMaxPositions=3
+||0||1||20||1||5||1||N||
+
+; === ENTRY DELAY ===
+EnableEntryDelay=true
+||0||1||1||0||1||1||N||
+BaseDelaySeconds=300
+||0||1||20||60||900||60||N||
+MaxDelaySeconds=900
+||0||1||20||300||1800||60||N||
+
+; === TAKE PROFIT ===
+IndividualTPDollars=30.0
+||0||1||20||10.0||100.0||10.0||N||
+GroupTPDollars=150.0
+||0||1||20||50.0||500.0||50.0||N||
+
+; === STOP LOSS ===
+IndividualSLDollars=0.0
+||0||1||20||0.0||200.0||20.0||N||
+
+; === RISK MANAGEMENT ===
+MaxDrawdownPercent=20.0
+||0||1||20||10.0||40.0||5.0||N||
+MaxNetExposureLots=2.5
+||0||1||20||1.0||10.0||0.5||N||
+DailyTargetPercent=200.0
+||0||1||20||50.0||500.0||25.0||N||
+
+; === SETTINGS ===
+MaxSpread=2000
+||0||1||20||100||5000||100||N||
+ShowPanel=true
+||0||1||1||0||1||1||N||
+
+; === NOTES ===
+; - For $20k account, start with 0.10 lots
+; - Grid gap 0.01% = very tight, good for Gold/BTC volatility
+; - Max 12 positions per side = 24 total max exposure
+; - Lot scaling up to 2.5x when opposite side saturates
+; - TP: $30 per position, $150 group target
+; - SL: DISABLED (0) - Grid relies on reversals
+; - Max DD: 20% = $4,000 emergency stop
+; - Net exposure limited to 2.5 lots difference
+; - Daily target: 200% of start balance (very aggressive!)
+; - No instant trades on activation - waits for price to move to next grid level

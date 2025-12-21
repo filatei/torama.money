@@ -41,12 +41,12 @@ input double   IndividualTPDollars = 50.0;            // Individual TP target ($
 input double   GroupTPDollars = 200.0;                // Group TP target ($200 total profit closes all)
 
 input group "=== STOP LOSS ==="
-input double   IndividualSLDollars = 100.0;           // SL risk per trade ($100 max loss, 0 = disabled)
+input double   IndividualSLDollars = 0.0;             // SL risk per trade (0 = disabled)
 
 input group "=== RISK MANAGEMENT ==="
 input double   MaxDrawdownPercent = 25.0;             // Max drawdown % (emergency stop)
 input double   MaxNetExposureLots = 5.0;              // Max net exposure (BUY lots - SELL lots)
-input double   DailyTargetPercent = 100.0;            // Daily profit target (% of start balance)
+input double   DailyTargetPercent = 200.0;            // Daily profit target (% of start balance)
 
 input group "=== SETTINGS ==="
 input int      MaxSpread = 2000;                      // Maximum spread (points)
@@ -99,7 +99,10 @@ bool dailyTargetReached = false;
 int totalTrades = 0;
 bool isPaused = false;
 
-
+// Activation tracking - prevent instant trades on startup
+datetime eaActivationTime = 0;
+double lastProcessedGridLevel = 0;
+bool isFirstTick = true;
 // Magic number
 int MagicNumber = 0;
 
@@ -272,6 +275,25 @@ int OnInit()
    Print("🔍 DEBUG: Press 'D' key for status");
    Print("👁️ PANEL: Press 'H' key to hide/show");
    Print("═══════════════════════════════════════");
+   
+   // Set activation time to prevent instant trades
+   // Only reset on fresh initialization, not on parameter changes
+   static bool isFirstInitialization = true;
+   
+   if(isFirstInitialization)
+   {
+      eaActivationTime = TimeCurrent();
+      isFirstTick = true;
+      lastProcessedGridLevel = referencePrice;  // Start from current reference
+      Print("⏰ EA Activated - Will wait for price to move to next grid level");
+      isFirstInitialization = false;
+   }
+   else
+   {
+      // Parameter change - don't reset grid tracking
+      Print("⚙️  Parameters updated - No instant trades will trigger");
+      // Keep isFirstTick and lastProcessedGridLevel unchanged
+   }
    
    // Create panel
    if(ShowPanel) CreatePanel();
@@ -707,6 +729,26 @@ void CheckGridUnified()
    double distanceFromReference = currentPrice - referencePrice;
    int levelIndex = (int)MathRound(distanceFromReference / currentGapSize);
    double nearestGridLevel = referencePrice + (levelIndex * currentGapSize);
+   
+   // ANTI-INSTANT-TRADE PROTECTION
+   // Only allow trades if price has moved to a NEW grid level since activation
+   if(isFirstTick)
+   {
+      // On first tick, just record the current grid level
+      lastProcessedGridLevel = nearestGridLevel;
+      isFirstTick = false;
+      return;  // Exit without opening any positions
+   }
+   
+   // Check if we're at a different grid level than last processed
+   if(MathAbs(nearestGridLevel - lastProcessedGridLevel) < currentGapSize * 0.5)
+   {
+      // Still at same grid level - don't open positions
+      return;
+   }
+   
+   // We've moved to a new grid level - update tracking and allow trading
+   lastProcessedGridLevel = nearestGridLevel;
    
    // Calculate distance to nearest level
    double distanceToNearestLevel = MathAbs(currentPrice - nearestGridLevel);

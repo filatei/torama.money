@@ -1,0 +1,75 @@
+; TORAMA Aggressive Trader UNIFIED V6.0
+; Optimized for $450,000 ACCOUNT (Aggressive)
+; Symbol: XAUUSD (Gold) / BTCUSD
+; Generated: 2025-12-20
+;
+; STRATEGY: Tight grid with strong lot scaling
+; Expected Monthly Return: 15-30%
+; Expected Max Drawdown: 18-25%
+
+; === GRID SETTINGS ===
+GridGapPercent=0.01
+||0||1||20||0.005000||0.100000||0.005000||N||
+MaxPositionsPerSide=15
+||0||1||20||10||30||1||N||
+BaseLotSize=2.00
+||0||1||20||0.50||10.00||0.50||N||
+
+; === DYNAMIC LOT SCALING ===
+EnableLotScaling=true
+||0||1||1||0||1||1||N||
+ScaleMultiplier_70=1.5
+||0||1||20||1.0||3.0||0.5||N||
+ScaleMultiplier_85=2.5
+||0||1||20||1.5||4.0||0.5||N||
+ScaleMultiplier_95=4.0
+||0||1||20||2.0||6.0||0.5||N||
+MaxLotMultiplier=6.0
+||0||1||20||3.0||10.0||0.5||N||
+WinningSideMaxPositions=3
+||0||1||20||1||5||1||N||
+
+; === ENTRY DELAY ===
+EnableEntryDelay=true
+||0||1||1||0||1||1||N||
+BaseDelaySeconds=180
+||0||1||20||60||600||60||N||
+MaxDelaySeconds=600
+||0||1||20||180||1200||60||N||
+
+; === TAKE PROFIT ===
+IndividualTPDollars=100.0
+||0||1||20||50.0||300.0||25.0||N||
+GroupTPDollars=500.0
+||0||1||20||200.0||2000.0||100.0||N||
+
+; === STOP LOSS ===
+IndividualSLDollars=0.0
+||0||1||20||0.0||500.0||50.0||N||
+
+; === RISK MANAGEMENT ===
+MaxDrawdownPercent=25.0
+||0||1||20||15.0||40.0||5.0||N||
+MaxNetExposureLots=15.0
+||0||1||20||5.0||30.0||2.5||N||
+DailyTargetPercent=200.0
+||0||1||20||50.0||500.0||25.0||N||
+
+; === SETTINGS ===
+MaxSpread=2000
+||0||1||20||100||5000||100||N||
+ShowPanel=true
+||0||1||1||0||1||1||N||
+
+; === NOTES ===
+; - For $450k account, start with 2.00 lots
+; - Grid gap 0.01% = very tight, captures micro-movements
+; - Max 15 positions per side = 30 total max exposure
+; - Lot scaling up to 4.0x when opposite side saturates
+; - TP: $100 per position, $500 group target
+; - SL: DISABLED (0) - Grid relies on reversals
+; - Max DD: 25% = $112,500 emergency stop
+; - Net exposure limited to 15 lots difference
+; - Shorter delays (3-10 min) for faster capitalization
+; - Daily target: 200% of start balance (very aggressive!)
+; - No instant trades on activation - waits for price to move to next grid level
