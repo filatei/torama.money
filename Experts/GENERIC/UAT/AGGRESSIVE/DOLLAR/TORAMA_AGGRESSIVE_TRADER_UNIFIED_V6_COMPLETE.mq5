@@ -911,7 +911,8 @@ bool OpenPositionUnified(ENUM_ORDER_TYPE orderType, double price, double lotSize
    // Set TP based on dollar target
    if(IndividualTPDollars > 0)
    {
-      // Check if opposite side is saturated (80%+) - if so, DOUBLE TP on winning side
+      // Check if opposite side is saturated (80%+) AND we have scaled lot
+      // If YES: MULTIPLY TP by 6x for maximum profit capture!
       double tpTargetDollars = IndividualTPDollars;
       int oppositeCount = 0;
       
@@ -928,11 +929,17 @@ bool OpenPositionUnified(ENUM_ORDER_TYPE orderType, double price, double lotSize
       
       double oppositeSaturation = (double)oppositeCount / MaxPositionsPerSide * 100.0;
       
-      if(oppositeSaturation >= 80.0)
+      // Calculate current lot multiplier to check if we're scaled
+      double lotMultiplier = lotSize / validatedLotSize;
+      
+      // TP MULTIPLIER: 6x when opposite >= 80% AND lot is scaled
+      if(oppositeSaturation >= 80.0 && lotMultiplier > 1.0)
       {
-         tpTargetDollars = IndividualTPDollars * 2.0;  // DOUBLE TP
-         Print("   🎯 DOUBLED TP: Opposite side at ", DoubleToString(oppositeSaturation, 1), "% saturation");
-         Print("   TP Target: $", DoubleToString(tpTargetDollars, 2), " (2x normal)");
+         tpTargetDollars = IndividualTPDollars * 6.0;  // 6X TP!
+         Print("   🎯 6X TP ACTIVATED!");
+         Print("   Opposite saturation: ", DoubleToString(oppositeSaturation, 1), "%");
+         Print("   Lot scaling: ", DoubleToString(lotMultiplier, 1), "x");
+         Print("   TP Target: $", DoubleToString(tpTargetDollars, 2), " (6x normal)");
       }
       
       // CORRECT FORMULA (from percentage-based EA):
@@ -1320,6 +1327,7 @@ void TogglePanelVisibility()
       "SpreadLabel", "Spread",
       "ScalingLabel", "BuyMultiplier", "SellMultiplier",
       "RefLabel", "RefPrice",
+      "NextBuyLabel", "NextBuy", "NextSellLabel", "NextSell",
       "PosLabel", "Positions",
       "AccLabel", "AccCounts",
       "PnLLabel", "PnL",
@@ -1357,7 +1365,7 @@ void CreatePanel()
    ObjectSetInteger(0, panelPrefix + "Background", OBJPROP_XDISTANCE, x);
    ObjectSetInteger(0, panelPrefix + "Background", OBJPROP_YDISTANCE, y);
    ObjectSetInteger(0, panelPrefix + "Background", OBJPROP_XSIZE, width);
-   ObjectSetInteger(0, panelPrefix + "Background", OBJPROP_YSIZE, 380);
+   ObjectSetInteger(0, panelPrefix + "Background", OBJPROP_YSIZE, 405);
    ObjectSetInteger(0, panelPrefix + "Background", OBJPROP_BGCOLOR, C'20,20,25');
    ObjectSetInteger(0, panelPrefix + "Background", OBJPROP_BORDER_TYPE, BORDER_FLAT);
    ObjectSetInteger(0, panelPrefix + "Background", OBJPROP_COLOR, clrGold);
@@ -1404,6 +1412,13 @@ void CreatePanel()
    // === REFERENCE ROW ===
    CreateLabel(panelPrefix + "RefLabel", x + 10, yPos, "Reference:", clrGold, 9, "Arial Bold");
    CreateLabel(panelPrefix + "RefPrice", x + 95, yPos, "$0", clrWhite, 9, "Arial");
+   yPos += lineHeight;
+   
+   // === NEXT LEVELS ROW ===
+   CreateLabel(panelPrefix + "NextBuyLabel", x + 10, yPos, "↑Next:", clrDodgerBlue, 9, "Arial Bold");
+   CreateLabel(panelPrefix + "NextBuy", x + 70, yPos, "$0", clrDodgerBlue, 9, "Arial Bold");
+   CreateLabel(panelPrefix + "NextSellLabel", x + 170, yPos, "↓Next:", clrOrangeRed, 9, "Arial Bold");
+   CreateLabel(panelPrefix + "NextSell", x + 230, yPos, "$0", clrOrangeRed, 9, "Arial Bold");
    yPos += lineHeight + 4;
    
    // === EA POSITIONS ROW ===
@@ -1439,7 +1454,7 @@ void CreatePanel()
    yPos += lineHeight + 15;
    
    // === BRANDING - Bottom Right Corner ===
-   int brandY = y + 380 - 35;  // 35px from bottom
+   int brandY = y + 405 - 35;  // 35px from bottom
    int brandX = x + width - 12;  // 12px from right edge
    
    // Main branding
@@ -1578,6 +1593,18 @@ void UpdatePanel()
    
    // Reference
    ObjectSetString(0, panelPrefix + "RefPrice", OBJPROP_TEXT, "$" + FormatPrice(referencePrice, specs.digits));
+   
+   // Next Buy/Sell Levels - Calculate from current price (using currentPrice already declared at top)
+   double distanceFromReference = currentPrice - referencePrice;
+   int levelIndex = (int)MathRound(distanceFromReference / currentGapSize);
+   double currentGridLevel = referencePrice + (levelIndex * currentGapSize);
+   
+   // Next levels are +/- one grid gap from current
+   double nextBuyLevel = currentGridLevel + currentGapSize;
+   double nextSellLevel = currentGridLevel - currentGapSize;
+   
+   ObjectSetString(0, panelPrefix + "NextBuy", OBJPROP_TEXT, "$" + FormatPrice(nextBuyLevel, specs.digits));
+   ObjectSetString(0, panelPrefix + "NextSell", OBJPROP_TEXT, "$" + FormatPrice(nextSellLevel, specs.digits));
    
    // EA Positions - BUY and SELL
    string posText = "B:" + IntegerToString(ArraySize(BuySide.positions)) + " S:" + IntegerToString(ArraySize(SellSide.positions));
