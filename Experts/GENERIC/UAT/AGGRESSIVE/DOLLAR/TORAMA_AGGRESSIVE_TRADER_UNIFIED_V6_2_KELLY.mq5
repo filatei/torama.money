@@ -807,9 +807,10 @@ void OnTick()
       return;
    }
    
-   // Check daily profit target
+   // Check daily profit target (includes floating P/L from open positions)
    double currentBalance = AccountInfoDouble(ACCOUNT_BALANCE);
-   dailyProfit = currentBalance - dailyStartBalance;
+   double floatingPL = CalculateTotalProfit();  // Get unrealized P/L
+   dailyProfit = (currentBalance - dailyStartBalance) + floatingPL;
    
    if(dailyProfit >= dailyTarget)
    {
@@ -1919,9 +1920,10 @@ void UpdatePanel()
    ObjectSetString(0, panelPrefix + "DD", OBJPROP_TEXT, FormatPrice(dd, 1) + "%");
    ObjectSetInteger(0, panelPrefix + "DD", OBJPROP_COLOR, ddColor);
    
-   // Daily Profit
+   // Daily Profit (includes floating P/L from open positions)
    double currentBalance = AccountInfoDouble(ACCOUNT_BALANCE);
-   dailyProfit = currentBalance - dailyStartBalance;
+   double floatingPL = CalculateTotalProfit();  // Get unrealized P/L
+   dailyProfit = (currentBalance - dailyStartBalance) + floatingPL;
    
    color dailyColor = (dailyProfit >= dailyTarget) ? clrGold : 
                       (dailyProfit >= 0) ? clrLimeGreen : clrRed;
