@@ -1,0 +1,39 @@
+; TORAMA Aggressive Trader UNIFIED V6.2 KELLY
+; Optimized for $450,000 Account
+; Backtest Return: +2.00% (69 days)
+; Max DD: 0.40% | Win Rate: 81.8%
+; Grid Gap: 0.01% (optimal for $450K)
+
+; === GRID SETTINGS ===
+GridGapPercent=0.01
+MaxPositionsPerSide=15
+BaseLotSize=2.00
+
+; === KELLY CRITERION LOT SIZING ===
+EnableKellyLotSizing=true
+KellyFraction=0.20
+MinTradesForKelly=20
+
+; === POSITION MANAGEMENT ===
+MaxLotMultiplier=4.00
+WinningSideMaxPositions=3
+MaxNetExposureLots=20.00
+
+; === PROFIT TARGETS ===
+IndividualTPDollars=500.00
+GroupTPDollars=5000.00
+IndividualSLDollars=0.00
+
+; === ENTRY DELAYS ===
+EnableEntryDelay=true
+BaseDelaySeconds=60
+MaxDelaySeconds=180
+
+; === RISK MANAGEMENT ===
+MaxDrawdownPercent=15.00
+MaxConsecutiveLosses=5
+DailyTargetPercent=2.00
+
+; === TRADING CONTROLS ===
+MaxSpread=2000
+ShowPanel=true
