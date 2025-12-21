@@ -99,10 +99,6 @@ bool dailyTargetReached = false;
 int totalTrades = 0;
 bool isPaused = false;
 
-// Activation tracking - prevent instant trades on startup
-datetime eaActivationTime = 0;
-double lastProcessedGridLevel = 0;
-bool isFirstTick = true;
 // Magic number
 int MagicNumber = 0;
 
@@ -276,24 +272,8 @@ int OnInit()
    Print("👁️ PANEL: Press 'H' key to hide/show");
    Print("═══════════════════════════════════════");
    
-   // Set activation time to prevent instant trades
-   // Only reset on fresh initialization, not on parameter changes
-   static bool isFirstInitialization = true;
    
-   if(isFirstInitialization)
-   {
-      eaActivationTime = TimeCurrent();
-      isFirstTick = true;
-      lastProcessedGridLevel = referencePrice;  // Start from current reference
-      Print("⏰ EA Activated - Will wait for price to move to next grid level");
-      isFirstInitialization = false;
-   }
-   else
-   {
-      // Parameter change - don't reset grid tracking
-      Print("⚙️  Parameters updated - No instant trades will trigger");
-      // Keep isFirstTick and lastProcessedGridLevel unchanged
-   }
+   Print("✅ EA Initialized - Ready to trade at current grid level");
    
    // Create panel
    if(ShowPanel) CreatePanel();
@@ -730,26 +710,6 @@ void CheckGridUnified()
    int levelIndex = (int)MathRound(distanceFromReference / currentGapSize);
    double nearestGridLevel = referencePrice + (levelIndex * currentGapSize);
    
-   // ANTI-INSTANT-TRADE PROTECTION
-   // Only allow trades if price has moved to a NEW grid level since activation
-   if(isFirstTick)
-   {
-      // On first tick, just record the current grid level
-      lastProcessedGridLevel = nearestGridLevel;
-      isFirstTick = false;
-      return;  // Exit without opening any positions
-   }
-   
-   // Check if we're at a different grid level than last processed
-   if(MathAbs(nearestGridLevel - lastProcessedGridLevel) < currentGapSize * 0.5)
-   {
-      // Still at same grid level - don't open positions
-      return;
-   }
-   
-   // We've moved to a new grid level - update tracking and allow trading
-   lastProcessedGridLevel = nearestGridLevel;
-   
    // Calculate distance to nearest level
    double distanceToNearestLevel = MathAbs(currentPrice - nearestGridLevel);
    
@@ -951,11 +911,35 @@ bool OpenPositionUnified(ENUM_ORDER_TYPE orderType, double price, double lotSize
    // Set TP based on dollar target
    if(IndividualTPDollars > 0)
    {
+      // Check if opposite side is saturated (80%+) - if so, DOUBLE TP on winning side
+      double tpTargetDollars = IndividualTPDollars;
+      int oppositeCount = 0;
+      
+      if(orderType == ORDER_TYPE_BUY)
+      {
+         // Opening BUY - check SELL saturation
+         oppositeCount = ArraySize(SellSide.positions);
+      }
+      else
+      {
+         // Opening SELL - check BUY saturation
+         oppositeCount = ArraySize(BuySide.positions);
+      }
+      
+      double oppositeSaturation = (double)oppositeCount / MaxPositionsPerSide * 100.0;
+      
+      if(oppositeSaturation >= 80.0)
+      {
+         tpTargetDollars = IndividualTPDollars * 2.0;  // DOUBLE TP
+         Print("   🎯 DOUBLED TP: Opposite side at ", DoubleToString(oppositeSaturation, 1), "% saturation");
+         Print("   TP Target: $", DoubleToString(tpTargetDollars, 2), " (2x normal)");
+      }
+      
       // CORRECT FORMULA (from percentage-based EA):
       // Distance = Target$ / (PointValue × LotSize)
-      double tpDistance = IndividualTPDollars / positionValue;
+      double tpDistance = tpTargetDollars / positionValue;
       
-      Print("   TP Target: $", DoubleToString(IndividualTPDollars, 2));
+      Print("   TP Target: $", DoubleToString(tpTargetDollars, 2));
       Print("   TP Distance: $", DoubleToString(tpDistance, 4), " (", DoubleToString((tpDistance/price)*100, 3), "%)");
       
       // Ensure meets minimum stop distance
@@ -970,7 +954,7 @@ bool OpenPositionUnified(ENUM_ORDER_TYPE orderType, double price, double lotSize
       if(tpDistance > maxTPDistance)
       {
          Print("   ⚠️ WARNING: TP distance exceeds 10% of price!");
-         Print("   This suggests IndividualTPDollars ($", DoubleToString(IndividualTPDollars, 2), 
+         Print("   This suggests IndividualTPDollars ($", DoubleToString(tpTargetDollars, 2), 
                ") is too high for lot size ", DoubleToString(lotSize, 3));
          tpDistance = maxTPDistance;
       }
@@ -1365,15 +1349,15 @@ void CreatePanel()
 {
    int x = 20;
    int y = 30;
-   int width = 300;
-   int lineHeight = 20;  // Increased from 18 for larger fonts
+   int width = 320;  // Wider for better spacing
+   int lineHeight = 22;  // More spacing between lines
    
-   // Background - adjusted height for larger fonts
+   // Background with increased height for better layout
    ObjectCreate(0, panelPrefix + "Background", OBJ_RECTANGLE_LABEL, 0, 0, 0);
    ObjectSetInteger(0, panelPrefix + "Background", OBJPROP_XDISTANCE, x);
    ObjectSetInteger(0, panelPrefix + "Background", OBJPROP_YDISTANCE, y);
    ObjectSetInteger(0, panelPrefix + "Background", OBJPROP_XSIZE, width);
-   ObjectSetInteger(0, panelPrefix + "Background", OBJPROP_YSIZE, 370);  // Increased for DD trigger
+   ObjectSetInteger(0, panelPrefix + "Background", OBJPROP_YSIZE, 380);
    ObjectSetInteger(0, panelPrefix + "Background", OBJPROP_BGCOLOR, C'20,20,25');
    ObjectSetInteger(0, panelPrefix + "Background", OBJPROP_BORDER_TYPE, BORDER_FLAT);
    ObjectSetInteger(0, panelPrefix + "Background", OBJPROP_COLOR, clrGold);
@@ -1381,101 +1365,105 @@ void CreatePanel()
    ObjectSetInteger(0, panelPrefix + "Background", OBJPROP_SELECTABLE, false);
    ObjectSetInteger(0, panelPrefix + "Background", OBJPROP_HIDDEN, true);
    
-   int yPos = y + 10;
+   int yPos = y + 12;
    
-   // Title + Status on same line (larger fonts)
-   CreateLabel(panelPrefix + "Title", x + 10, yPos, "AGGRESSIVE TRADER", clrGold, 10, "Arial Black");
-   CreateLabel(panelPrefix + "Status", x + width - 75, yPos, "✅ ACTIVE", clrLimeGreen, 9, "Arial Bold");
-   yPos += 24;
+   // === TITLE ROW ===
+   CreateLabel(panelPrefix + "Title", x + 10, yPos, "AGGRESSIVE TRADER", clrGold, 11, "Arial Black");
+   CreateLabel(panelPrefix + "Status", x + width - 80, yPos, "✅ ACTIVE", clrLimeGreen, 9, "Arial Bold");
+   yPos += 26;
    
-   // Buttons - Single row
-   CreateButton(panelPrefix + "CloseBtn", x + 10, yPos, 60, 24, "CLOSE", clrRed, clrWhite);
-   CreateButton(panelPrefix + "PauseBtn", x + 75, yPos, 60, 24, "PAUSE", clrOrange, clrWhite);
-   CreateButton(panelPrefix + "TPBtn", x + 140, yPos, 50, 24, "TP", clrGreen, clrWhite);
-   // V6: No mode switch button - unified system
-   yPos += 30;
+   // === BUTTONS ROW ===
+   CreateButton(panelPrefix + "CloseBtn", x + 10, yPos, 65, 26, "CLOSE", clrRed, clrWhite);
+   CreateButton(panelPrefix + "PauseBtn", x + 80, yPos, 65, 26, "PAUSE", clrOrange, clrWhite);
+   CreateButton(panelPrefix + "TPBtn", x + 150, yPos, 55, 26, "TP", clrGreen, clrWhite);
+   yPos += 34;
    
-   // Mode + Price on same line
+   // === MODE ROW ===
    CreateLabel(panelPrefix + "DirectionLabel", x + 10, yPos, "Mode:", clrGold, 9, "Arial Bold");
-   CreateLabel(panelPrefix + "Direction", x + 60, yPos, "UNIFIED", clrLimeGreen, 10, "Arial Black");
-   CreateLabel(panelPrefix + "PriceLabel", x + 140, yPos, "Price:", clrGold, 9, "Arial Bold");
-   CreateLabel(panelPrefix + "Price", x + 190, yPos, "$0", clrWhite, 9, "Arial Bold");
+   CreateLabel(panelPrefix + "Direction", x + 65, yPos, "UNIFIED", clrLimeGreen, 10, "Arial Black");
    yPos += lineHeight;
    
-   // Grid + Spread on same line (larger fonts)
+   // === PRICE ROW ===
+   CreateLabel(panelPrefix + "PriceLabel", x + 10, yPos, "Price:", clrGold, 9, "Arial Bold");
+   CreateLabel(panelPrefix + "Price", x + 65, yPos, "$0", clrWhite, 10, "Arial Bold");
+   yPos += lineHeight;
+   
+   // === GRID ROW ===
    CreateLabel(panelPrefix + "GridLabel", x + 10, yPos, "Grid:", clrGold, 9, "Arial Bold");
-   CreateLabel(panelPrefix + "GridSpacing", x + 60, yPos, "0%", clrWhite, 9, "Arial Bold");
-   CreateLabel(panelPrefix + "SpreadLabel", x + 140, yPos, "Spread:", clrGold, 9, "Arial Bold");
-   CreateLabel(panelPrefix + "Spread", x + 200, yPos, "0", clrWhite, 9, "Arial Bold");
+   CreateLabel(panelPrefix + "GridSpacing", x + 65, yPos, "0%", clrWhite, 9, "Arial");
+   CreateLabel(panelPrefix + "SpreadLabel", x + 170, yPos, "Spread:", clrGold, 9, "Arial Bold");
+   CreateLabel(panelPrefix + "Spread", x + 235, yPos, "0/2000", clrWhite, 9, "Arial");
    yPos += lineHeight;
    
-   // V6: Lot scaling indicators
+   // === SCALING ROW ===
    CreateLabel(panelPrefix + "ScalingLabel", x + 10, yPos, "Scaling:", clrGold, 9, "Arial Bold");
-   CreateLabel(panelPrefix + "BuyMultiplier", x + 80, yPos, "B:1.0x", clrDodgerBlue, 9, "Arial Bold");
-   CreateLabel(panelPrefix + "SellMultiplier", x + 145, yPos, "S:1.0x", clrOrangeRed, 9, "Arial Bold");
+   CreateLabel(panelPrefix + "BuyMultiplier", x + 85, yPos, "B:1.0x", clrDodgerBlue, 9, "Arial Bold");
+   CreateLabel(panelPrefix + "SellMultiplier", x + 155, yPos, "S:1.0x", clrOrangeRed, 9, "Arial Bold");
    yPos += lineHeight;
    
-   // Reference - larger font
+   // === REFERENCE ROW ===
    CreateLabel(panelPrefix + "RefLabel", x + 10, yPos, "Reference:", clrGold, 9, "Arial Bold");
-   CreateLabel(panelPrefix + "RefPrice", x + 90, yPos, "$0", clrWhite, 9, "Arial Bold");
-   yPos += lineHeight + 3;
+   CreateLabel(panelPrefix + "RefPrice", x + 95, yPos, "$0", clrWhite, 9, "Arial");
+   yPos += lineHeight + 4;
    
-   // EA Positions + Account-wide LOTS on same line - larger fonts
+   // === EA POSITIONS ROW ===
    CreateLabel(panelPrefix + "PosLabel", x + 10, yPos, "⚡EA:", clrGold, 9, "Arial Black");
-   CreateLabel(panelPrefix + "Positions", x + 55, yPos, "0/0", clrWhite, 9, "Arial Black");
-   CreateLabel(panelPrefix + "AccLabel", x + 110, yPos, "Acc:", clrGold, 9, "Arial Bold");
-   CreateLabel(panelPrefix + "AccCounts", x + 150, yPos, "B:0 S:0 (0)", clrWhite, 9, "Arial Bold");
-   yPos += lineHeight + 3;
+   CreateLabel(panelPrefix + "Positions", x + 60, yPos, "B:0 S:0", clrWhite, 10, "Arial Black");
+   yPos += lineHeight;
    
-   // P/L + Equity on same line - larger fonts
+   // === ACCOUNT POSITIONS ROW ===
+   CreateLabel(panelPrefix + "AccLabel", x + 10, yPos, "Acc:", clrGold, 9, "Arial Bold");
+   CreateLabel(panelPrefix + "AccCounts", x + 60, yPos, "B:0.00 S:0.00 (0)", clrWhite, 9, "Arial");
+   yPos += lineHeight + 4;
+   
+   // === P/L ROW ===
    CreateLabel(panelPrefix + "PnLLabel", x + 10, yPos, "P/L:", clrGold, 9, "Arial Bold");
-   CreateLabel(panelPrefix + "PnL", x + 55, yPos, "$0", clrWhite, 10, "Arial Black");
-   CreateLabel(panelPrefix + "EquityLabel", x + 140, yPos, "Equity:", clrGold, 9, "Arial Bold");
-   CreateLabel(panelPrefix + "Equity", x + 195, yPos, "$0", clrWhite, 9, "Arial Bold");
+   CreateLabel(panelPrefix + "PnL", x + 60, yPos, "$0", clrWhite, 11, "Arial Black");
    yPos += lineHeight;
    
-   // Drawdown + Daily on same line - larger fonts
+   // === EQUITY ROW ===
+   CreateLabel(panelPrefix + "EquityLabel", x + 10, yPos, "Equity:", clrGold, 9, "Arial Bold");
+   CreateLabel(panelPrefix + "Equity", x + 70, yPos, "$0", clrWhite, 9, "Arial");
+   yPos += lineHeight;
+   
+   // === DRAWDOWN ROW ===
    CreateLabel(panelPrefix + "DDLabel", x + 10, yPos, "DD:", clrGold, 9, "Arial Bold");
-   CreateLabel(panelPrefix + "DD", x + 55, yPos, "0%", clrWhite, 9, "Arial Bold");
-   CreateLabel(panelPrefix + "DailyLabel", x + 140, yPos, "Daily:", clrGold, 9, "Arial Bold");
-   CreateLabel(panelPrefix + "DailyProfit", x + 195, yPos, "$0", clrWhite, 9, "Arial Bold");
+   CreateLabel(panelPrefix + "DD", x + 60, yPos, "0%", clrWhite, 9, "Arial");
+   CreateLabel(panelPrefix + "DailyLabel", x + 170, yPos, "Daily:", clrGold, 9, "Arial Bold");
+   CreateLabel(panelPrefix + "DailyProfit", x + 220, yPos, "$0", clrWhite, 9, "Arial");
    yPos += lineHeight;
    
-   // DD Trigger Price - NEW in v5.4
+   // === DD TRIGGER ROW ===
    CreateLabel(panelPrefix + "DDTriggerLabel", x + 10, yPos, "🛑 DD@:", clrOrangeRed, 9, "Arial Bold");
-   CreateLabel(panelPrefix + "DDTrigger", x + 65, yPos, "$0", clrOrangeRed, 9, "Arial Bold");
-   yPos += lineHeight;
+   CreateLabel(panelPrefix + "DDTrigger", x + 70, yPos, "$0", clrOrangeRed, 9, "Arial Bold");
+   yPos += lineHeight + 15;
    
-   // Mode switches - larger font
-   CreateLabel(panelPrefix + "SwitchCountLabel", x + 10, yPos, "Switches:", clrGold, 9, "Arial Bold");
-   CreateLabel(panelPrefix + "SwitchCount", x + 90, yPos, "0", clrCyan, 9, "Arial Bold");
-   yPos += lineHeight + 10;
+   // === BRANDING - Bottom Right Corner ===
+   int brandY = y + 380 - 35;  // 35px from bottom
+   int brandX = x + width - 12;  // 12px from right edge
    
-   // COPYRIGHT + TORAMA CAPITAL BRANDING - Right-aligned at bottom right corner
-   int brandX = x + width - 10;  // 10px margin from right edge
-   
-   // Copyright symbol + TORAMA CAPITAL (larger, bolder)
+   // Main branding
    ObjectCreate(0, panelPrefix + "Brand", OBJ_LABEL, 0, 0, 0);
    ObjectSetInteger(0, panelPrefix + "Brand", OBJPROP_XDISTANCE, brandX);
-   ObjectSetInteger(0, panelPrefix + "Brand", OBJPROP_YDISTANCE, yPos);
+   ObjectSetInteger(0, panelPrefix + "Brand", OBJPROP_YDISTANCE, brandY);
    ObjectSetInteger(0, panelPrefix + "Brand", OBJPROP_COLOR, clrGold);
-   ObjectSetInteger(0, panelPrefix + "Brand", OBJPROP_FONTSIZE, 11);  // Large and bold
+   ObjectSetInteger(0, panelPrefix + "Brand", OBJPROP_FONTSIZE, 10);
    ObjectSetString(0, panelPrefix + "Brand", OBJPROP_FONT, "Arial Black");
    ObjectSetString(0, panelPrefix + "Brand", OBJPROP_TEXT, "© TORAMA CAPITAL");
-   ObjectSetInteger(0, panelPrefix + "Brand", OBJPROP_ANCHOR, ANCHOR_RIGHT_UPPER);  // Right-aligned
+   ObjectSetInteger(0, panelPrefix + "Brand", OBJPROP_ANCHOR, ANCHOR_RIGHT_UPPER);
    ObjectSetInteger(0, panelPrefix + "Brand", OBJPROP_SELECTABLE, false);
    ObjectSetInteger(0, panelPrefix + "Brand", OBJPROP_BACK, false);
    ObjectSetInteger(0, panelPrefix + "Brand", OBJPROP_HIDDEN, true);
    
-   // Email below branding (smaller font)
+   // Email below branding
    ObjectCreate(0, panelPrefix + "Email", OBJ_LABEL, 0, 0, 0);
    ObjectSetInteger(0, panelPrefix + "Email", OBJPROP_XDISTANCE, brandX);
-   ObjectSetInteger(0, panelPrefix + "Email", OBJPROP_YDISTANCE, yPos + 15);  // 15px below brand
-   ObjectSetInteger(0, panelPrefix + "Email", OBJPROP_COLOR, clrGold);
-   ObjectSetInteger(0, panelPrefix + "Email", OBJPROP_FONTSIZE, 8);  // Smaller font
+   ObjectSetInteger(0, panelPrefix + "Email", OBJPROP_YDISTANCE, brandY + 16);
+   ObjectSetInteger(0, panelPrefix + "Email", OBJPROP_COLOR, C'150,150,100');  // Dimmed gold
+   ObjectSetInteger(0, panelPrefix + "Email", OBJPROP_FONTSIZE, 7);
    ObjectSetString(0, panelPrefix + "Email", OBJPROP_FONT, "Arial");
    ObjectSetString(0, panelPrefix + "Email", OBJPROP_TEXT, "ea@torama.money");
-   ObjectSetInteger(0, panelPrefix + "Email", OBJPROP_ANCHOR, ANCHOR_RIGHT_UPPER);  // Right-aligned
+   ObjectSetInteger(0, panelPrefix + "Email", OBJPROP_ANCHOR, ANCHOR_RIGHT_UPPER);
    ObjectSetInteger(0, panelPrefix + "Email", OBJPROP_SELECTABLE, false);
    ObjectSetInteger(0, panelPrefix + "Email", OBJPROP_BACK, false);
    ObjectSetInteger(0, panelPrefix + "Email", OBJPROP_HIDDEN, true);
@@ -1677,7 +1665,8 @@ void UpdatePanel()
    double plNeededForDDTrigger = ddTriggerEquity - currentEquity;
    
    // Calculate price where DD would trigger
-   double ddTriggerPrice = (ask + bid) / 2.0;  // Default to current
+   double ddTriggerPrice = 0;
+   bool hasDDCalc = false;
    
    if((ArraySize(BuySide.positions) + ArraySize(SellSide.positions)) > 0 && MathAbs(currentFloatingPL) > 0.01)
    {
@@ -1707,7 +1696,7 @@ void UpdatePanel()
       
       if(totalVolume > 0)
       {
-         // For Gold: tickValue / tickSize = point value
+         // For Gold/BTC: tickValue / tickSize = point value
          double pointValue = specs.tickValue / specs.tickSize;
          double plPerPointMove = pointValue * totalVolume;
          
@@ -1726,12 +1715,22 @@ void UpdatePanel()
             {
                ddTriggerPrice = (ask + bid) / 2.0 + MathAbs(pointsMoveToDDTrigger);  // Net short - DD on rise
             }
+            hasDDCalc = true;
          }
       }
    }
    
    // Display with color coding
-   string ddTriggerText = "$" + FormatPrice(ddTriggerPrice, specs.digits);
+   string ddTriggerText;
+   if(hasDDCalc)
+   {
+      ddTriggerText = "$" + FormatPrice(ddTriggerPrice, specs.digits);
+   }
+   else
+   {
+      // No positions - show equity trigger level instead
+      ddTriggerText = "EQ $" + FormatPrice(ddTriggerEquity, 2);
+   }
    color ddTriggerColor = clrOrangeRed;
    
    double currentDD = (peakEquity > 0) ? ((currentEquity - peakEquity) / peakEquity * 100) : 0;
