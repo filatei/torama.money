@@ -700,12 +700,21 @@ bool ExceedsNetExposure(string side, double proposedLot)
    double buyLots = BuySide.totalLots;
    double sellLots = SellSide.totalLots;
    
+   // Calculate current net exposure
+   double currentNet = MathAbs(buyLots - sellLots);
+   
+   // Calculate future net exposure after proposed trade
    double futureNet;
    if (side == "BUY")
       futureNet = MathAbs((buyLots + proposedLot) - sellLots);
    else
       futureNet = MathAbs(buyLots - (sellLots + proposedLot));
    
+   // If opening this position REDUCES net exposure, always allow
+   if(futureNet < currentNet)
+      return false;  // Don't block - this improves balance!
+   
+   // Only block if it would INCREASE exposure beyond limit
    return (futureNet > MaxNetExposureLots);
 }
 
