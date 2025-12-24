@@ -47,8 +47,8 @@ bool levelTriggered[];
 //--- UI Variables
 int panelX = 20;
 int panelY = 30;
-int panelWidth = 280;
-int panelHeight = 320;
+int panelWidth = 300;
+int panelHeight = 340;
 
 //+------------------------------------------------------------------+
 //| Expert initialization function                                   |
@@ -364,45 +364,48 @@ void CreateUIPanel()
    
    // Title
    CreateLabel(prefix + "Title", "TORAMA MOMENTUM GRID", 
-               panelX + 10, panelY + 10, clrGold, 10, true);
+               panelX + 10, panelY + 10, clrGold, 11, true);
    
    // Stats labels
-   int yPos = panelY + 40;
-   int lineHeight = 22;
+   int yPos = panelY + 45;
+   int lineHeight = 25;
    
-   CreateLabel(prefix + "Status", "Status: Waiting", panelX + 10, yPos, clrWhite, 8, false);
+   CreateLabel(prefix + "Status", "Status: Waiting", panelX + 10, yPos, clrWhite, 9, false);
    yPos += lineHeight;
    
-   CreateLabel(prefix + "Spread", "Spread: 0", panelX + 10, yPos, clrWhite, 8, false);
+   CreateLabel(prefix + "Spread", "Spread: 0", panelX + 10, yPos, clrWhite, 9, false);
    yPos += lineHeight;
    
-   CreateLabel(prefix + "Gap", "Gap: 0.00%", panelX + 10, yPos, clrWhite, 8, false);
+   CreateLabel(prefix + "Gap", "Gap: 0.00% ($0.00)", panelX + 10, yPos, clrWhite, 9, false);
    yPos += lineHeight;
    
-   CreateLabel(prefix + "GapDollar", "Gap $: 0.00", panelX + 10, yPos, clrWhite, 8, false);
+   CreateLabel(prefix + "Price", "Price: 0.00", panelX + 10, yPos, clrWhite, 9, true);
+   yPos += lineHeight;
+   
+   CreateLabel(prefix + "NextLevel", "Next: Waiting...", panelX + 10, yPos, clrYellow, 9, false);
    yPos += lineHeight;
    
    CreateLabel(prefix + "GridFilled", "Grid Filled: 0/" + IntegerToString(InpGridLevels), 
-               panelX + 10, yPos, clrWhite, 8, false);
+               panelX + 10, yPos, clrWhite, 9, false);
    yPos += lineHeight;
    
-   CreateLabel(prefix + "Balance", "Balance: $0.00", panelX + 10, yPos, clrLime, 8, false);
+   CreateLabel(prefix + "Balance", "Balance: $0.00", panelX + 10, yPos, clrLime, 9, false);
    yPos += lineHeight;
    
-   CreateLabel(prefix + "Equity", "Equity: $0.00", panelX + 10, yPos, clrAqua, 8, false);
+   CreateLabel(prefix + "Equity", "Equity: $0.00", panelX + 10, yPos, clrAqua, 9, true);
    yPos += lineHeight;
    
-   CreateLabel(prefix + "PL", "P/L: $0.00", panelX + 10, yPos, clrWhite, 8, false);
+   CreateLabel(prefix + "PL", "P/L: $0.00", panelX + 10, yPos, clrWhite, 9, false);
    yPos += lineHeight;
    
-   CreateLabel(prefix + "Drawdown", "Drawdown: 0.00%", panelX + 10, yPos, clrWhite, 8, false);
+   CreateLabel(prefix + "Drawdown", "Drawdown: 0.00%", panelX + 10, yPos, clrWhite, 9, false);
    yPos += lineHeight;
    
-   // Branding
+   // Branding with right margin
    CreateLabel(prefix + "Brand", "TORAMA CAPITAL", 
-               panelX + panelWidth - 125, panelY + panelHeight - 35, clrGold, 9, true);
+               panelX + panelWidth - 140, panelY + panelHeight - 35, clrGold, 10, true);
    CreateLabel(prefix + "Email", "ea@torama.money", 
-               panelX + panelWidth - 110, panelY + panelHeight - 18, clrGold, 7, false);
+               panelX + panelWidth - 125, panelY + panelHeight - 18, clrGold, 8, false);
 }
 
 //+------------------------------------------------------------------+
@@ -445,15 +448,53 @@ void UpdateUIPanel()
    ObjectSetString(0, prefix + "Spread", OBJPROP_TEXT, "Spread: " + IntegerToString(spread));
    ObjectSetInteger(0, prefix + "Spread", OBJPROP_COLOR, spreadColor);
    
-   // Gap
+   // Gap - combined percent and dollar on same line
    double gapPercent = InpGapPercent;
-   ObjectSetString(0, prefix + "Gap", OBJPROP_TEXT, 
-                   "Gap: " + DoubleToString(gapPercent, 2) + "%");
-   
-   // Gap in dollars
    double gapDollar = GetGapInDollars();
-   ObjectSetString(0, prefix + "GapDollar", OBJPROP_TEXT, 
-                   "Gap $: " + DoubleToString(gapDollar, 2));
+   ObjectSetString(0, prefix + "Gap", OBJPROP_TEXT, 
+                   "Gap: " + DoubleToString(gapPercent, 2) + "% ($" + DoubleToString(gapDollar, 2) + ")");
+   
+   // Current Price (BOLD)
+   double currentPrice = SymbolInfoDouble(_Symbol, SYMBOL_BID);
+   int digits = (int)SymbolInfoInteger(_Symbol, SYMBOL_DIGITS);
+   ObjectSetString(0, prefix + "Price", OBJPROP_TEXT, 
+                   "Price: " + DoubleToString(currentPrice, digits));
+   
+   // Next Level
+   string nextLevelText = "Next: Waiting...";
+   color nextLevelColor = clrYellow;
+   
+   if(!gridActivated)
+   {
+      double firstBuyLevel = referencePrice + gapDollar;
+      double firstSellLevel = referencePrice - gapDollar;
+      nextLevelText = "Next: BUY@" + DoubleToString(firstBuyLevel, digits) + 
+                      " | SELL@" + DoubleToString(firstSellLevel, digits);
+      nextLevelColor = clrYellow;
+   }
+   else if(gridLevelsFilled < InpGridLevels)
+   {
+      if(gridDirection == 1) // Buy up
+      {
+         double nextLevel = referencePrice + (gapDollar * (gridLevelsFilled + 1));
+         nextLevelText = "Next: BUY @ " + DoubleToString(nextLevel, digits);
+         nextLevelColor = clrLime;
+      }
+      else // Sell down
+      {
+         double nextLevel = referencePrice - (gapDollar * (gridLevelsFilled + 1));
+         nextLevelText = "Next: SELL @ " + DoubleToString(nextLevel, digits);
+         nextLevelColor = clrOrange;
+      }
+   }
+   else
+   {
+      nextLevelText = "Next: Grid Complete!";
+      nextLevelColor = clrGold;
+   }
+   
+   ObjectSetString(0, prefix + "NextLevel", OBJPROP_TEXT, nextLevelText);
+   ObjectSetInteger(0, prefix + "NextLevel", OBJPROP_COLOR, nextLevelColor);
    
    // Grid filled
    ObjectSetString(0, prefix + "GridFilled", OBJPROP_TEXT, 
@@ -464,7 +505,7 @@ void UpdateUIPanel()
    ObjectSetString(0, prefix + "Balance", OBJPROP_TEXT, 
                    "Balance: $" + DoubleToString(balance, 2));
    
-   // Equity
+   // Equity (BOLD)
    double equity = AccountInfoDouble(ACCOUNT_EQUITY);
    ObjectSetString(0, prefix + "Equity", OBJPROP_TEXT, 
                    "Equity: $" + DoubleToString(equity, 2));
@@ -499,7 +540,8 @@ void DeleteUIPanel()
    ObjectDelete(0, prefix + "Status");
    ObjectDelete(0, prefix + "Spread");
    ObjectDelete(0, prefix + "Gap");
-   ObjectDelete(0, prefix + "GapDollar");
+   ObjectDelete(0, prefix + "Price");
+   ObjectDelete(0, prefix + "NextLevel");
    ObjectDelete(0, prefix + "GridFilled");
    ObjectDelete(0, prefix + "Balance");
    ObjectDelete(0, prefix + "Equity");
