@@ -25,11 +25,11 @@ input group "=== Broker Settings ==="
 input int      InpSpreadPoints = 2000;          // Spread Filter (points)
 
 input group "=== EA Control ==="
-input int      InpMagicNumber = 777888;         // Magic Number
 input string   InpTradeComment = "TORAMA_MGrid"; // Trade Comment
 
 //--- Global Variables
 CTrade trade;
+long magicNumber = 0;
 datetime lastBarTime = 0;
 bool isInitialized = false;
 bool isPaused = false;
@@ -55,7 +55,9 @@ int panelHeight = 320;
 //+------------------------------------------------------------------+
 int OnInit()
 {
-   trade.SetExpertMagicNumber(InpMagicNumber);
+   // Use unique chart ID as magic number
+   magicNumber = ChartID();
+   trade.SetExpertMagicNumber(magicNumber);
    trade.SetDeviationInPoints(50);
    trade.SetTypeFilling(ORDER_FILLING_FOK);
    trade.SetAsyncMode(false);
@@ -327,7 +329,7 @@ void CloseAllTrades()
       if(ticket > 0)
       {
          if(PositionGetString(POSITION_SYMBOL) == _Symbol && 
-            PositionGetInteger(POSITION_MAGIC) == InpMagicNumber)
+            PositionGetInteger(POSITION_MAGIC) == magicNumber)
          {
             trade.PositionClose(ticket);
          }
