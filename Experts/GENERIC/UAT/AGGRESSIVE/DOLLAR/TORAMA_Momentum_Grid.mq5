@@ -90,7 +90,7 @@ string netDirection = "";
 int panelX = 20;
 int panelY = 30;
 int panelWidth = 340;
-int panelHeight = 360;
+int panelHeight = 390;
 
 //+------------------------------------------------------------------+
 //| Expert initialization function                                   |
@@ -406,8 +406,20 @@ void CalculateGridLevels()
    Print("GRID LEVELS CALCULATED & LOCKED");
    Print("Reference Price: ", referencePrice);
    Print("Gap: ", initialGapPercent, "% ($", DoubleToString(initialGapDollar, 2), ")");
-   Print("Buy Levels: ", referencePrice + initialGapDollar, " to ", buyGridLevels[InpGridLevels-1]);
-   Print("Sell Levels: ", sellGridLevels[InpGridLevels-1], " to ", referencePrice - initialGapDollar);
+   Print("");
+   Print("BUY LEVELS (Above Reference):");
+   Print("  Level 1: ", buyGridLevels[0], " (+", DoubleToString(initialGapDollar, 2), ")");
+   Print("  Level 2: ", buyGridLevels[1], " (+", DoubleToString(initialGapDollar * 2, 2), ")");
+   Print("  ...");
+   Print("  Level ", InpGridLevels, ": ", buyGridLevels[InpGridLevels-1]);
+   Print("");
+   Print("SELL LEVELS (Below Reference):");
+   Print("  Level 1: ", sellGridLevels[0], " (-", DoubleToString(initialGapDollar, 2), ")");
+   Print("  Level 2: ", sellGridLevels[1], " (-", DoubleToString(initialGapDollar * 2, 2), ")");
+   Print("  ...");
+   Print("  Level ", InpGridLevels, ": ", sellGridLevels[InpGridLevels-1]);
+   Print("");
+   Print("BIDIRECTIONAL: BUY above ref, SELL below ref");
    Print("Grid is now FIXED - immune to input changes");
    Print("========================================");
 }
@@ -1160,7 +1172,12 @@ void CreateUIPanel()
                panelX + 10, yPos, clrYellow, 11, true);
    yPos += lineHeight;
    
-   // Line 4: Next Level
+   // Line 4: Reference Price (shows grid anchor)
+   CreateLabel(prefix + "RefPrice", "Ref: N/A | Grid: Not Set", 
+               panelX + 10, yPos, clrOrange, 10, false);
+   yPos += lineHeight;
+   
+   // Line 5: Next Level
    CreateLabel(prefix + "NextLevel", "Next: Waiting...", 
                panelX + 10, yPos, clrYellow, 10, false);
    yPos += lineHeight;
@@ -1285,7 +1302,49 @@ void UpdateUIPanel()
    ObjectSetString(0, prefix + "Price", OBJPROP_TEXT, 
                    "Price: " + FormatNumber(currentPrice, digits));
    
-   // Line 4: Next Level
+   // Line 4: Reference Price
+   string refPriceText = "";
+   color refPriceColor = clrOrange;
+   
+   if(referencePrice > 0 && gridInitialized)
+   {
+      refPriceText = "Ref: " + FormatNumber(referencePrice, digits);
+      
+      // Show grid direction indicators
+      string gridStatus = " | Grid: ";
+      if(currentPrice > referencePrice)
+      {
+         gridStatus += "↑ ABOVE (Buy Zone)";
+         refPriceColor = clrLime;
+      }
+      else if(currentPrice < referencePrice)
+      {
+         gridStatus += "↓ BELOW (Sell Zone)";
+         refPriceColor = clrOrange;
+      }
+      else
+      {
+         gridStatus += "= AT REF";
+         refPriceColor = clrYellow;
+      }
+      
+      refPriceText += gridStatus;
+   }
+   else if(referencePrice > 0)
+   {
+      refPriceText = "Ref: " + FormatNumber(referencePrice, digits) + " | Grid: Calculating...";
+      refPriceColor = clrYellow;
+   }
+   else
+   {
+      refPriceText = "Ref: N/A | Grid: Not Set";
+      refPriceColor = clrGray;
+   }
+   
+   ObjectSetString(0, prefix + "RefPrice", OBJPROP_TEXT, refPriceText);
+   ObjectSetInteger(0, prefix + "RefPrice", OBJPROP_COLOR, refPriceColor);
+   
+   // Line 5: Next Level
    string nextLevelText = "Next: Waiting...";
    color nextLevelColor = clrYellow;
    double gapDollar = displayGapDollar; // Use the gap dollar from line 2
@@ -1393,6 +1452,7 @@ void DeleteUIPanel()
    ObjectDelete(0, prefix + "StatusSpread");
    ObjectDelete(0, prefix + "GridGap");
    ObjectDelete(0, prefix + "Price");
+   ObjectDelete(0, prefix + "RefPrice");
    ObjectDelete(0, prefix + "NextLevel");
    ObjectDelete(0, prefix + "LotPosition");
    ObjectDelete(0, prefix + "BalEq");
