@@ -5,8 +5,10 @@
 //+------------------------------------------------------------------+
 #property copyright "TORAMA CAPITAL"
 #property link      "ea@torama.money"
-#property version   "1.00"
+#property version   "3.00"
 #property description "Momentum Grid Trading - Directional Grid System"
+#property description "Features: Auto Grid Reset | Flexible SL/TP | News Trading Ready"
+#property description "Set SL=0.3%, TP=1.5% for news events - cuts losers, runs winners"
 
 #include <Trade\Trade.mqh>
 
@@ -53,6 +55,7 @@ double peakEquity = 0.0;
 double startOfDayBalance = 0.0;
 datetime lastDayCheck = 0;
 bool dailyTargetReached = false;
+bool allowGridReset = true;  // Allow grid reset when all positions close
 
 //--- Grid initialization (fixed at EA start)
 double initialGapPercent = 0.0;  // Gap at EA initialization
@@ -362,6 +365,9 @@ void OnTick()
    
    // Check drawdown
    CheckDrawdown();
+   
+   // Check if grid should reset (all positions closed)
+   CheckAndResetGrid();
    
    if(isPaused) return;
    
@@ -948,6 +954,54 @@ long GetCurrentSpread()
    }
    
    return spread;
+}
+
+//+------------------------------------------------------------------+
+//| Check if all positions closed and reset grid                     |
+//+------------------------------------------------------------------+
+void CheckAndResetGrid()
+{
+   // Only check if grid is activated and reset is allowed
+   if(!gridActivated || !allowGridReset)
+      return;
+   
+   // Count open positions for this EA
+   int openPositions = 0;
+   for(int i = PositionsTotal() - 1; i >= 0; i--)
+   {
+      ulong ticket = PositionGetTicket(i);
+      if(ticket > 0)
+      {
+         if(PositionGetString(POSITION_SYMBOL) == _Symbol && 
+            PositionGetInteger(POSITION_MAGIC) == magicNumber)
+         {
+            openPositions++;
+         }
+      }
+   }
+   
+   // If no positions open, reset the grid
+   if(openPositions == 0)
+   {
+      Print("========================================");
+      Print("ALL POSITIONS CLOSED - RESETTING GRID");
+      Print("Old Reference Price: ", referencePrice);
+      
+      // Reset grid state
+      gridActivated = false;
+      referencePrice = 0.0;
+      gridInitialized = false;
+      
+      // Reset grid level tracking
+      ArrayInitialize(buyLevelTriggered, false);
+      ArrayInitialize(sellLevelTriggered, false);
+      buyLevelsFilled = 0;
+      sellLevelsFilled = 0;
+      
+      Print("Grid will recalculate on next tick");
+      Print("New reference will be current market price");
+      Print("========================================");
+   }
 }
 
 //+------------------------------------------------------------------+

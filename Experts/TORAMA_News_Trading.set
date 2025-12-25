@@ -1,0 +1,31 @@
+; saved automatically on 2025.12.25 04:30:00
+; TORAMA CAPITAL - NEWS TRADING SETUP
+; Strategy: Small SL cuts losers fast, Higher TP lets winners run
+; Grid auto-resets when all positions close for fresh opportunity
+; Perfect for: NFP, CPI, FOMC, Rate Decisions, High Impact News
+InpGridLevels=15
+||InpGridLevels||15||10||20||N||5||Y
+InpGapPercent=0.05
+||InpGapPercent||0.05||0.03||0.10||N||0.01||Y
+InpDirection=0
+||InpDirection||0||0||2||N||1||Y
+InpAutoLotSize=true
+||InpAutoLotSize||true
+InpLotSize=2.00
+||InpLotSize||2.00||1.0||5.0||N||0.5||Y
+InpRiskPercent=1.00
+||InpRiskPercent||1.00||0.50||1.50||N||0.10||Y
+InpSLPercent=0.30
+||InpSLPercent||0.30||0.2||0.5||N||0.05||Y
+InpTPPercent=1.50
+||InpTPPercent||1.50||1.0||3.0||N||0.1||Y
+InpMaxDrawdownPercent=10.00
+||InpMaxDrawdownPercent||10.00||5.0||15.0||N||1.0||Y
+InpDailyTargetPercent=5.00
+||InpDailyTargetPercent||5.00||3.0||10.0||N||0.5||Y
+InpSpreadPoints=3000
+||InpSpreadPoints||3000||2000||5000||N||500||Y
+InpSlippage=150
+||InpSlippage||150||100||300||N||50||Y
+InpTradeComment=TORAMA_News
+||InpTradeComment||TORAMA_News
