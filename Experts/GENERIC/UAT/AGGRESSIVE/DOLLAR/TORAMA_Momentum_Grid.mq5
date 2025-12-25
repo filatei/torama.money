@@ -14,11 +14,12 @@
 input group "=== Grid Settings ==="
 input int      InpGridLevels = 10;              // Number of Grid Levels
 input double   InpGapPercent = 0.5;             // Gap (% of price)
-input double   InpTPPercent = 80.0;             // Take Profit (% of gap)
-input double   InpSLPercent = 150.0;            // Stop Loss (% of gap)
+input int      InpReversalLevels = 3;           // Reversal Threshold (grid levels)
 
 input group "=== Risk Management ==="
 input double   InpLotSize = 0.01;               // Lot Size
+input double   InpRiskPercent = 1.0;            // Risk per Trade (%)
+input double   InpRiskRewardRatio = 1.0;        // Risk:Reward Ratio
 input double   InpMaxDrawdownPercent = 20.0;    // Max Drawdown (%)
 
 input group "=== Broker Settings ==="
@@ -35,20 +36,31 @@ bool isInitialized = false;
 bool isPaused = false;
 double referencePrice = 0.0;
 bool gridActivated = false;
-int gridDirection = 0; // 1 = Buy up, -1 = Sell down, 0 = Not activated
-int gridLevelsFilled = 0;
 double initialBalance = 0.0;
 double peakEquity = 0.0;
 
-//--- Grid tracking
-double gridLevels[];
-bool levelTriggered[];
+//--- Grid tracking (bidirectional)
+double buyGridLevels[];
+double sellGridLevels[];
+bool buyLevelTriggered[];
+bool sellLevelTriggered[];
+int buyLevelsFilled = 0;
+int sellLevelsFilled = 0;
+int consecutiveBuys = 0;
+int consecutiveSells = 0;
+string currentMode = "Bidirectional"; // "Bidirectional", "BuyOnly", "SellOnly"
+
+//--- Lot tracking
+double totalBuyLots = 0.0;
+double totalSellLots = 0.0;
+double netLots = 0.0;
+string netDirection = "";
 
 //--- UI Variables
 int panelX = 20;
 int panelY = 30;
-int panelWidth = 300;
-int panelHeight = 340;
+int panelWidth = 320;
+int panelHeight = 370;
 
 //+------------------------------------------------------------------+
 //| Expert initialization function                                   |
@@ -65,10 +77,13 @@ int OnInit()
    initialBalance = AccountInfoDouble(ACCOUNT_BALANCE);
    peakEquity = AccountInfoDouble(ACCOUNT_EQUITY);
    
-   // Initialize arrays
-   ArrayResize(gridLevels, InpGridLevels);
-   ArrayResize(levelTriggered, InpGridLevels);
-   ArrayInitialize(levelTriggered, false);
+   // Initialize bidirectional grid arrays
+   ArrayResize(buyGridLevels, InpGridLevels);
+   ArrayResize(sellGridLevels, InpGridLevels);
+   ArrayResize(buyLevelTriggered, InpGridLevels);
+   ArrayResize(sellLevelTriggered, InpGridLevels);
+   ArrayInitialize(buyLevelTriggered, false);
+   ArrayInitialize(sellLevelTriggered, false);
    
    CreateUIPanel();
    
@@ -132,21 +147,27 @@ void OnTick()
 }
 
 //+------------------------------------------------------------------+
-//| Calculate grid levels based on reference price                   |
+//| Calculate bidirectional grid levels based on reference price     |
 //+------------------------------------------------------------------+
 void CalculateGridLevels()
 {
    double gapDollar = GetGapInDollars();
    
+   // Calculate buy levels (above reference)
    for(int i = 0; i < InpGridLevels; i++)
    {
-      // Calculate levels both above and below reference
-      gridLevels[i] = referencePrice + (gapDollar * (i + 1));
+      buyGridLevels[i] = referencePrice + (gapDollar * (i + 1));
+   }
+   
+   // Calculate sell levels (below reference)
+   for(int i = 0; i < InpGridLevels; i++)
+   {
+      sellGridLevels[i] = referencePrice - (gapDollar * (i + 1));
    }
 }
 
 //+------------------------------------------------------------------+
-//| Check if first grid level is triggered                           |
+//| Check if first grid level is triggered (bidirectional)          |
 //+------------------------------------------------------------------+
 void CheckFirstGridTrigger(double currentPrice)
 {
@@ -154,70 +175,105 @@ void CheckFirstGridTrigger(double currentPrice)
    double firstBuyLevel = referencePrice + gapDollar;
    double firstSellLevel = referencePrice - gapDollar;
    
+   bool buyTriggered = false;
+   bool sellTriggered = false;
+   
    // Check for buy trigger (price moved up)
-   if(currentPrice >= firstBuyLevel)
+   if(currentPrice >= firstBuyLevel && !buyLevelTriggered[0])
    {
       gridActivated = true;
-      gridDirection = 1; // Buy up
-      referencePrice = firstBuyLevel; // Update reference
-      CalculateGridLevels(); // Recalculate from new reference
-      
-      // Open first buy trade
       OpenGridTrade(ORDER_TYPE_BUY, 0);
-      levelTriggered[0] = true;
-      gridLevelsFilled = 1;
+      buyLevelTriggered[0] = true;
+      buyLevelsFilled++;
+      consecutiveBuys++;
+      consecutiveSells = 0;
+      buyTriggered = true;
       
-      Print("Grid activated - BUY direction at price: ", firstBuyLevel);
+      Print("First BUY grid level triggered at: ", firstBuyLevel);
+      CheckReversal();
    }
+   
    // Check for sell trigger (price moved down)
-   else if(currentPrice <= firstSellLevel)
+   if(currentPrice <= firstSellLevel && !sellLevelTriggered[0])
    {
       gridActivated = true;
-      gridDirection = -1; // Sell down
-      referencePrice = firstSellLevel; // Update reference
-      CalculateGridLevels(); // Recalculate from new reference (downward)
-      
-      // Open first sell trade
       OpenGridTrade(ORDER_TYPE_SELL, 0);
-      levelTriggered[0] = true;
-      gridLevelsFilled = 1;
+      sellLevelTriggered[0] = true;
+      sellLevelsFilled++;
+      consecutiveSells++;
+      consecutiveBuys = 0;
+      sellTriggered = true;
       
-      Print("Grid activated - SELL direction at price: ", firstSellLevel);
+      Print("First SELL grid level triggered at: ", firstSellLevel);
+      CheckReversal();
    }
 }
 
 //+------------------------------------------------------------------+
-//| Check grid level triggers                                         |
+//| Check grid level triggers (bidirectional with reversal)         |
 //+------------------------------------------------------------------+
 void CheckGridLevelTriggers(double currentPrice)
 {
-   if(gridLevelsFilled >= InpGridLevels) return; // All levels filled
-   
-   double gapDollar = GetGapInDollars();
-   
-   if(gridDirection == 1) // Buy up
+   // Check buy levels
+   if(currentMode == "Bidirectional" || currentMode == "BuyOnly")
    {
-      double nextLevel = referencePrice + (gapDollar * (gridLevelsFilled + 1));
-      
-      if(currentPrice >= nextLevel && !levelTriggered[gridLevelsFilled])
+      for(int i = 0; i < InpGridLevels; i++)
       {
-         OpenGridTrade(ORDER_TYPE_BUY, gridLevelsFilled);
-         levelTriggered[gridLevelsFilled] = true;
-         gridLevelsFilled++;
-         Print("Buy grid level ", gridLevelsFilled, " triggered at: ", nextLevel);
+         if(!buyLevelTriggered[i] && currentPrice >= buyGridLevels[i])
+         {
+            OpenGridTrade(ORDER_TYPE_BUY, i);
+            buyLevelTriggered[i] = true;
+            buyLevelsFilled++;
+            consecutiveBuys++;
+            consecutiveSells = 0;
+            
+            Print("BUY grid level ", i + 1, " triggered at: ", buyGridLevels[i]);
+            CheckReversal();
+            break; // Only trigger one level per tick
+         }
       }
    }
-   else if(gridDirection == -1) // Sell down
+   
+   // Check sell levels
+   if(currentMode == "Bidirectional" || currentMode == "SellOnly")
    {
-      double nextLevel = referencePrice - (gapDollar * (gridLevelsFilled + 1));
-      
-      if(currentPrice <= nextLevel && !levelTriggered[gridLevelsFilled])
+      for(int i = 0; i < InpGridLevels; i++)
       {
-         OpenGridTrade(ORDER_TYPE_SELL, gridLevelsFilled);
-         levelTriggered[gridLevelsFilled] = true;
-         gridLevelsFilled++;
-         Print("Sell grid level ", gridLevelsFilled, " triggered at: ", nextLevel);
+         if(!sellLevelTriggered[i] && currentPrice <= sellGridLevels[i])
+         {
+            OpenGridTrade(ORDER_TYPE_SELL, i);
+            sellLevelTriggered[i] = true;
+            sellLevelsFilled++;
+            consecutiveSells++;
+            consecutiveBuys = 0;
+            
+            Print("SELL grid level ", i + 1, " triggered at: ", sellGridLevels[i]);
+            CheckReversal();
+            break; // Only trigger one level per tick
+         }
       }
+   }
+}
+
+//+------------------------------------------------------------------+
+//| Check if reversal threshold is reached                           |
+//+------------------------------------------------------------------+
+void CheckReversal()
+{
+   // Check if we need to reverse to BuyOnly mode
+   if(consecutiveBuys >= InpReversalLevels && currentMode != "BuyOnly")
+   {
+      currentMode = "BuyOnly";
+      Print("REVERSAL: Switching to BUY ONLY mode after ", consecutiveBuys, " consecutive buys");
+      Alert("TORAMA Grid: Reversal to BUY ONLY mode!");
+   }
+   
+   // Check if we need to reverse to SellOnly mode
+   if(consecutiveSells >= InpReversalLevels && currentMode != "SellOnly")
+   {
+      currentMode = "SellOnly";
+      Print("REVERSAL: Switching to SELL ONLY mode after ", consecutiveSells, " consecutive sells");
+      Alert("TORAMA Grid: Reversal to SELL ONLY mode!");
    }
 }
 
@@ -238,28 +294,91 @@ void OpenGridTrade(ENUM_ORDER_TYPE orderType, int level)
                   SymbolInfoDouble(_Symbol, SYMBOL_ASK) : 
                   SymbolInfoDouble(_Symbol, SYMBOL_BID);
    
-   double gapDollar = GetGapInDollars();
-   double tpDistance = gapDollar * (InpTPPercent / 100.0);
-   double slDistance = gapDollar * (InpSLPercent / 100.0);
+   // Calculate SL based on 1% account risk
+   double balance = AccountInfoDouble(ACCOUNT_BALANCE);
+   double riskAmount = balance * (InpRiskPercent / 100.0);
    
-   double tp = 0.0;
+   // Get tick value for the symbol
+   double tickSize = SymbolInfoDouble(_Symbol, SYMBOL_TRADE_TICK_SIZE);
+   double tickValue = SymbolInfoDouble(_Symbol, SYMBOL_TRADE_TICK_VALUE);
+   
+   if(tickValue == 0)
+   {
+      Print("Error: Tick value is zero. Cannot calculate SL/TP");
+      return;
+   }
+   
+   // Calculate SL distance in price that risks exactly 1% of account
+   // Risk = (Price Distance / Tick Size) * Tick Value * Lot Size
+   // Therefore: Price Distance = (Risk / (Tick Value * Lot Size)) * Tick Size
+   double slDistanceInPrice = (riskAmount / (tickValue * InpLotSize)) * tickSize;
+   
+   // For crypto/forex, adjust for contract size if needed
+   double contractSize = SymbolInfoDouble(_Symbol, SYMBOL_TRADE_CONTRACT_SIZE);
+   if(contractSize > 0 && contractSize != 1.0)
+   {
+      // Recalculate considering contract size
+      // Point value per lot = (Point / Quote) * Contract Size * Lot
+      double point = SymbolInfoDouble(_Symbol, SYMBOL_POINT);
+      double pointValue = 0.0;
+      
+      if(orderType == ORDER_TYPE_BUY)
+         pointValue = (point / price) * contractSize * InpLotSize;
+      else
+         pointValue = (point / price) * contractSize * InpLotSize;
+      
+      // SL distance in points
+      double slDistancePoints = riskAmount / pointValue;
+      slDistanceInPrice = slDistancePoints * point;
+   }
+   
+   // Calculate TP based on Risk:Reward ratio
+   double tpDistanceInPrice = slDistanceInPrice * InpRiskRewardRatio;
+   
    double sl = 0.0;
+   double tp = 0.0;
    
    if(orderType == ORDER_TYPE_BUY)
    {
-      tp = price + tpDistance;
-      sl = price - slDistance;
+      sl = price - slDistanceInPrice;
+      tp = price + tpDistanceInPrice;
    }
    else
    {
-      tp = price - tpDistance;
-      sl = price + slDistance;
+      sl = price + slDistanceInPrice;
+      tp = price - tpDistanceInPrice;
    }
    
    // Normalize prices
    int digits = (int)SymbolInfoInteger(_Symbol, SYMBOL_DIGITS);
-   tp = NormalizeDouble(tp, digits);
    sl = NormalizeDouble(sl, digits);
+   tp = NormalizeDouble(tp, digits);
+   
+   // Validate SL and TP
+   double minStopLevel = SymbolInfoInteger(_Symbol, SYMBOL_TRADE_STOPS_LEVEL) * SymbolInfoDouble(_Symbol, SYMBOL_POINT);
+   
+   if(orderType == ORDER_TYPE_BUY)
+   {
+      if(price - sl < minStopLevel)
+      {
+         sl = price - minStopLevel;
+         tp = price + (minStopLevel * InpRiskRewardRatio);
+         sl = NormalizeDouble(sl, digits);
+         tp = NormalizeDouble(tp, digits);
+         Print("SL adjusted to minimum stop level");
+      }
+   }
+   else
+   {
+      if(sl - price < minStopLevel)
+      {
+         sl = price + minStopLevel;
+         tp = price - (minStopLevel * InpRiskRewardRatio);
+         sl = NormalizeDouble(sl, digits);
+         tp = NormalizeDouble(tp, digits);
+         Print("SL adjusted to minimum stop level");
+      }
+   }
    
    string comment = InpTradeComment + "_L" + IntegerToString(level + 1);
    
@@ -274,13 +393,112 @@ void OpenGridTrade(ENUM_ORDER_TYPE orderType, int level)
       Print("Grid trade opened: ", EnumToString(orderType), 
             " Level: ", level + 1, 
             " Price: ", price,
-            " TP: ", tp,
-            " SL: ", sl);
+            " SL: ", sl, " (Risk: $", DoubleToString(riskAmount, 2), ")",
+            " TP: ", tp, " (RR: ", DoubleToString(InpRiskRewardRatio, 2), ":1)");
    }
    else
    {
       Print("Failed to open trade. Error: ", GetLastError());
+      Print("Details - Price: ", price, ", SL: ", sl, ", TP: ", tp);
    }
+}
+
+//+------------------------------------------------------------------+
+//| Format number with comma separation for 1000+                    |
+//+------------------------------------------------------------------+
+string FormatNumber(double value, int decimals = 2)
+{
+   string result = DoubleToString(value, decimals);
+   
+   // Only format if value >= 1000 or <= -1000
+   if(MathAbs(value) < 1000.0)
+      return result;
+   
+   // Split into integer and decimal parts
+   int dotPos = StringFind(result, ".");
+   string intPart = "";
+   string decPart = "";
+   
+   if(dotPos > 0)
+   {
+      intPart = StringSubstr(result, 0, dotPos);
+      decPart = StringSubstr(result, dotPos);
+   }
+   else
+   {
+      intPart = result;
+      decPart = "";
+   }
+   
+   // Add commas to integer part
+   string formatted = "";
+   int len = StringLen(intPart);
+   bool isNegative = false;
+   
+   // Handle negative sign
+   if(StringGetCharacter(intPart, 0) == '-')
+   {
+      isNegative = true;
+      intPart = StringSubstr(intPart, 1);
+      len = StringLen(intPart);
+   }
+   
+   int count = 0;
+   for(int i = len - 1; i >= 0; i--)
+   {
+      if(count == 3)
+      {
+         formatted = "," + formatted;
+         count = 0;
+      }
+      formatted = StringSubstr(intPart, i, 1) + formatted;
+      count++;
+   }
+   
+   if(isNegative)
+      formatted = "-" + formatted;
+   
+   return formatted + decPart;
+}
+
+//+------------------------------------------------------------------+
+//| Calculate lot positions for all trades on symbol                 |
+//+------------------------------------------------------------------+
+void CalculateLotPositions()
+{
+   totalBuyLots = 0.0;
+   totalSellLots = 0.0;
+   
+   for(int i = 0; i < PositionsTotal(); i++)
+   {
+      ulong ticket = PositionGetTicket(i);
+      if(ticket > 0)
+      {
+         if(PositionGetString(POSITION_SYMBOL) == _Symbol)
+         {
+            double lots = PositionGetDouble(POSITION_VOLUME);
+            ENUM_POSITION_TYPE type = (ENUM_POSITION_TYPE)PositionGetInteger(POSITION_TYPE);
+            
+            if(type == POSITION_TYPE_BUY)
+               totalBuyLots += lots;
+            else if(type == POSITION_TYPE_SELL)
+               totalSellLots += lots;
+         }
+      }
+   }
+   
+   // Calculate net position
+   netLots = totalBuyLots - totalSellLots;
+   
+   if(netLots > 0)
+      netDirection = "B";
+   else if(netLots < 0)
+   {
+      netDirection = "S";
+      netLots = MathAbs(netLots);
+   }
+   else
+      netDirection = "";
 }
 
 //+------------------------------------------------------------------+
@@ -389,6 +607,10 @@ void CreateUIPanel()
                panelX + 10, yPos, clrWhite, 9, false);
    yPos += lineHeight;
    
+   CreateLabel(prefix + "LotPosition", "B: 0.00 | S: 0.00 (Net: 0.00)", 
+               panelX + 10, yPos, clrCyan, 9, false);
+   yPos += lineHeight;
+   
    CreateLabel(prefix + "Balance", "Balance: $0.00", panelX + 10, yPos, clrLime, 9, false);
    yPos += lineHeight;
    
@@ -403,9 +625,9 @@ void CreateUIPanel()
    
    // Branding with right margin
    CreateLabel(prefix + "Brand", "TORAMA CAPITAL", 
-               panelX + panelWidth - 140, panelY + panelHeight - 35, clrGold, 10, true);
+               panelX + panelWidth - 155, panelY + panelHeight - 35, clrGold, 10, true);
    CreateLabel(prefix + "Email", "ea@torama.money", 
-               panelX + panelWidth - 125, panelY + panelHeight - 18, clrGold, 8, false);
+               panelX + panelWidth - 140, panelY + panelHeight - 18, clrGold, 8, false);
 }
 
 //+------------------------------------------------------------------+
@@ -436,31 +658,60 @@ void UpdateUIPanel()
 {
    string prefix = "TORAMA_UI_";
    
+   // Calculate lot positions
+   CalculateLotPositions();
+   
    // Status
-   string status = isPaused ? "PAUSED" : (gridActivated ? (gridDirection == 1 ? "BUY UP" : "SELL DOWN") : "Waiting");
-   color statusColor = isPaused ? clrRed : (gridActivated ? clrLime : clrYellow);
+   string status = "Waiting";
+   color statusColor = clrYellow;
+   
+   if(isPaused)
+   {
+      status = "PAUSED";
+      statusColor = clrRed;
+   }
+   else if(gridActivated)
+   {
+      if(currentMode == "BuyOnly")
+      {
+         status = "BUY ONLY";
+         statusColor = clrLime;
+      }
+      else if(currentMode == "SellOnly")
+      {
+         status = "SELL ONLY";
+         statusColor = clrOrange;
+      }
+      else
+      {
+         status = "BIDIRECTIONAL";
+         statusColor = clrAqua;
+      }
+   }
+   
    ObjectSetString(0, prefix + "Status", OBJPROP_TEXT, "Status: " + status);
    ObjectSetInteger(0, prefix + "Status", OBJPROP_COLOR, statusColor);
    
    // Spread
    long spread = SymbolInfoInteger(_Symbol, SYMBOL_SPREAD);
    color spreadColor = (spread > InpSpreadPoints) ? clrRed : clrLime;
-   ObjectSetString(0, prefix + "Spread", OBJPROP_TEXT, "Spread: " + IntegerToString(spread));
+   string spreadText = (spread >= 1000) ? FormatNumber((double)spread, 0) : IntegerToString(spread);
+   ObjectSetString(0, prefix + "Spread", OBJPROP_TEXT, "Spread: " + spreadText);
    ObjectSetInteger(0, prefix + "Spread", OBJPROP_COLOR, spreadColor);
    
    // Gap - combined percent and dollar on same line
    double gapPercent = InpGapPercent;
    double gapDollar = GetGapInDollars();
    ObjectSetString(0, prefix + "Gap", OBJPROP_TEXT, 
-                   "Gap: " + DoubleToString(gapPercent, 2) + "% ($" + DoubleToString(gapDollar, 2) + ")");
+                   "Gap: " + DoubleToString(gapPercent, 2) + "% ($" + FormatNumber(gapDollar, 2) + ")");
    
    // Current Price (BOLD)
    double currentPrice = SymbolInfoDouble(_Symbol, SYMBOL_BID);
    int digits = (int)SymbolInfoInteger(_Symbol, SYMBOL_DIGITS);
    ObjectSetString(0, prefix + "Price", OBJPROP_TEXT, 
-                   "Price: " + DoubleToString(currentPrice, digits));
+                   "Price: " + FormatNumber(currentPrice, digits));
    
-   // Next Level
+   // Next Level - show both buy and sell or just active direction
    string nextLevelText = "Next: Waiting...";
    color nextLevelColor = clrYellow;
    
@@ -468,53 +719,122 @@ void UpdateUIPanel()
    {
       double firstBuyLevel = referencePrice + gapDollar;
       double firstSellLevel = referencePrice - gapDollar;
-      nextLevelText = "Next: BUY@" + DoubleToString(firstBuyLevel, digits) + 
-                      " | SELL@" + DoubleToString(firstSellLevel, digits);
+      nextLevelText = "Next: B@" + FormatNumber(firstBuyLevel, digits) + 
+                      " | S@" + FormatNumber(firstSellLevel, digits);
       nextLevelColor = clrYellow;
-   }
-   else if(gridLevelsFilled < InpGridLevels)
-   {
-      if(gridDirection == 1) // Buy up
-      {
-         double nextLevel = referencePrice + (gapDollar * (gridLevelsFilled + 1));
-         nextLevelText = "Next: BUY @ " + DoubleToString(nextLevel, digits);
-         nextLevelColor = clrLime;
-      }
-      else // Sell down
-      {
-         double nextLevel = referencePrice - (gapDollar * (gridLevelsFilled + 1));
-         nextLevelText = "Next: SELL @ " + DoubleToString(nextLevel, digits);
-         nextLevelColor = clrOrange;
-      }
    }
    else
    {
-      nextLevelText = "Next: Grid Complete!";
-      nextLevelColor = clrGold;
+      // Find next untriggered levels
+      double nextBuyLevel = 0;
+      double nextSellLevel = 0;
+      
+      for(int i = 0; i < InpGridLevels; i++)
+      {
+         if(!buyLevelTriggered[i])
+         {
+            nextBuyLevel = buyGridLevels[i];
+            break;
+         }
+      }
+      
+      for(int i = 0; i < InpGridLevels; i++)
+      {
+         if(!sellLevelTriggered[i])
+         {
+            nextSellLevel = sellGridLevels[i];
+            break;
+         }
+      }
+      
+      if(currentMode == "BuyOnly")
+      {
+         if(nextBuyLevel > 0)
+         {
+            nextLevelText = "Next: BUY @ " + FormatNumber(nextBuyLevel, digits);
+            nextLevelColor = clrLime;
+         }
+         else
+         {
+            nextLevelText = "Next: Buy Grid Complete!";
+            nextLevelColor = clrGold;
+         }
+      }
+      else if(currentMode == "SellOnly")
+      {
+         if(nextSellLevel > 0)
+         {
+            nextLevelText = "Next: SELL @ " + FormatNumber(nextSellLevel, digits);
+            nextLevelColor = clrOrange;
+         }
+         else
+         {
+            nextLevelText = "Next: Sell Grid Complete!";
+            nextLevelColor = clrGold;
+         }
+      }
+      else // Bidirectional
+      {
+         if(nextBuyLevel > 0 && nextSellLevel > 0)
+         {
+            nextLevelText = "Next: B@" + FormatNumber(nextBuyLevel, digits) + 
+                           " | S@" + FormatNumber(nextSellLevel, digits);
+            nextLevelColor = clrAqua;
+         }
+         else if(nextBuyLevel > 0)
+         {
+            nextLevelText = "Next: BUY @ " + FormatNumber(nextBuyLevel, digits);
+            nextLevelColor = clrLime;
+         }
+         else if(nextSellLevel > 0)
+         {
+            nextLevelText = "Next: SELL @ " + FormatNumber(nextSellLevel, digits);
+            nextLevelColor = clrOrange;
+         }
+         else
+         {
+            nextLevelText = "Next: All Grids Complete!";
+            nextLevelColor = clrGold;
+         }
+      }
    }
    
    ObjectSetString(0, prefix + "NextLevel", OBJPROP_TEXT, nextLevelText);
    ObjectSetInteger(0, prefix + "NextLevel", OBJPROP_COLOR, nextLevelColor);
    
-   // Grid filled
-   ObjectSetString(0, prefix + "GridFilled", OBJPROP_TEXT, 
-                   "Grid Filled: " + IntegerToString(gridLevelsFilled) + "/" + IntegerToString(InpGridLevels));
+   // Grid filled - show both buy and sell counts
+   string gridFilledText = "Grid: B:" + IntegerToString(buyLevelsFilled) + 
+                          " S:" + IntegerToString(sellLevelsFilled) + 
+                          " (" + IntegerToString(buyLevelsFilled + sellLevelsFilled) + "/" + 
+                          IntegerToString(InpGridLevels * 2) + ")";
+   ObjectSetString(0, prefix + "GridFilled", OBJPROP_TEXT, gridFilledText);
+   
+   // Lot Position
+   string lotPositionText = "B: " + DoubleToString(totalBuyLots, 2) + 
+                           " | S: " + DoubleToString(totalSellLots, 2);
+   
+   if(netDirection != "")
+      lotPositionText += " (Net: " + DoubleToString(netLots, 2) + netDirection + ")";
+   else
+      lotPositionText += " (Net: 0.00)";
+   
+   ObjectSetString(0, prefix + "LotPosition", OBJPROP_TEXT, lotPositionText);
    
    // Balance
    double balance = AccountInfoDouble(ACCOUNT_BALANCE);
    ObjectSetString(0, prefix + "Balance", OBJPROP_TEXT, 
-                   "Balance: $" + DoubleToString(balance, 2));
+                   "Balance: $" + FormatNumber(balance, 2));
    
    // Equity (BOLD)
    double equity = AccountInfoDouble(ACCOUNT_EQUITY);
    ObjectSetString(0, prefix + "Equity", OBJPROP_TEXT, 
-                   "Equity: $" + DoubleToString(equity, 2));
+                   "Equity: $" + FormatNumber(equity, 2));
    
    // P/L
    double pl = equity - balance;
    color plColor = (pl >= 0) ? clrLime : clrRed;
    ObjectSetString(0, prefix + "PL", OBJPROP_TEXT, 
-                   "P/L: $" + DoubleToString(pl, 2));
+                   "P/L: $" + FormatNumber(pl, 2));
    ObjectSetInteger(0, prefix + "PL", OBJPROP_COLOR, plColor);
    
    // Drawdown
@@ -543,6 +863,7 @@ void DeleteUIPanel()
    ObjectDelete(0, prefix + "Price");
    ObjectDelete(0, prefix + "NextLevel");
    ObjectDelete(0, prefix + "GridFilled");
+   ObjectDelete(0, prefix + "LotPosition");
    ObjectDelete(0, prefix + "Balance");
    ObjectDelete(0, prefix + "Equity");
    ObjectDelete(0, prefix + "PL");
