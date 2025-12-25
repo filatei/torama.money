@@ -14,16 +14,18 @@
 input group "=== Grid Settings ==="
 input int      InpGridLevels = 10;              // Number of Grid Levels
 input double   InpGapPercent = 0.5;             // Gap (% of price)
-input int      InpReversalLevels = 3;           // Reversal Threshold (grid levels)
 
 input group "=== Risk Management ==="
-input double   InpLotSize = 0.01;               // Lot Size
+input bool     InpAutoLotSize = false;          // Auto Calculate Lot Size
+input double   InpLotSize = 0.01;               // Manual Lot Size
 input double   InpRiskPercent = 1.0;            // Risk per Trade (%)
 input double   InpRiskRewardRatio = 1.0;        // Risk:Reward Ratio
 input double   InpMaxDrawdownPercent = 20.0;    // Max Drawdown (%)
+input double   InpDailyTargetPercent = 10.0;    // Daily Target (%)
 
 input group "=== Broker Settings ==="
 input int      InpSpreadPoints = 2000;          // Spread Filter (points)
+input int      InpSlippage = 50;                // Max Slippage (points)
 
 input group "=== EA Control ==="
 input string   InpTradeComment = "TORAMA_MGrid"; // Trade Comment
@@ -38,6 +40,32 @@ double referencePrice = 0.0;
 bool gridActivated = false;
 double initialBalance = 0.0;
 double peakEquity = 0.0;
+double startOfDayBalance = 0.0;
+datetime lastDayCheck = 0;
+bool dailyTargetReached = false;
+
+//--- Grid initialization (fixed at EA start)
+double initialGapPercent = 0.0;  // Gap at EA initialization
+double initialGapDollar = 0.0;    // Dollar gap calculated at start
+bool gridInitialized = false;      // Flag to prevent grid recalculation
+
+//--- Broker properties
+double symbolPoint = 0.0;
+double symbolTickSize = 0.0;
+double symbolTickValue = 0.0;
+double symbolMinLot = 0.0;
+double symbolMaxLot = 0.0;
+double symbolLotStep = 0.0;
+int symbolDigits = 0;
+double symbolContractSize = 0.0;
+long symbolTradeMode = 0;
+ENUM_SYMBOL_TRADE_EXECUTION symbolExecMode;
+ENUM_ORDER_TYPE_FILLING symbolFillMode;
+int symbolStopsLevel = 0;
+int symbolFreezeLevel = 0;
+
+//--- Calculated lot size
+double calculatedLotSize = 0.0;
 
 //--- Grid tracking (bidirectional)
 double buyGridLevels[];
@@ -46,9 +74,11 @@ bool buyLevelTriggered[];
 bool sellLevelTriggered[];
 int buyLevelsFilled = 0;
 int sellLevelsFilled = 0;
-int consecutiveBuys = 0;
-int consecutiveSells = 0;
-string currentMode = "Bidirectional"; // "Bidirectional", "BuyOnly", "SellOnly"
+
+//--- Button names
+string btnCloseAll = "TORAMA_BTN_CloseAll";
+string btnTakeTP = "TORAMA_BTN_TakeTP";
+string btnPause = "TORAMA_BTN_Pause";
 
 //--- Lot tracking
 double totalBuyLots = 0.0;
@@ -59,8 +89,8 @@ string netDirection = "";
 //--- UI Variables
 int panelX = 20;
 int panelY = 30;
-int panelWidth = 320;
-int panelHeight = 370;
+int panelWidth = 340;
+int panelHeight = 360;
 
 //+------------------------------------------------------------------+
 //| Expert initialization function                                   |
@@ -69,13 +99,45 @@ int OnInit()
 {
    // Use unique chart ID as magic number
    magicNumber = ChartID();
+   
+   // Initialize broker properties and validate
+   if(!InitializeBrokerProperties())
+   {
+      Print("CRITICAL ERROR: Failed to initialize broker properties");
+      return INIT_FAILED;
+   }
+   
+   // Configure trade object with broker-compliant settings
    trade.SetExpertMagicNumber(magicNumber);
-   trade.SetDeviationInPoints(50);
-   trade.SetTypeFilling(ORDER_FILLING_FOK);
+   trade.SetDeviationInPoints(InpSlippage);
+   trade.SetTypeFilling(symbolFillMode);
    trade.SetAsyncMode(false);
+   
+   // Calculate optimal lot size if auto-sizing enabled
+   if(InpAutoLotSize)
+   {
+      calculatedLotSize = CalculateOptimalLotSize();
+      Print("Auto Lot Size calculated: ", calculatedLotSize);
+   }
+   else
+   {
+      calculatedLotSize = NormalizeLot(InpLotSize);
+      Print("Manual Lot Size normalized: ", calculatedLotSize);
+   }
    
    initialBalance = AccountInfoDouble(ACCOUNT_BALANCE);
    peakEquity = AccountInfoDouble(ACCOUNT_EQUITY);
+   startOfDayBalance = initialBalance;
+   lastDayCheck = TimeCurrent();
+   
+   // Lock in initial gap percent at EA start
+   initialGapPercent = InpGapPercent;
+   gridInitialized = false; // Will be set when reference price is established
+   
+   Print("Grid parameters locked at initialization:");
+   Print("  Gap Percent: ", initialGapPercent, "%");
+   Print("  Note: Grid levels are fixed relative to reference price");
+   Print("  Changing inputs after start will not affect existing grid");
    
    // Initialize bidirectional grid arrays
    ArrayResize(buyGridLevels, InpGridLevels);
@@ -86,11 +148,131 @@ int OnInit()
    ArrayInitialize(sellLevelTriggered, false);
    
    CreateUIPanel();
+   CreateButtons();
    
    isInitialized = true;
    
-   Print("TORAMA Momentum Grid EA initialized successfully");
+   Print("========================================");
+   Print("TORAMA Momentum Grid EA initialized");
+   Print("Symbol: ", _Symbol);
+   Print("Broker: ", AccountInfoString(ACCOUNT_COMPANY));
+   Print("Lot Size: ", calculatedLotSize);
+   Print("Risk per Trade: ", InpRiskPercent, "%");
+   Print("Daily Target: ", InpDailyTargetPercent, "%");
+   Print("========================================");
+   
+   // Load account history for grid level reset detection
+   HistorySelect(0, TimeCurrent());
+   
    return(INIT_SUCCEEDED);
+}
+
+//+------------------------------------------------------------------+
+//| Initialize and validate broker properties                        |
+//+------------------------------------------------------------------+
+bool InitializeBrokerProperties()
+{
+   // Get symbol properties
+   symbolPoint = SymbolInfoDouble(_Symbol, SYMBOL_POINT);
+   symbolTickSize = SymbolInfoDouble(_Symbol, SYMBOL_TRADE_TICK_SIZE);
+   symbolTickValue = SymbolInfoDouble(_Symbol, SYMBOL_TRADE_TICK_VALUE);
+   symbolMinLot = SymbolInfoDouble(_Symbol, SYMBOL_VOLUME_MIN);
+   symbolMaxLot = SymbolInfoDouble(_Symbol, SYMBOL_VOLUME_MAX);
+   symbolLotStep = SymbolInfoDouble(_Symbol, SYMBOL_VOLUME_STEP);
+   symbolDigits = (int)SymbolInfoInteger(_Symbol, SYMBOL_DIGITS);
+   symbolContractSize = SymbolInfoDouble(_Symbol, SYMBOL_TRADE_CONTRACT_SIZE);
+   symbolTradeMode = SymbolInfoInteger(_Symbol, SYMBOL_TRADE_MODE);
+   symbolExecMode = (ENUM_SYMBOL_TRADE_EXECUTION)SymbolInfoInteger(_Symbol, SYMBOL_TRADE_EXEMODE);
+   symbolStopsLevel = (int)SymbolInfoInteger(_Symbol, SYMBOL_TRADE_STOPS_LEVEL);
+   symbolFreezeLevel = (int)SymbolInfoInteger(_Symbol, SYMBOL_TRADE_FREEZE_LEVEL);
+   
+   // Validate critical properties
+   if(symbolPoint <= 0)
+   {
+      Print("ERROR: Invalid symbol point: ", symbolPoint);
+      return false;
+   }
+   
+   if(symbolTickValue <= 0)
+   {
+      Print("ERROR: Invalid tick value: ", symbolTickValue);
+      return false;
+   }
+   
+   if(symbolMinLot <= 0 || symbolMaxLot <= 0)
+   {
+      Print("ERROR: Invalid lot limits - Min: ", symbolMinLot, " Max: ", symbolMaxLot);
+      return false;
+   }
+   
+   // Check if trading is allowed
+   if(symbolTradeMode == SYMBOL_TRADE_MODE_DISABLED)
+   {
+      Print("ERROR: Trading is disabled for ", _Symbol);
+      return false;
+   }
+   
+   if(symbolTradeMode == SYMBOL_TRADE_MODE_CLOSEONLY)
+   {
+      Print("WARNING: Symbol is in close-only mode");
+   }
+   
+   // Determine best fill mode
+   int filling = (int)SymbolInfoInteger(_Symbol, SYMBOL_FILLING_MODE);
+   
+   if((filling & SYMBOL_FILLING_FOK) == SYMBOL_FILLING_FOK)
+      symbolFillMode = ORDER_FILLING_FOK;
+   else if((filling & SYMBOL_FILLING_IOC) == SYMBOL_FILLING_IOC)
+      symbolFillMode = ORDER_FILLING_IOC;
+   else
+      symbolFillMode = ORDER_FILLING_RETURN;
+   
+   Print("Broker Properties:");
+   Print("  Min Lot: ", symbolMinLot, " | Max: ", symbolMaxLot, " | Step: ", symbolLotStep);
+   Print("  Stops Level: ", symbolStopsLevel, " | Fill Mode: ", EnumToString(symbolFillMode));
+   
+   return true;
+}
+
+//+------------------------------------------------------------------+
+//| Calculate optimal lot size based on account                      |
+//+------------------------------------------------------------------+
+double CalculateOptimalLotSize()
+{
+   double balance = AccountInfoDouble(ACCOUNT_BALANCE);
+   double riskAmount = balance * (InpRiskPercent / 100.0);
+   double currentPrice = SymbolInfoDouble(_Symbol, SYMBOL_BID);
+   if(currentPrice <= 0) currentPrice = SymbolInfoDouble(_Symbol, SYMBOL_ASK);
+   
+   // Estimate SL distance as 0.7% of price
+   double estimatedSLDistance = currentPrice * 0.007;
+   double slDistanceInTicks = estimatedSLDistance / symbolTickSize;
+   double lotSize = riskAmount / (slDistanceInTicks * symbolTickValue);
+   
+   // Normalize and apply safety limits
+   lotSize = NormalizeLot(lotSize);
+   double maxReasonableLot = symbolMaxLot * 0.5;
+   if(lotSize > maxReasonableLot)
+   {
+      Print("WARNING: Calculated lot ", lotSize, " exceeds limit. Using ", maxReasonableLot);
+      lotSize = maxReasonableLot;
+   }
+   
+   return lotSize;
+}
+
+//+------------------------------------------------------------------+
+//| Normalize lot size to broker specifications                      |
+//+------------------------------------------------------------------+
+double NormalizeLot(double lot)
+{
+   if(lot < symbolMinLot) return symbolMinLot;
+   if(lot > symbolMaxLot) return symbolMaxLot;
+   
+   double normalizedLot = MathFloor(lot / symbolLotStep) * symbolLotStep;
+   if(normalizedLot < symbolMinLot) normalizedLot = symbolMinLot;
+   
+   return NormalizeDouble(normalizedLot, 2);
 }
 
 //+------------------------------------------------------------------+
@@ -99,7 +281,40 @@ int OnInit()
 void OnDeinit(const int reason)
 {
    DeleteUIPanel();
+   DeleteButtons();
    Comment("");
+}
+
+//+------------------------------------------------------------------+
+//| Chart event handler                                              |
+//+------------------------------------------------------------------+
+void OnChartEvent(const int id, const long &lparam, const double &dparam, const string &sparam)
+{
+   if(id == CHARTEVENT_OBJECT_CLICK)
+   {
+      if(sparam == btnCloseAll)
+      {
+         CloseAllTrades();
+         ObjectSetInteger(0, btnCloseAll, OBJPROP_STATE, false);
+         Print("Close All button clicked - All trades closed");
+      }
+      else if(sparam == btnTakeTP)
+      {
+         TakeAllProfits();
+         ObjectSetInteger(0, btnTakeTP, OBJPROP_STATE, false);
+         Print("Take Profit button clicked");
+      }
+      else if(sparam == btnPause)
+      {
+         isPaused = !isPaused;
+         ObjectSetInteger(0, btnPause, OBJPROP_STATE, isPaused);
+         ObjectSetString(0, btnPause, OBJPROP_TEXT, isPaused ? "RESUME" : "PAUSE");
+         ObjectSetInteger(0, btnPause, OBJPROP_BGCOLOR, isPaused ? clrGreen : clrOrange);
+         Print(isPaused ? "EA PAUSED" : "EA RESUMED");
+      }
+      
+      ChartRedraw();
+   }
 }
 
 //+------------------------------------------------------------------+
@@ -108,6 +323,17 @@ void OnDeinit(const int reason)
 void OnTick()
 {
    if(!isInitialized) return;
+   
+   // Refresh account history for closed trade detection
+   static int tickCount = 0;
+   tickCount++;
+   if(tickCount % 10 == 0) // Every 10 ticks
+   {
+      HistorySelect(TimeCurrent() - 60, TimeCurrent()); // Last 60 seconds
+   }
+   
+   // Check for new day
+   CheckNewDay();
    
    // Check for new bar
    datetime currentBarTime = iTime(_Symbol, PERIOD_CURRENT, 0);
@@ -151,19 +377,32 @@ void OnTick()
 //+------------------------------------------------------------------+
 void CalculateGridLevels()
 {
-   double gapDollar = GetGapInDollars();
+   // Calculate gap using initial settings (locked at EA start)
+   initialGapDollar = referencePrice * (initialGapPercent / 100.0);
    
    // Calculate buy levels (above reference)
    for(int i = 0; i < InpGridLevels; i++)
    {
-      buyGridLevels[i] = referencePrice + (gapDollar * (i + 1));
+      buyGridLevels[i] = referencePrice + (initialGapDollar * (i + 1));
    }
    
    // Calculate sell levels (below reference)
    for(int i = 0; i < InpGridLevels; i++)
    {
-      sellGridLevels[i] = referencePrice - (gapDollar * (i + 1));
+      sellGridLevels[i] = referencePrice - (initialGapDollar * (i + 1));
    }
+   
+   // Mark grid as initialized - levels are now fixed
+   gridInitialized = true;
+   
+   Print("========================================");
+   Print("GRID LEVELS CALCULATED & LOCKED");
+   Print("Reference Price: ", referencePrice);
+   Print("Gap: ", initialGapPercent, "% ($", DoubleToString(initialGapDollar, 2), ")");
+   Print("Buy Levels: ", referencePrice + initialGapDollar, " to ", buyGridLevels[InpGridLevels-1]);
+   Print("Sell Levels: ", sellGridLevels[InpGridLevels-1], " to ", referencePrice - initialGapDollar);
+   Print("Grid is now FIXED - immune to input changes");
+   Print("========================================");
 }
 
 //+------------------------------------------------------------------+
@@ -175,9 +414,6 @@ void CheckFirstGridTrigger(double currentPrice)
    double firstBuyLevel = referencePrice + gapDollar;
    double firstSellLevel = referencePrice - gapDollar;
    
-   bool buyTriggered = false;
-   bool sellTriggered = false;
-   
    // Check for buy trigger (price moved up)
    if(currentPrice >= firstBuyLevel && !buyLevelTriggered[0])
    {
@@ -185,12 +421,8 @@ void CheckFirstGridTrigger(double currentPrice)
       OpenGridTrade(ORDER_TYPE_BUY, 0);
       buyLevelTriggered[0] = true;
       buyLevelsFilled++;
-      consecutiveBuys++;
-      consecutiveSells = 0;
-      buyTriggered = true;
       
       Print("First BUY grid level triggered at: ", firstBuyLevel);
-      CheckReversal();
    }
    
    // Check for sell trigger (price moved down)
@@ -200,80 +432,121 @@ void CheckFirstGridTrigger(double currentPrice)
       OpenGridTrade(ORDER_TYPE_SELL, 0);
       sellLevelTriggered[0] = true;
       sellLevelsFilled++;
-      consecutiveSells++;
-      consecutiveBuys = 0;
-      sellTriggered = true;
       
       Print("First SELL grid level triggered at: ", firstSellLevel);
-      CheckReversal();
    }
 }
 
 //+------------------------------------------------------------------+
-//| Check grid level triggers (bidirectional with reversal)         |
+//| Check grid level triggers (classic bidirectional)               |
 //+------------------------------------------------------------------+
 void CheckGridLevelTriggers(double currentPrice)
 {
-   // Check buy levels
-   if(currentMode == "Bidirectional" || currentMode == "BuyOnly")
+   // First, check if any levels should be reset (trades closed at TP)
+   ResetClosedGridLevels();
+   
+   // Check buy levels (buy up)
+   for(int i = 0; i < InpGridLevels; i++)
    {
-      for(int i = 0; i < InpGridLevels; i++)
+      if(!buyLevelTriggered[i] && currentPrice >= buyGridLevels[i])
       {
-         if(!buyLevelTriggered[i] && currentPrice >= buyGridLevels[i])
-         {
-            OpenGridTrade(ORDER_TYPE_BUY, i);
-            buyLevelTriggered[i] = true;
-            buyLevelsFilled++;
-            consecutiveBuys++;
-            consecutiveSells = 0;
-            
-            Print("BUY grid level ", i + 1, " triggered at: ", buyGridLevels[i]);
-            CheckReversal();
-            break; // Only trigger one level per tick
-         }
+         OpenGridTrade(ORDER_TYPE_BUY, i);
+         buyLevelTriggered[i] = true;
+         buyLevelsFilled++;
+         
+         Print("BUY grid level ", i + 1, " triggered at: ", buyGridLevels[i]);
+         break; // Only trigger one level per tick
       }
    }
    
-   // Check sell levels
-   if(currentMode == "Bidirectional" || currentMode == "SellOnly")
+   // Check sell levels (sell down)
+   for(int i = 0; i < InpGridLevels; i++)
    {
-      for(int i = 0; i < InpGridLevels; i++)
+      if(!sellLevelTriggered[i] && currentPrice <= sellGridLevels[i])
       {
-         if(!sellLevelTriggered[i] && currentPrice <= sellGridLevels[i])
-         {
-            OpenGridTrade(ORDER_TYPE_SELL, i);
-            sellLevelTriggered[i] = true;
-            sellLevelsFilled++;
-            consecutiveSells++;
-            consecutiveBuys = 0;
-            
-            Print("SELL grid level ", i + 1, " triggered at: ", sellGridLevels[i]);
-            CheckReversal();
-            break; // Only trigger one level per tick
-         }
+         OpenGridTrade(ORDER_TYPE_SELL, i);
+         sellLevelTriggered[i] = true;
+         sellLevelsFilled++;
+         
+         Print("SELL grid level ", i + 1, " triggered at: ", sellGridLevels[i]);
+         break; // Only trigger one level per tick
       }
    }
 }
 
 //+------------------------------------------------------------------+
-//| Check if reversal threshold is reached                           |
+//| Reset grid levels where trades have closed at TP                 |
 //+------------------------------------------------------------------+
-void CheckReversal()
+void ResetClosedGridLevels()
 {
-   // Check if we need to reverse to BuyOnly mode
-   if(consecutiveBuys >= InpReversalLevels && currentMode != "BuyOnly")
-   {
-      currentMode = "BuyOnly";
-      Print("REVERSAL: Switching to BUY ONLY mode after ", consecutiveBuys, " consecutive buys");
-      Alert("TORAMA Grid: Reversal to BUY ONLY mode!");
-   }
+   // Check history for recently closed trades
+   int totalDeals = HistoryDealsTotal();
+   datetime currentTime = TimeCurrent();
    
-   // Check if we need to reverse to SellOnly mode
-   if(consecutiveSells >= InpReversalLevels && currentMode != "SellOnly")
+   // Look at deals from last 10 seconds
+   for(int i = totalDeals - 1; i >= 0 && i >= totalDeals - 50; i--)
    {
-      currentMode = "SellOnly";
-      Print("REVERSAL: Switching to SELL ONLY mode after ", consecutiveSells, " consecutive sells");
-      Alert("TORAMA Grid: Reversal to SELL ONLY mode!");
+      ulong ticket = HistoryDealGetTicket(i);
+      if(ticket > 0)
+      {
+         if(HistoryDealGetString(ticket, DEAL_SYMBOL) == _Symbol &&
+            HistoryDealGetInteger(ticket, DEAL_MAGIC) == magicNumber &&
+            HistoryDealGetInteger(ticket, DEAL_ENTRY) == DEAL_ENTRY_OUT)
+         {
+            datetime dealTime = (datetime)HistoryDealGetInteger(ticket, DEAL_TIME);
+            
+            // Only process recent deals (last 10 seconds)
+            if(currentTime - dealTime > 10)
+               continue;
+            
+            double closePrice = HistoryDealGetDouble(ticket, DEAL_PRICE);
+            double profit = HistoryDealGetDouble(ticket, DEAL_PROFIT);
+            string comment = HistoryDealGetString(ticket, DEAL_COMMENT);
+            
+            // Only reset if closed at profit (TP hit)
+            if(profit > 0)
+            {
+               // Extract level from comment (format: TORAMA_MGrid_L1, L2, etc)
+               int levelStart = StringFind(comment, "_L");
+               if(levelStart >= 0)
+               {
+                  string levelStr = StringSubstr(comment, levelStart + 2);
+                  int level = (int)StringToInteger(levelStr) - 1; // Convert to 0-based index
+                  
+                  if(level >= 0 && level < InpGridLevels)
+                  {
+                     // Check if it's a buy or sell level by comparing close price to grid levels
+                     double buyLevel = buyGridLevels[level];
+                     double sellLevel = sellGridLevels[level];
+                     
+                     // Determine which level was hit (with tolerance)
+                     double tolerance = symbolPoint * 10;
+                     
+                     if(MathAbs(closePrice - buyLevel) < tolerance || closePrice > buyLevel)
+                     {
+                        // Buy level - reset it for replacement
+                        if(buyLevelTriggered[level])
+                        {
+                           buyLevelTriggered[level] = false;
+                           buyLevelsFilled--;
+                           Print("✓ BUY Level ", level + 1, " reset - closed at TP. Level is now replaceable.");
+                        }
+                     }
+                     else if(MathAbs(closePrice - sellLevel) < tolerance || closePrice < sellLevel)
+                     {
+                        // Sell level - reset it for replacement
+                        if(sellLevelTriggered[level])
+                        {
+                           sellLevelTriggered[level] = false;
+                           sellLevelsFilled--;
+                           Print("✓ SELL Level ", level + 1, " reset - closed at TP. Level is now replaceable.");
+                        }
+                     }
+                  }
+               }
+            }
+         }
+      }
    }
 }
 
@@ -282,6 +555,25 @@ void CheckReversal()
 //+------------------------------------------------------------------+
 void OpenGridTrade(ENUM_ORDER_TYPE orderType, int level)
 {
+   // Pre-trade validations
+   if(!TerminalInfoInteger(TERMINAL_TRADE_ALLOWED))
+   {
+      Print("ERROR: Trading not allowed in terminal");
+      return;
+   }
+   
+   if(!MQLInfoInteger(MQL_TRADE_ALLOWED))
+   {
+      Print("ERROR: EA trading not allowed");
+      return;
+   }
+   
+   if(!AccountInfoInteger(ACCOUNT_TRADE_EXPERT))
+   {
+      Print("ERROR: Automated trading disabled for this account");
+      return;
+   }
+   
    // Check spread
    long spread = SymbolInfoInteger(_Symbol, SYMBOL_SPREAD);
    if(spread > InpSpreadPoints)
@@ -290,49 +582,43 @@ void OpenGridTrade(ENUM_ORDER_TYPE orderType, int level)
       return;
    }
    
+   // Get current price
    double price = (orderType == ORDER_TYPE_BUY) ? 
                   SymbolInfoDouble(_Symbol, SYMBOL_ASK) : 
                   SymbolInfoDouble(_Symbol, SYMBOL_BID);
    
-   // Calculate SL based on 1% account risk
-   double balance = AccountInfoDouble(ACCOUNT_BALANCE);
-   double riskAmount = balance * (InpRiskPercent / 100.0);
-   
-   // Get tick value for the symbol
-   double tickSize = SymbolInfoDouble(_Symbol, SYMBOL_TRADE_TICK_SIZE);
-   double tickValue = SymbolInfoDouble(_Symbol, SYMBOL_TRADE_TICK_VALUE);
-   
-   if(tickValue == 0)
+   if(price <= 0)
    {
-      Print("Error: Tick value is zero. Cannot calculate SL/TP");
+      Print("ERROR: Invalid price: ", price);
       return;
    }
    
-   // Calculate SL distance in price that risks exactly 1% of account
-   // Risk = (Price Distance / Tick Size) * Tick Value * Lot Size
-   // Therefore: Price Distance = (Risk / (Tick Value * Lot Size)) * Tick Size
-   double slDistanceInPrice = (riskAmount / (tickValue * InpLotSize)) * tickSize;
+   // Calculate SL/TP based on risk percent
+   double balance = AccountInfoDouble(ACCOUNT_BALANCE);
+   double riskAmount = balance * (InpRiskPercent / 100.0);
    
-   // For crypto/forex, adjust for contract size if needed
-   double contractSize = SymbolInfoDouble(_Symbol, SYMBOL_TRADE_CONTRACT_SIZE);
-   if(contractSize > 0 && contractSize != 1.0)
+   // Use broker-validated properties
+   if(symbolTickValue <= 0 || symbolTickSize <= 0)
    {
-      // Recalculate considering contract size
-      // Point value per lot = (Point / Quote) * Contract Size * Lot
-      double point = SymbolInfoDouble(_Symbol, SYMBOL_POINT);
-      double pointValue = 0.0;
-      
-      if(orderType == ORDER_TYPE_BUY)
-         pointValue = (point / price) * contractSize * InpLotSize;
-      else
-         pointValue = (point / price) * contractSize * InpLotSize;
-      
-      // SL distance in points
-      double slDistancePoints = riskAmount / pointValue;
-      slDistanceInPrice = slDistancePoints * point;
+      Print("ERROR: Invalid tick properties");
+      return;
    }
    
-   // Calculate TP based on Risk:Reward ratio
+   // Calculate SL distance
+   double slDistanceInPrice = (riskAmount / (symbolTickValue * calculatedLotSize)) * symbolTickSize;
+   
+   // Adjust for contract size if applicable
+   if(symbolContractSize > 0 && symbolContractSize != 1.0)
+   {
+      double pointValue = (symbolPoint / price) * symbolContractSize * calculatedLotSize;
+      if(pointValue > 0)
+      {
+         double slDistancePoints = riskAmount / pointValue;
+         slDistanceInPrice = slDistancePoints * symbolPoint;
+      }
+   }
+   
+   // Calculate TP
    double tpDistanceInPrice = slDistanceInPrice * InpRiskRewardRatio;
    
    double sl = 0.0;
@@ -350,56 +636,187 @@ void OpenGridTrade(ENUM_ORDER_TYPE orderType, int level)
    }
    
    // Normalize prices
-   int digits = (int)SymbolInfoInteger(_Symbol, SYMBOL_DIGITS);
-   sl = NormalizeDouble(sl, digits);
-   tp = NormalizeDouble(tp, digits);
+   sl = NormalizeDouble(sl, symbolDigits);
+   tp = NormalizeDouble(tp, symbolDigits);
    
-   // Validate SL and TP
-   double minStopLevel = SymbolInfoInteger(_Symbol, SYMBOL_TRADE_STOPS_LEVEL) * SymbolInfoDouble(_Symbol, SYMBOL_POINT);
+   // Validate against broker stops level
+   double minStopDistance = symbolStopsLevel * symbolPoint;
    
-   if(orderType == ORDER_TYPE_BUY)
+   if(minStopDistance > 0)
    {
-      if(price - sl < minStopLevel)
+      if(orderType == ORDER_TYPE_BUY)
       {
-         sl = price - minStopLevel;
-         tp = price + (minStopLevel * InpRiskRewardRatio);
-         sl = NormalizeDouble(sl, digits);
-         tp = NormalizeDouble(tp, digits);
-         Print("SL adjusted to minimum stop level");
+         if(price - sl < minStopDistance)
+         {
+            sl = NormalizeDouble(price - minStopDistance, symbolDigits);
+            tp = NormalizeDouble(price + (minStopDistance * InpRiskRewardRatio), symbolDigits);
+            Print("SL/TP adjusted for broker stops level");
+         }
+      }
+      else
+      {
+         if(sl - price < minStopDistance)
+         {
+            sl = NormalizeDouble(price + minStopDistance, symbolDigits);
+            tp = NormalizeDouble(price - (minStopDistance * InpRiskRewardRatio), symbolDigits);
+            Print("SL/TP adjusted for broker stops level");
+         }
       }
    }
-   else
+   
+   // Validate freeze level
+   double freezeDistance = symbolFreezeLevel * symbolPoint;
+   if(freezeDistance > 0)
    {
-      if(sl - price < minStopLevel)
+      if(MathAbs(price - sl) < freezeDistance || MathAbs(price - tp) < freezeDistance)
       {
-         sl = price + minStopLevel;
-         tp = price - (minStopLevel * InpRiskRewardRatio);
-         sl = NormalizeDouble(sl, digits);
-         tp = NormalizeDouble(tp, digits);
-         Print("SL adjusted to minimum stop level");
+         Print("WARNING: Price too close to freeze level. Adjusting...");
+         if(orderType == ORDER_TYPE_BUY)
+         {
+            sl = NormalizeDouble(price - freezeDistance * 1.5, symbolDigits);
+            tp = NormalizeDouble(price + freezeDistance * 1.5 * InpRiskRewardRatio, symbolDigits);
+         }
+         else
+         {
+            sl = NormalizeDouble(price + freezeDistance * 1.5, symbolDigits);
+            tp = NormalizeDouble(price - freezeDistance * 1.5 * InpRiskRewardRatio, symbolDigits);
+         }
       }
+   }
+   
+   // Final validation
+   if(sl <= 0 || tp <= 0)
+   {
+      Print("ERROR: Invalid SL/TP - SL: ", sl, " TP: ", tp);
+      return;
    }
    
    string comment = InpTradeComment + "_L" + IntegerToString(level + 1);
    
+   // Execute trade with error handling
    bool result = false;
-   if(orderType == ORDER_TYPE_BUY)
-      result = trade.Buy(InpLotSize, _Symbol, 0, sl, tp, comment);
-   else
-      result = trade.Sell(InpLotSize, _Symbol, 0, sl, tp, comment);
+   int retries = 3;
+   int attempt = 0;
+   
+   while(attempt < retries && !result)
+   {
+      attempt++;
+      
+      if(orderType == ORDER_TYPE_BUY)
+         result = trade.Buy(calculatedLotSize, _Symbol, 0, sl, tp, comment);
+      else
+         result = trade.Sell(calculatedLotSize, _Symbol, 0, sl, tp, comment);
+      
+      if(!result)
+      {
+         int error = GetLastError();
+         Print("Trade attempt ", attempt, " failed. Error: ", error, " - ", ErrorDescription(error));
+         
+         if(error == 10004 || error == 10018 || error == 10019) // Requote, price changed, no prices
+         {
+            Sleep(1000); // Wait 1 second and retry
+            // Refresh price
+            price = (orderType == ORDER_TYPE_BUY) ? 
+                    SymbolInfoDouble(_Symbol, SYMBOL_ASK) : 
+                    SymbolInfoDouble(_Symbol, SYMBOL_BID);
+         }
+         else if(error == 10006) // Request rejected
+         {
+            Print("Request rejected by broker. Stopping retries.");
+            break;
+         }
+         else
+         {
+            break; // Other errors, don't retry
+         }
+      }
+   }
    
    if(result)
    {
-      Print("Grid trade opened: ", EnumToString(orderType), 
-            " Level: ", level + 1, 
-            " Price: ", price,
-            " SL: ", sl, " (Risk: $", DoubleToString(riskAmount, 2), ")",
-            " TP: ", tp, " (RR: ", DoubleToString(InpRiskRewardRatio, 2), ":1)");
+      Print("✓ Grid trade opened: ", EnumToString(orderType), 
+            " | Level: ", level + 1, 
+            " | Lot: ", calculatedLotSize,
+            " | Price: ", price,
+            " | SL: ", sl,
+            " | TP: ", tp,
+            " | Risk: $", DoubleToString(riskAmount, 2));
    }
    else
    {
-      Print("Failed to open trade. Error: ", GetLastError());
-      Print("Details - Price: ", price, ", SL: ", sl, ", TP: ", tp);
+      Print("✗ Failed to open trade after ", attempt, " attempts");
+   }
+}
+
+//+------------------------------------------------------------------+
+//| Get error description                                             |
+//+------------------------------------------------------------------+
+string ErrorDescription(int error)
+{
+   switch(error)
+   {
+      case 10004: return "Requote";
+      case 10006: return "Request rejected";
+      case 10013: return "Invalid request";
+      case 10014: return "Invalid volume";
+      case 10015: return "Invalid price";
+      case 10016: return "Invalid stops";
+      case 10018: return "Market closed";
+      case 10019: return "No prices";
+      case 10021: return "Not enough money";
+      case 10027: return "Trading disabled";
+      default: return "Error " + IntegerToString(error);
+   }
+}
+
+//+------------------------------------------------------------------+
+//| Check and update start of day balance                            |
+//+------------------------------------------------------------------+
+void CheckNewDay()
+{
+   datetime currentTime = TimeCurrent();
+   MqlDateTime currentDT, lastDT;
+   
+   TimeToStruct(currentTime, currentDT);
+   TimeToStruct(lastDayCheck, lastDT);
+   
+   // Check if we've crossed into a new day
+   if(currentDT.day != lastDT.day || currentDT.mon != lastDT.mon || currentDT.year != lastDT.year)
+   {
+      startOfDayBalance = AccountInfoDouble(ACCOUNT_BALANCE);
+      lastDayCheck = currentTime;
+      dailyTargetReached = false;
+      Print("New day started. Start of day balance: $", DoubleToString(startOfDayBalance, 2));
+   }
+   
+   // Check daily target
+   if(!dailyTargetReached && !isPaused)
+   {
+      double currentBalance = AccountInfoDouble(ACCOUNT_BALANCE);
+      double dailyProfit = currentBalance - startOfDayBalance;
+      double dailyProfitPercent = (dailyProfit / startOfDayBalance) * 100.0;
+      
+      if(dailyProfitPercent >= InpDailyTargetPercent)
+      {
+         dailyTargetReached = true;
+         CloseAllTrades();
+         isPaused = true;
+         
+         Print("========================================");
+         Print("DAILY TARGET REACHED!");
+         Print("Target: ", InpDailyTargetPercent, "%");
+         Print("Achieved: ", DoubleToString(dailyProfitPercent, 2), "%");
+         Print("Profit: $", DoubleToString(dailyProfit, 2));
+         Print("EA PAUSED until tomorrow");
+         Print("========================================");
+         
+         Alert("TORAMA Grid: Daily target of ", InpDailyTargetPercent, "% reached! EA paused.");
+         
+         // Update pause button
+         ObjectSetInteger(0, btnPause, OBJPROP_STATE, true);
+         ObjectSetString(0, btnPause, OBJPROP_TEXT, "RESUME");
+         ObjectSetInteger(0, btnPause, OBJPROP_BGCOLOR, clrGreen);
+      }
    }
 }
 
@@ -502,11 +919,16 @@ void CalculateLotPositions()
 }
 
 //+------------------------------------------------------------------+
-//| Get gap in dollars                                                |
+//| Get gap in dollars (uses locked initial gap if grid established)|
 //+------------------------------------------------------------------+
 double GetGapInDollars()
 {
-   return referencePrice * (InpGapPercent / 100.0);
+   // If grid already initialized, always return the locked gap
+   if(gridInitialized)
+      return initialGapDollar;
+   
+   // Otherwise calculate from current reference (pre-initialization)
+   return referencePrice * (initialGapPercent / 100.0);
 }
 
 //+------------------------------------------------------------------+
@@ -554,7 +976,107 @@ void CloseAllTrades()
       }
    }
    
-   Print("All trades closed due to max drawdown");
+   Print("All trades closed manually");
+}
+
+//+------------------------------------------------------------------+
+//| Take profit on all winning trades                                |
+//+------------------------------------------------------------------+
+void TakeAllProfits()
+{
+   int closedCount = 0;
+   
+   for(int i = PositionsTotal() - 1; i >= 0; i--)
+   {
+      ulong ticket = PositionGetTicket(i);
+      if(ticket > 0)
+      {
+         if(PositionGetString(POSITION_SYMBOL) == _Symbol && 
+            PositionGetInteger(POSITION_MAGIC) == magicNumber)
+         {
+            double profit = PositionGetDouble(POSITION_PROFIT);
+            if(profit > 0)
+            {
+               if(trade.PositionClose(ticket))
+                  closedCount++;
+            }
+         }
+      }
+   }
+   
+   Print("Closed ", closedCount, " profitable trades");
+}
+
+//+------------------------------------------------------------------+
+//| Create control buttons                                            |
+//+------------------------------------------------------------------+
+void CreateButtons()
+{
+   int buttonWidth = 100;
+   int buttonHeight = 28;
+   int buttonY = panelY + panelHeight - 70;
+   int spacing = 10;
+   
+   // Close All button
+   ObjectCreate(0, btnCloseAll, OBJ_BUTTON, 0, 0, 0);
+   ObjectSetInteger(0, btnCloseAll, OBJPROP_XDISTANCE, panelX + spacing);
+   ObjectSetInteger(0, btnCloseAll, OBJPROP_YDISTANCE, buttonY);
+   ObjectSetInteger(0, btnCloseAll, OBJPROP_XSIZE, buttonWidth);
+   ObjectSetInteger(0, btnCloseAll, OBJPROP_YSIZE, buttonHeight);
+   ObjectSetString(0, btnCloseAll, OBJPROP_TEXT, "CLOSE ALL");
+   ObjectSetString(0, btnCloseAll, OBJPROP_FONT, "Arial Bold");
+   ObjectSetInteger(0, btnCloseAll, OBJPROP_FONTSIZE, 9);
+   ObjectSetInteger(0, btnCloseAll, OBJPROP_COLOR, clrWhite);
+   ObjectSetInteger(0, btnCloseAll, OBJPROP_BGCOLOR, clrCrimson);
+   ObjectSetInteger(0, btnCloseAll, OBJPROP_BORDER_COLOR, clrRed);
+   ObjectSetInteger(0, btnCloseAll, OBJPROP_CORNER, CORNER_LEFT_UPPER);
+   ObjectSetInteger(0, btnCloseAll, OBJPROP_HIDDEN, true);
+   ObjectSetInteger(0, btnCloseAll, OBJPROP_SELECTABLE, false);
+   ObjectSetInteger(0, btnCloseAll, OBJPROP_ZORDER, 1002);
+   
+   // Take Profit button
+   ObjectCreate(0, btnTakeTP, OBJ_BUTTON, 0, 0, 0);
+   ObjectSetInteger(0, btnTakeTP, OBJPROP_XDISTANCE, panelX + spacing + buttonWidth + spacing);
+   ObjectSetInteger(0, btnTakeTP, OBJPROP_YDISTANCE, buttonY);
+   ObjectSetInteger(0, btnTakeTP, OBJPROP_XSIZE, buttonWidth);
+   ObjectSetInteger(0, btnTakeTP, OBJPROP_YSIZE, buttonHeight);
+   ObjectSetString(0, btnTakeTP, OBJPROP_TEXT, "TAKE TP");
+   ObjectSetString(0, btnTakeTP, OBJPROP_FONT, "Arial Bold");
+   ObjectSetInteger(0, btnTakeTP, OBJPROP_FONTSIZE, 9);
+   ObjectSetInteger(0, btnTakeTP, OBJPROP_COLOR, clrWhite);
+   ObjectSetInteger(0, btnTakeTP, OBJPROP_BGCOLOR, clrGreen);
+   ObjectSetInteger(0, btnTakeTP, OBJPROP_BORDER_COLOR, clrLime);
+   ObjectSetInteger(0, btnTakeTP, OBJPROP_CORNER, CORNER_LEFT_UPPER);
+   ObjectSetInteger(0, btnTakeTP, OBJPROP_HIDDEN, true);
+   ObjectSetInteger(0, btnTakeTP, OBJPROP_SELECTABLE, false);
+   ObjectSetInteger(0, btnTakeTP, OBJPROP_ZORDER, 1002);
+   
+   // Pause button
+   ObjectCreate(0, btnPause, OBJ_BUTTON, 0, 0, 0);
+   ObjectSetInteger(0, btnPause, OBJPROP_XDISTANCE, panelX + spacing + (buttonWidth + spacing) * 2);
+   ObjectSetInteger(0, btnPause, OBJPROP_YDISTANCE, buttonY);
+   ObjectSetInteger(0, btnPause, OBJPROP_XSIZE, buttonWidth);
+   ObjectSetInteger(0, btnPause, OBJPROP_YSIZE, buttonHeight);
+   ObjectSetString(0, btnPause, OBJPROP_TEXT, "PAUSE");
+   ObjectSetString(0, btnPause, OBJPROP_FONT, "Arial Bold");
+   ObjectSetInteger(0, btnPause, OBJPROP_FONTSIZE, 9);
+   ObjectSetInteger(0, btnPause, OBJPROP_COLOR, clrWhite);
+   ObjectSetInteger(0, btnPause, OBJPROP_BGCOLOR, clrOrange);
+   ObjectSetInteger(0, btnPause, OBJPROP_BORDER_COLOR, clrGold);
+   ObjectSetInteger(0, btnPause, OBJPROP_CORNER, CORNER_LEFT_UPPER);
+   ObjectSetInteger(0, btnPause, OBJPROP_HIDDEN, true);
+   ObjectSetInteger(0, btnPause, OBJPROP_SELECTABLE, false);
+   ObjectSetInteger(0, btnPause, OBJPROP_ZORDER, 1002);
+}
+
+//+------------------------------------------------------------------+
+//| Delete control buttons                                            |
+//+------------------------------------------------------------------+
+void DeleteButtons()
+{
+   ObjectDelete(0, btnCloseAll);
+   ObjectDelete(0, btnTakeTP);
+   ObjectDelete(0, btnPause);
 }
 
 //+------------------------------------------------------------------+
@@ -582,52 +1104,57 @@ void CreateUIPanel()
    
    // Title
    CreateLabel(prefix + "Title", "TORAMA MOMENTUM GRID", 
-               panelX + 10, panelY + 10, clrGold, 11, true);
+               panelX + 10, panelY + 8, clrGold, 12, true);
    
-   // Stats labels
-   int yPos = panelY + 45;
-   int lineHeight = 25;
+   // Stats labels - compact professional layout
+   int yPos = panelY + 40;
+   int lineHeight = 26;
    
-   CreateLabel(prefix + "Status", "Status: Waiting", panelX + 10, yPos, clrWhite, 9, false);
+   // Line 1: Status | Spread
+   CreateLabel(prefix + "StatusSpread", "Status: Waiting | Spread: 0", 
+               panelX + 10, yPos, clrWhite, 10, false);
    yPos += lineHeight;
    
-   CreateLabel(prefix + "Spread", "Spread: 0", panelX + 10, yPos, clrWhite, 9, false);
+   // Line 2: Grid | Gap
+   CreateLabel(prefix + "GridGap", "Grid: 0/0 | Gap: 0.00% ($0.00)", 
+               panelX + 10, yPos, clrCyan, 10, false);
    yPos += lineHeight;
    
-   CreateLabel(prefix + "Gap", "Gap: 0.00% ($0.00)", panelX + 10, yPos, clrWhite, 9, false);
+   // Line 3: Price (BOLD, LARGE)
+   CreateLabel(prefix + "Price", "Price: 0.00", 
+               panelX + 10, yPos, clrYellow, 11, true);
    yPos += lineHeight;
    
-   CreateLabel(prefix + "Price", "Price: 0.00", panelX + 10, yPos, clrWhite, 9, true);
+   // Line 4: Next Level
+   CreateLabel(prefix + "NextLevel", "Next: Waiting...", 
+               panelX + 10, yPos, clrYellow, 10, false);
    yPos += lineHeight;
    
-   CreateLabel(prefix + "NextLevel", "Next: Waiting...", panelX + 10, yPos, clrYellow, 9, false);
-   yPos += lineHeight;
-   
-   CreateLabel(prefix + "GridFilled", "Grid Filled: 0/" + IntegerToString(InpGridLevels), 
-               panelX + 10, yPos, clrWhite, 9, false);
-   yPos += lineHeight;
-   
+   // Line 5: Lot Position
    CreateLabel(prefix + "LotPosition", "B: 0.00 | S: 0.00 (Net: 0.00)", 
-               panelX + 10, yPos, clrCyan, 9, false);
+               panelX + 10, yPos, clrMagenta, 10, false);
    yPos += lineHeight;
    
-   CreateLabel(prefix + "Balance", "Balance: $0.00", panelX + 10, yPos, clrLime, 9, false);
+   // Line 6: Balance | Equity (BOLD)
+   CreateLabel(prefix + "BalEq", "Bal: $0.00 | EQ: $0.00", 
+               panelX + 10, yPos, clrLime, 11, true);
    yPos += lineHeight;
    
-   CreateLabel(prefix + "Equity", "Equity: $0.00", panelX + 10, yPos, clrAqua, 9, true);
+   // Line 7: P/L | Drawdown
+   CreateLabel(prefix + "PLDrawdown", "P/L: $0.00 | DD: 0.00%", 
+               panelX + 10, yPos, clrWhite, 10, false);
    yPos += lineHeight;
    
-   CreateLabel(prefix + "PL", "P/L: $0.00", panelX + 10, yPos, clrWhite, 9, false);
-   yPos += lineHeight;
-   
-   CreateLabel(prefix + "Drawdown", "Drawdown: 0.00%", panelX + 10, yPos, clrWhite, 9, false);
+   // Line 8: Margin | Day's Profit
+   CreateLabel(prefix + "MarginDay", "Margin: $0.00 | Day: $0.00", 
+               panelX + 10, yPos, clrWhite, 10, false);
    yPos += lineHeight;
    
    // Branding with right margin
    CreateLabel(prefix + "Brand", "TORAMA CAPITAL", 
-               panelX + panelWidth - 155, panelY + panelHeight - 35, clrGold, 10, true);
+               panelX + panelWidth - 155, panelY + panelHeight - 32, clrGold, 10, true);
    CreateLabel(prefix + "Email", "ea@torama.money", 
-               panelX + panelWidth - 140, panelY + panelHeight - 18, clrGold, 8, false);
+               panelX + panelWidth - 140, panelY + panelHeight - 16, clrGold, 8, false);
 }
 
 //+------------------------------------------------------------------+
@@ -658,62 +1185,67 @@ void UpdateUIPanel()
 {
    string prefix = "TORAMA_UI_";
    
+   // Check if new day and reset start balance
+   static datetime lastCheckDate = 0;
+   datetime currentDate = StringToTime(TimeToString(TimeCurrent(), TIME_DATE));
+   if(currentDate != lastCheckDate && lastCheckDate != 0)
+   {
+      startOfDayBalance = AccountInfoDouble(ACCOUNT_BALANCE);
+      lastCheckDate = currentDate;
+   }
+   else if(lastCheckDate == 0)
+   {
+      lastCheckDate = currentDate;
+   }
+   
    // Calculate lot positions
    CalculateLotPositions();
    
-   // Status
-   string status = "Waiting";
-   color statusColor = clrYellow;
+   // Get account data
+   double balance = AccountInfoDouble(ACCOUNT_BALANCE);
+   double equity = AccountInfoDouble(ACCOUNT_EQUITY);
+   double margin = AccountInfoDouble(ACCOUNT_MARGIN);
+   double pl = equity - balance;
    
-   if(isPaused)
-   {
-      status = "PAUSED";
-      statusColor = clrRed;
-   }
-   else if(gridActivated)
-   {
-      if(currentMode == "BuyOnly")
-      {
-         status = "BUY ONLY";
-         statusColor = clrLime;
-      }
-      else if(currentMode == "SellOnly")
-      {
-         status = "SELL ONLY";
-         statusColor = clrOrange;
-      }
-      else
-      {
-         status = "BIDIRECTIONAL";
-         statusColor = clrAqua;
-      }
-   }
+   // Calculate day's profit
+   double dayProfit = balance - startOfDayBalance;
    
-   ObjectSetString(0, prefix + "Status", OBJPROP_TEXT, "Status: " + status);
-   ObjectSetInteger(0, prefix + "Status", OBJPROP_COLOR, statusColor);
+   // Status line
+   string status = isPaused ? "PAUSED" : (gridActivated ? "ACTIVE" : "Waiting");
+   color statusColor = isPaused ? clrRed : (gridActivated ? clrLime : clrYellow);
    
    // Spread
    long spread = SymbolInfoInteger(_Symbol, SYMBOL_SPREAD);
    color spreadColor = (spread > InpSpreadPoints) ? clrRed : clrLime;
    string spreadText = (spread >= 1000) ? FormatNumber((double)spread, 0) : IntegerToString(spread);
-   ObjectSetString(0, prefix + "Spread", OBJPROP_TEXT, "Spread: " + spreadText);
-   ObjectSetInteger(0, prefix + "Spread", OBJPROP_COLOR, spreadColor);
    
-   // Gap - combined percent and dollar on same line
-   double gapPercent = InpGapPercent;
-   double gapDollar = GetGapInDollars();
-   ObjectSetString(0, prefix + "Gap", OBJPROP_TEXT, 
-                   "Gap: " + DoubleToString(gapPercent, 2) + "% ($" + FormatNumber(gapDollar, 2) + ")");
+   // Line 1: Status | Spread
+   string statusSpreadText = "Status: " + status + " | Spread: " + spreadText;
+   ObjectSetString(0, prefix + "StatusSpread", OBJPROP_TEXT, statusSpreadText);
+   ObjectSetInteger(0, prefix + "StatusSpread", OBJPROP_COLOR, statusColor);
    
-   // Current Price (BOLD)
+   // Line 2: Grid | Gap (shows LOCKED initial gap)
+   double displayGapPercent = gridInitialized ? initialGapPercent : InpGapPercent;
+   double displayGapDollar = gridInitialized ? initialGapDollar : GetGapInDollars();
+   string lockIndicator = gridInitialized ? " 🔒" : "";
+   
+   string gridGapText = "Grid: B:" + IntegerToString(buyLevelsFilled) + 
+                        " S:" + IntegerToString(sellLevelsFilled) + 
+                        " (" + IntegerToString(buyLevelsFilled + sellLevelsFilled) + "/" + 
+                        IntegerToString(InpGridLevels * 2) + ") | Gap: " + 
+                        DoubleToString(displayGapPercent, 2) + "% ($" + FormatNumber(displayGapDollar, 2) + ")" + lockIndicator;
+   ObjectSetString(0, prefix + "GridGap", OBJPROP_TEXT, gridGapText);
+   
+   // Line 3: Price (BOLD, LARGE)
    double currentPrice = SymbolInfoDouble(_Symbol, SYMBOL_BID);
    int digits = (int)SymbolInfoInteger(_Symbol, SYMBOL_DIGITS);
    ObjectSetString(0, prefix + "Price", OBJPROP_TEXT, 
                    "Price: " + FormatNumber(currentPrice, digits));
    
-   // Next Level - show both buy and sell or just active direction
+   // Line 4: Next Level
    string nextLevelText = "Next: Waiting...";
    color nextLevelColor = clrYellow;
+   double gapDollar = displayGapDollar; // Use the gap dollar from line 2
    
    if(!gridActivated)
    {
@@ -721,7 +1253,6 @@ void UpdateUIPanel()
       double firstSellLevel = referencePrice - gapDollar;
       nextLevelText = "Next: B@" + FormatNumber(firstBuyLevel, digits) + 
                       " | S@" + FormatNumber(firstSellLevel, digits);
-      nextLevelColor = clrYellow;
    }
    else
    {
@@ -747,69 +1278,34 @@ void UpdateUIPanel()
          }
       }
       
-      if(currentMode == "BuyOnly")
+      // Always show both levels (classic bidirectional)
+      if(nextBuyLevel > 0 && nextSellLevel > 0)
       {
-         if(nextBuyLevel > 0)
-         {
-            nextLevelText = "Next: BUY @ " + FormatNumber(nextBuyLevel, digits);
-            nextLevelColor = clrLime;
-         }
-         else
-         {
-            nextLevelText = "Next: Buy Grid Complete!";
-            nextLevelColor = clrGold;
-         }
+         nextLevelText = "Next: B@" + FormatNumber(nextBuyLevel, digits) + 
+                        " | S@" + FormatNumber(nextSellLevel, digits);
+         nextLevelColor = clrAqua;
       }
-      else if(currentMode == "SellOnly")
+      else if(nextBuyLevel > 0)
       {
-         if(nextSellLevel > 0)
-         {
-            nextLevelText = "Next: SELL @ " + FormatNumber(nextSellLevel, digits);
-            nextLevelColor = clrOrange;
-         }
-         else
-         {
-            nextLevelText = "Next: Sell Grid Complete!";
-            nextLevelColor = clrGold;
-         }
+         nextLevelText = "Next: BUY @ " + FormatNumber(nextBuyLevel, digits);
+         nextLevelColor = clrLime;
       }
-      else // Bidirectional
+      else if(nextSellLevel > 0)
       {
-         if(nextBuyLevel > 0 && nextSellLevel > 0)
-         {
-            nextLevelText = "Next: B@" + FormatNumber(nextBuyLevel, digits) + 
-                           " | S@" + FormatNumber(nextSellLevel, digits);
-            nextLevelColor = clrAqua;
-         }
-         else if(nextBuyLevel > 0)
-         {
-            nextLevelText = "Next: BUY @ " + FormatNumber(nextBuyLevel, digits);
-            nextLevelColor = clrLime;
-         }
-         else if(nextSellLevel > 0)
-         {
-            nextLevelText = "Next: SELL @ " + FormatNumber(nextSellLevel, digits);
-            nextLevelColor = clrOrange;
-         }
-         else
-         {
-            nextLevelText = "Next: All Grids Complete!";
-            nextLevelColor = clrGold;
-         }
+         nextLevelText = "Next: SELL @ " + FormatNumber(nextSellLevel, digits);
+         nextLevelColor = clrOrange;
+      }
+      else
+      {
+         nextLevelText = "Next: All Grids Complete!";
+         nextLevelColor = clrGold;
       }
    }
    
    ObjectSetString(0, prefix + "NextLevel", OBJPROP_TEXT, nextLevelText);
    ObjectSetInteger(0, prefix + "NextLevel", OBJPROP_COLOR, nextLevelColor);
    
-   // Grid filled - show both buy and sell counts
-   string gridFilledText = "Grid: B:" + IntegerToString(buyLevelsFilled) + 
-                          " S:" + IntegerToString(sellLevelsFilled) + 
-                          " (" + IntegerToString(buyLevelsFilled + sellLevelsFilled) + "/" + 
-                          IntegerToString(InpGridLevels * 2) + ")";
-   ObjectSetString(0, prefix + "GridFilled", OBJPROP_TEXT, gridFilledText);
-   
-   // Lot Position
+   // Line 5: Lot Position
    string lotPositionText = "B: " + DoubleToString(totalBuyLots, 2) + 
                            " | S: " + DoubleToString(totalSellLots, 2);
    
@@ -820,32 +1316,26 @@ void UpdateUIPanel()
    
    ObjectSetString(0, prefix + "LotPosition", OBJPROP_TEXT, lotPositionText);
    
-   // Balance
-   double balance = AccountInfoDouble(ACCOUNT_BALANCE);
-   ObjectSetString(0, prefix + "Balance", OBJPROP_TEXT, 
-                   "Balance: $" + FormatNumber(balance, 2));
+   // Line 6: Balance | Equity (BOLD)
+   string balEqText = "Bal: $" + FormatNumber(balance, 2) + " | EQ: $" + FormatNumber(equity, 2);
+   ObjectSetString(0, prefix + "BalEq", OBJPROP_TEXT, balEqText);
    
-   // Equity (BOLD)
-   double equity = AccountInfoDouble(ACCOUNT_EQUITY);
-   ObjectSetString(0, prefix + "Equity", OBJPROP_TEXT, 
-                   "Equity: $" + FormatNumber(equity, 2));
-   
-   // P/L
-   double pl = equity - balance;
+   // Line 7: P/L | Drawdown
    color plColor = (pl >= 0) ? clrLime : clrRed;
-   ObjectSetString(0, prefix + "PL", OBJPROP_TEXT, 
-                   "P/L: $" + FormatNumber(pl, 2));
-   ObjectSetInteger(0, prefix + "PL", OBJPROP_COLOR, plColor);
-   
-   // Drawdown
    double drawdown = ((peakEquity - equity) / initialBalance) * 100.0;
    color ddColor = clrWhite;
    if(drawdown > InpMaxDrawdownPercent * 0.8) ddColor = clrOrange;
    if(drawdown >= InpMaxDrawdownPercent) ddColor = clrRed;
    
-   ObjectSetString(0, prefix + "Drawdown", OBJPROP_TEXT, 
-                   "Drawdown: " + DoubleToString(drawdown, 2) + "%");
-   ObjectSetInteger(0, prefix + "Drawdown", OBJPROP_COLOR, ddColor);
+   string plDDText = "P/L: $" + FormatNumber(pl, 2) + " | DD: " + DoubleToString(drawdown, 2) + "%";
+   ObjectSetString(0, prefix + "PLDrawdown", OBJPROP_TEXT, plDDText);
+   ObjectSetInteger(0, prefix + "PLDrawdown", OBJPROP_COLOR, plColor);
+   
+   // Line 8: Margin | Day's Profit
+   color dayColor = (dayProfit >= 0) ? clrLime : clrRed;
+   string marginDayText = "Margin: $" + FormatNumber(margin, 2) + " | Day: $" + FormatNumber(dayProfit, 2);
+   ObjectSetString(0, prefix + "MarginDay", OBJPROP_TEXT, marginDayText);
+   ObjectSetInteger(0, prefix + "MarginDay", OBJPROP_COLOR, dayColor);
 }
 
 //+------------------------------------------------------------------+
@@ -857,17 +1347,14 @@ void DeleteUIPanel()
    
    ObjectDelete(0, prefix + "BG");
    ObjectDelete(0, prefix + "Title");
-   ObjectDelete(0, prefix + "Status");
-   ObjectDelete(0, prefix + "Spread");
-   ObjectDelete(0, prefix + "Gap");
+   ObjectDelete(0, prefix + "StatusSpread");
+   ObjectDelete(0, prefix + "GridGap");
    ObjectDelete(0, prefix + "Price");
    ObjectDelete(0, prefix + "NextLevel");
-   ObjectDelete(0, prefix + "GridFilled");
    ObjectDelete(0, prefix + "LotPosition");
-   ObjectDelete(0, prefix + "Balance");
-   ObjectDelete(0, prefix + "Equity");
-   ObjectDelete(0, prefix + "PL");
-   ObjectDelete(0, prefix + "Drawdown");
+   ObjectDelete(0, prefix + "BalEq");
+   ObjectDelete(0, prefix + "PLDrawdown");
+   ObjectDelete(0, prefix + "MarginDay");
    ObjectDelete(0, prefix + "Brand");
    ObjectDelete(0, prefix + "Email");
 }
