@@ -28,7 +28,8 @@ input group "=== Risk Management ==="
 input bool     InpAutoLotSize = false;          // Auto Calculate Lot Size
 input double   InpLotSize = 0.01;               // Manual Lot Size
 input double   InpRiskPercent = 1.0;            // Risk per Trade (%)
-input double   InpRiskRewardRatio = 1.0;        // Risk:Reward Ratio
+input double   InpSLPercent = 1.0;              // Stop Loss (% of price, 0 = No SL)
+input double   InpTPPercent = 1.0;              // Take Profit (% of price, 0 = No TP)
 input double   InpMaxDrawdownPercent = 20.0;    // Max Drawdown (%)
 input double   InpDailyTargetPercent = 10.0;    // Daily Target (%)
 
@@ -768,102 +769,78 @@ void OpenGridTrade(ENUM_ORDER_TYPE orderType, int level)
       return;
    }
    
-   // Calculate SL/TP based on risk percent
-   double balance = AccountInfoDouble(ACCOUNT_BALANCE);
-   double riskAmount = balance * (InpRiskPercent / 100.0);
-   
-   // Use broker-validated properties
-   if(symbolTickValue <= 0 || symbolTickSize <= 0)
-   {
-      Print("ERROR: Invalid tick properties");
-      return;
-   }
-   
-   // Calculate SL distance
-   double slDistanceInPrice = (riskAmount / (symbolTickValue * calculatedLotSize)) * symbolTickSize;
-   
-   // Adjust for contract size if applicable
-   if(symbolContractSize > 0 && symbolContractSize != 1.0)
-   {
-      double pointValue = (symbolPoint / price) * symbolContractSize * calculatedLotSize;
-      if(pointValue > 0)
-      {
-         double slDistancePoints = riskAmount / pointValue;
-         slDistanceInPrice = slDistancePoints * symbolPoint;
-      }
-   }
-   
-   // Calculate TP
-   double tpDistanceInPrice = slDistanceInPrice * InpRiskRewardRatio;
-   
+   // Calculate SL/TP based on percentage of price
    double sl = 0.0;
    double tp = 0.0;
    
-   if(orderType == ORDER_TYPE_BUY)
+   // Calculate SL (0 = no SL)
+   if(InpSLPercent > 0)
    {
-      sl = price - slDistanceInPrice;
-      tp = price + tpDistanceInPrice;
+      double slDistanceInPrice = price * (InpSLPercent / 100.0);
+      
+      if(orderType == ORDER_TYPE_BUY)
+         sl = price - slDistanceInPrice;
+      else
+         sl = price + slDistanceInPrice;
+      
+      // Normalize
+      sl = NormalizeDouble(sl, symbolDigits);
+      
+      // Validate against broker stops level
+      double minStopDistance = symbolStopsLevel * symbolPoint;
+      if(minStopDistance > 0)
+      {
+         if(orderType == ORDER_TYPE_BUY && (price - sl) < minStopDistance)
+         {
+            sl = NormalizeDouble(price - minStopDistance, symbolDigits);
+            Print("SL adjusted to broker minimum: ", sl);
+         }
+         else if(orderType == ORDER_TYPE_SELL && (sl - price) < minStopDistance)
+         {
+            sl = NormalizeDouble(price + minStopDistance, symbolDigits);
+            Print("SL adjusted to broker minimum: ", sl);
+         }
+      }
    }
    else
    {
-      sl = price + slDistanceInPrice;
-      tp = price - tpDistanceInPrice;
+      sl = 0; // No stop loss
+      Print("Trading without Stop Loss");
    }
    
-   // Normalize prices
-   sl = NormalizeDouble(sl, symbolDigits);
-   tp = NormalizeDouble(tp, symbolDigits);
-   
-   // Validate against broker stops level
-   double minStopDistance = symbolStopsLevel * symbolPoint;
-   
-   if(minStopDistance > 0)
+   // Calculate TP (0 = no TP)
+   if(InpTPPercent > 0)
    {
+      double tpDistanceInPrice = price * (InpTPPercent / 100.0);
+      
       if(orderType == ORDER_TYPE_BUY)
-      {
-         if(price - sl < minStopDistance)
-         {
-            sl = NormalizeDouble(price - minStopDistance, symbolDigits);
-            tp = NormalizeDouble(price + (minStopDistance * InpRiskRewardRatio), symbolDigits);
-            Print("SL/TP adjusted for broker stops level");
-         }
-      }
+         tp = price + tpDistanceInPrice;
       else
+         tp = price - tpDistanceInPrice;
+      
+      // Normalize
+      tp = NormalizeDouble(tp, symbolDigits);
+      
+      // Validate against broker stops level
+      double minStopDistance = symbolStopsLevel * symbolPoint;
+      if(minStopDistance > 0)
       {
-         if(sl - price < minStopDistance)
+         if(orderType == ORDER_TYPE_BUY && (tp - price) < minStopDistance)
          {
-            sl = NormalizeDouble(price + minStopDistance, symbolDigits);
-            tp = NormalizeDouble(price - (minStopDistance * InpRiskRewardRatio), symbolDigits);
-            Print("SL/TP adjusted for broker stops level");
+            tp = NormalizeDouble(price + minStopDistance, symbolDigits);
+            Print("TP adjusted to broker minimum: ", tp);
+         }
+         else if(orderType == ORDER_TYPE_SELL && (price - tp) < minStopDistance)
+         {
+            tp = NormalizeDouble(price - minStopDistance, symbolDigits);
+            Print("TP adjusted to broker minimum: ", tp);
          }
       }
    }
-   
-   // Validate freeze level
-   double freezeDistance = symbolFreezeLevel * symbolPoint;
-   if(freezeDistance > 0)
+   else
    {
-      if(MathAbs(price - sl) < freezeDistance || MathAbs(price - tp) < freezeDistance)
-      {
-         Print("WARNING: Price too close to freeze level. Adjusting...");
-         if(orderType == ORDER_TYPE_BUY)
-         {
-            sl = NormalizeDouble(price - freezeDistance * 1.5, symbolDigits);
-            tp = NormalizeDouble(price + freezeDistance * 1.5 * InpRiskRewardRatio, symbolDigits);
-         }
-         else
-         {
-            sl = NormalizeDouble(price + freezeDistance * 1.5, symbolDigits);
-            tp = NormalizeDouble(price - freezeDistance * 1.5 * InpRiskRewardRatio, symbolDigits);
-         }
-      }
-   }
-   
-   // Final validation
-   if(sl <= 0 || tp <= 0)
-   {
-      Print("ERROR: Invalid SL/TP - SL: ", sl, " TP: ", tp);
-      return;
+      tp = 0; // No take profit
+      Print("Trading without Take Profit");
    }
    
    string comment = InpTradeComment + "_L" + IntegerToString(level + 1);
@@ -909,13 +886,15 @@ void OpenGridTrade(ENUM_ORDER_TYPE orderType, int level)
    
    if(result)
    {
+      string slText = (sl > 0) ? DoubleToString(sl, symbolDigits) : "None";
+      string tpText = (tp > 0) ? DoubleToString(tp, symbolDigits) : "None";
+      
       Print("✓ Grid trade opened: ", EnumToString(orderType), 
             " | Level: ", level + 1, 
             " | Lot: ", calculatedLotSize,
             " | Price: ", price,
-            " | SL: ", sl,
-            " | TP: ", tp,
-            " | Risk: $", DoubleToString(riskAmount, 2));
+            " | SL: ", slText,
+            " | TP: ", tpText);
    }
    else
    {
