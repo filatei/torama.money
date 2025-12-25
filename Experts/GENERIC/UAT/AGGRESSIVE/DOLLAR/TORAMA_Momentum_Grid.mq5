@@ -230,6 +230,13 @@ bool InitializeBrokerProperties()
    Print("Broker Properties:");
    Print("  Min Lot: ", symbolMinLot, " | Max: ", symbolMaxLot, " | Step: ", symbolLotStep);
    Print("  Stops Level: ", symbolStopsLevel, " | Fill Mode: ", EnumToString(symbolFillMode));
+   Print("  Point: ", symbolPoint, " | Digits: ", symbolDigits);
+   
+   // Show current spread
+   long currentSpread = SymbolInfoInteger(_Symbol, SYMBOL_SPREAD);
+   double ask = SymbolInfoDouble(_Symbol, SYMBOL_ASK);
+   double bid = SymbolInfoDouble(_Symbol, SYMBOL_BID);
+   Print("  Current Spread: ", currentSpread, " points | Ask: ", ask, " | Bid: ", bid);
    
    return true;
 }
@@ -574,8 +581,9 @@ void OpenGridTrade(ENUM_ORDER_TYPE orderType, int level)
       return;
    }
    
-   // Check spread
-   long spread = SymbolInfoInteger(_Symbol, SYMBOL_SPREAD);
+   // Check spread - using helper function
+   long spread = GetCurrentSpread();
+   
    if(spread > InpSpreadPoints)
    {
       Print("Spread too high: ", spread, " points. Trade skipped.");
@@ -767,6 +775,33 @@ string ErrorDescription(int error)
       case 10027: return "Trading disabled";
       default: return "Error " + IntegerToString(error);
    }
+}
+
+//+------------------------------------------------------------------+
+//| Get current spread in points (with Ask-Bid fallback)            |
+//+------------------------------------------------------------------+
+long GetCurrentSpread()
+{
+   // Try to get spread from symbol properties
+   long spread = SymbolInfoInteger(_Symbol, SYMBOL_SPREAD);
+   
+   // If spread is 0 or invalid, calculate from Ask-Bid
+   if(spread == 0)
+   {
+      double ask = SymbolInfoDouble(_Symbol, SYMBOL_ASK);
+      double bid = SymbolInfoDouble(_Symbol, SYMBOL_BID);
+      
+      if(ask > 0 && bid > 0)
+      {
+         double spreadPrice = ask - bid;
+         double point = SymbolInfoDouble(_Symbol, SYMBOL_POINT);
+         
+         if(point > 0)
+            spread = (long)MathRound(spreadPrice / point);
+      }
+   }
+   
+   return spread;
 }
 
 //+------------------------------------------------------------------+
@@ -1214,10 +1249,18 @@ void UpdateUIPanel()
    string status = isPaused ? "PAUSED" : (gridActivated ? "ACTIVE" : "Waiting");
    color statusColor = isPaused ? clrRed : (gridActivated ? clrLime : clrYellow);
    
-   // Spread
-   long spread = SymbolInfoInteger(_Symbol, SYMBOL_SPREAD);
+   // Spread - using helper function
+   long spread = GetCurrentSpread();
    color spreadColor = (spread > InpSpreadPoints) ? clrRed : clrLime;
-   string spreadText = (spread >= 1000) ? FormatNumber((double)spread, 0) : IntegerToString(spread);
+   
+   string spreadText = "";
+   if(spread >= 1000)
+      spreadText = FormatNumber((double)spread, 0);
+   else
+      spreadText = IntegerToString(spread);
+   
+   // Add "pts" suffix for clarity
+   spreadText += " pts";
    
    // Line 1: Status | Spread
    string statusSpreadText = "Status: " + status + " | Spread: " + spreadText;
