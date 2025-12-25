@@ -15,6 +15,15 @@ input group "=== Grid Settings ==="
 input int      InpGridLevels = 10;              // Number of Grid Levels
 input double   InpGapPercent = 0.5;             // Gap (% of price)
 
+input group "=== Trading Direction ==="
+enum ENUM_TRADE_DIRECTION
+{
+   DIRECTION_MOMENTUM = 0,    // Momentum (Buy Up, Sell Down)
+   DIRECTION_BUY_ONLY = 1,    // Buy Only (All Levels)
+   DIRECTION_SELL_ONLY = 2    // Sell Only (All Levels)
+};
+input ENUM_TRADE_DIRECTION InpDirection = DIRECTION_MOMENTUM; // Trading Direction
+
 input group "=== Risk Management ==="
 input bool     InpAutoLotSize = false;          // Auto Calculate Lot Size
 input double   InpLotSize = 0.01;               // Manual Lot Size
@@ -387,16 +396,40 @@ void CalculateGridLevels()
    // Calculate gap using initial settings (locked at EA start)
    initialGapDollar = referencePrice * (initialGapPercent / 100.0);
    
-   // Calculate buy levels (above reference)
-   for(int i = 0; i < InpGridLevels; i++)
+   if(InpDirection == DIRECTION_MOMENTUM)
    {
-      buyGridLevels[i] = referencePrice + (initialGapDollar * (i + 1));
+      // MOMENTUM: Buy levels ABOVE reference, Sell levels BELOW reference
+      for(int i = 0; i < InpGridLevels; i++)
+      {
+         buyGridLevels[i] = referencePrice + (initialGapDollar * (i + 1));
+         sellGridLevels[i] = referencePrice - (initialGapDollar * (i + 1));
+      }
    }
-   
-   // Calculate sell levels (below reference)
-   for(int i = 0; i < InpGridLevels; i++)
+   else if(InpDirection == DIRECTION_BUY_ONLY)
    {
-      sellGridLevels[i] = referencePrice - (initialGapDollar * (i + 1));
+      // BUY ONLY: All levels are buy levels (both above and below reference)
+      for(int i = 0; i < InpGridLevels; i++)
+      {
+         buyGridLevels[i] = referencePrice + (initialGapDollar * (i + 1));
+      }
+      // Below reference also buys
+      for(int i = 0; i < InpGridLevels; i++)
+      {
+         sellGridLevels[i] = referencePrice - (initialGapDollar * (i + 1));
+      }
+   }
+   else if(InpDirection == DIRECTION_SELL_ONLY)
+   {
+      // SELL ONLY: All levels are sell levels (both above and below reference)
+      for(int i = 0; i < InpGridLevels; i++)
+      {
+         buyGridLevels[i] = referencePrice + (initialGapDollar * (i + 1));
+      }
+      // Below reference also sells
+      for(int i = 0; i < InpGridLevels; i++)
+      {
+         sellGridLevels[i] = referencePrice - (initialGapDollar * (i + 1));
+      }
    }
    
    // Mark grid as initialized - levels are now fixed
@@ -404,28 +437,48 @@ void CalculateGridLevels()
    
    Print("========================================");
    Print("GRID LEVELS CALCULATED & LOCKED");
+   Print("Trading Direction: ", EnumToString(InpDirection));
    Print("Reference Price: ", referencePrice);
    Print("Gap: ", initialGapPercent, "% ($", DoubleToString(initialGapDollar, 2), ")");
    Print("");
-   Print("BUY LEVELS (Above Reference):");
-   Print("  Level 1: ", buyGridLevels[0], " (+", DoubleToString(initialGapDollar, 2), ")");
-   Print("  Level 2: ", buyGridLevels[1], " (+", DoubleToString(initialGapDollar * 2, 2), ")");
-   Print("  ...");
-   Print("  Level ", InpGridLevels, ": ", buyGridLevels[InpGridLevels-1]);
+   
+   if(InpDirection == DIRECTION_MOMENTUM)
+   {
+      Print("MOMENTUM MODE:");
+      Print("BUY LEVELS (Above Reference):");
+      Print("  Level 1: ", buyGridLevels[0], " (+", DoubleToString(initialGapDollar, 2), ")");
+      Print("  Level 2: ", buyGridLevels[1], " (+", DoubleToString(initialGapDollar * 2, 2), ")");
+      Print("  ...");
+      Print("  Level ", InpGridLevels, ": ", buyGridLevels[InpGridLevels-1]);
+      Print("");
+      Print("SELL LEVELS (Below Reference):");
+      Print("  Level 1: ", sellGridLevels[0], " (-", DoubleToString(initialGapDollar, 2), ")");
+      Print("  Level 2: ", sellGridLevels[1], " (-", DoubleToString(initialGapDollar * 2, 2), ")");
+      Print("  ...");
+      Print("  Level ", InpGridLevels, ": ", sellGridLevels[InpGridLevels-1]);
+   }
+   else if(InpDirection == DIRECTION_BUY_ONLY)
+   {
+      Print("BUY ONLY MODE:");
+      Print("Above Ref (BUY): ", buyGridLevels[0], " to ", buyGridLevels[InpGridLevels-1]);
+      Print("Below Ref (BUY): ", sellGridLevels[InpGridLevels-1], " to ", sellGridLevels[0]);
+      Print("ALL GRID LEVELS TRIGGER BUY ORDERS");
+   }
+   else if(InpDirection == DIRECTION_SELL_ONLY)
+   {
+      Print("SELL ONLY MODE:");
+      Print("Above Ref (SELL): ", buyGridLevels[0], " to ", buyGridLevels[InpGridLevels-1]);
+      Print("Below Ref (SELL): ", sellGridLevels[InpGridLevels-1], " to ", sellGridLevels[0]);
+      Print("ALL GRID LEVELS TRIGGER SELL ORDERS");
+   }
+   
    Print("");
-   Print("SELL LEVELS (Below Reference):");
-   Print("  Level 1: ", sellGridLevels[0], " (-", DoubleToString(initialGapDollar, 2), ")");
-   Print("  Level 2: ", sellGridLevels[1], " (-", DoubleToString(initialGapDollar * 2, 2), ")");
-   Print("  ...");
-   Print("  Level ", InpGridLevels, ": ", sellGridLevels[InpGridLevels-1]);
-   Print("");
-   Print("BIDIRECTIONAL: BUY above ref, SELL below ref");
    Print("Grid is now FIXED - immune to input changes");
    Print("========================================");
 }
 
 //+------------------------------------------------------------------+
-//| Check if first grid level is triggered (bidirectional)          |
+//| Check if first grid level is triggered (direction-aware)        |
 //+------------------------------------------------------------------+
 void CheckFirstGridTrigger(double currentPrice)
 {
@@ -433,62 +486,164 @@ void CheckFirstGridTrigger(double currentPrice)
    double firstBuyLevel = referencePrice + gapDollar;
    double firstSellLevel = referencePrice - gapDollar;
    
-   // Check for buy trigger (price moved up)
-   if(currentPrice >= firstBuyLevel && !buyLevelTriggered[0])
+   if(InpDirection == DIRECTION_MOMENTUM)
    {
-      gridActivated = true;
-      OpenGridTrade(ORDER_TYPE_BUY, 0);
-      buyLevelTriggered[0] = true;
-      buyLevelsFilled++;
+      // MOMENTUM: Buy up (above ref), Sell down (below ref)
+      if(currentPrice >= firstBuyLevel && !buyLevelTriggered[0])
+      {
+         gridActivated = true;
+         OpenGridTrade(ORDER_TYPE_BUY, 0);
+         buyLevelTriggered[0] = true;
+         buyLevelsFilled++;
+         Print("MOMENTUM: First BUY level triggered at: ", firstBuyLevel);
+      }
       
-      Print("First BUY grid level triggered at: ", firstBuyLevel);
+      if(currentPrice <= firstSellLevel && !sellLevelTriggered[0])
+      {
+         gridActivated = true;
+         OpenGridTrade(ORDER_TYPE_SELL, 0);
+         sellLevelTriggered[0] = true;
+         sellLevelsFilled++;
+         Print("MOMENTUM: First SELL level triggered at: ", firstSellLevel);
+      }
    }
-   
-   // Check for sell trigger (price moved down)
-   if(currentPrice <= firstSellLevel && !sellLevelTriggered[0])
+   else if(InpDirection == DIRECTION_BUY_ONLY)
    {
-      gridActivated = true;
-      OpenGridTrade(ORDER_TYPE_SELL, 0);
-      sellLevelTriggered[0] = true;
-      sellLevelsFilled++;
+      // BUY ONLY: All levels trigger BUY orders
+      if(currentPrice >= firstBuyLevel && !buyLevelTriggered[0])
+      {
+         gridActivated = true;
+         OpenGridTrade(ORDER_TYPE_BUY, 0);
+         buyLevelTriggered[0] = true;
+         buyLevelsFilled++;
+         Print("BUY ONLY: First level (above) triggered at: ", firstBuyLevel);
+      }
       
-      Print("First SELL grid level triggered at: ", firstSellLevel);
+      if(currentPrice <= firstSellLevel && !sellLevelTriggered[0])
+      {
+         gridActivated = true;
+         OpenGridTrade(ORDER_TYPE_BUY, 0); // BUY even below reference
+         sellLevelTriggered[0] = true;
+         sellLevelsFilled++;
+         Print("BUY ONLY: First level (below) triggered at: ", firstSellLevel);
+      }
+   }
+   else if(InpDirection == DIRECTION_SELL_ONLY)
+   {
+      // SELL ONLY: All levels trigger SELL orders
+      if(currentPrice >= firstBuyLevel && !buyLevelTriggered[0])
+      {
+         gridActivated = true;
+         OpenGridTrade(ORDER_TYPE_SELL, 0); // SELL even above reference
+         buyLevelTriggered[0] = true;
+         buyLevelsFilled++;
+         Print("SELL ONLY: First level (above) triggered at: ", firstBuyLevel);
+      }
+      
+      if(currentPrice <= firstSellLevel && !sellLevelTriggered[0])
+      {
+         gridActivated = true;
+         OpenGridTrade(ORDER_TYPE_SELL, 0);
+         sellLevelTriggered[0] = true;
+         sellLevelsFilled++;
+         Print("SELL ONLY: First level (below) triggered at: ", firstSellLevel);
+      }
    }
 }
 
 //+------------------------------------------------------------------+
-//| Check grid level triggers (classic bidirectional)               |
+//| Check grid level triggers (direction-aware)                     |
 //+------------------------------------------------------------------+
 void CheckGridLevelTriggers(double currentPrice)
 {
    // First, check if any levels should be reset (trades closed at TP)
    ResetClosedGridLevels();
    
-   // Check buy levels (buy up)
-   for(int i = 0; i < InpGridLevels; i++)
+   if(InpDirection == DIRECTION_MOMENTUM)
    {
-      if(!buyLevelTriggered[i] && currentPrice >= buyGridLevels[i])
+      // MOMENTUM: Buy levels above ref, Sell levels below ref
+      // Check buy levels (buy up)
+      for(int i = 0; i < InpGridLevels; i++)
       {
-         OpenGridTrade(ORDER_TYPE_BUY, i);
-         buyLevelTriggered[i] = true;
-         buyLevelsFilled++;
-         
-         Print("BUY grid level ", i + 1, " triggered at: ", buyGridLevels[i]);
-         break; // Only trigger one level per tick
+         if(!buyLevelTriggered[i] && currentPrice >= buyGridLevels[i])
+         {
+            OpenGridTrade(ORDER_TYPE_BUY, i);
+            buyLevelTriggered[i] = true;
+            buyLevelsFilled++;
+            Print("MOMENTUM BUY level ", i + 1, " triggered at: ", buyGridLevels[i]);
+            break;
+         }
+      }
+      
+      // Check sell levels (sell down)
+      for(int i = 0; i < InpGridLevels; i++)
+      {
+         if(!sellLevelTriggered[i] && currentPrice <= sellGridLevels[i])
+         {
+            OpenGridTrade(ORDER_TYPE_SELL, i);
+            sellLevelTriggered[i] = true;
+            sellLevelsFilled++;
+            Print("MOMENTUM SELL level ", i + 1, " triggered at: ", sellGridLevels[i]);
+            break;
+         }
       }
    }
-   
-   // Check sell levels (sell down)
-   for(int i = 0; i < InpGridLevels; i++)
+   else if(InpDirection == DIRECTION_BUY_ONLY)
    {
-      if(!sellLevelTriggered[i] && currentPrice <= sellGridLevels[i])
+      // BUY ONLY: All levels trigger BUY orders
+      // Check above reference levels
+      for(int i = 0; i < InpGridLevels; i++)
       {
-         OpenGridTrade(ORDER_TYPE_SELL, i);
-         sellLevelTriggered[i] = true;
-         sellLevelsFilled++;
-         
-         Print("SELL grid level ", i + 1, " triggered at: ", sellGridLevels[i]);
-         break; // Only trigger one level per tick
+         if(!buyLevelTriggered[i] && currentPrice >= buyGridLevels[i])
+         {
+            OpenGridTrade(ORDER_TYPE_BUY, i);
+            buyLevelTriggered[i] = true;
+            buyLevelsFilled++;
+            Print("BUY ONLY (above) level ", i + 1, " triggered at: ", buyGridLevels[i]);
+            break;
+         }
+      }
+      
+      // Check below reference levels (also BUY)
+      for(int i = 0; i < InpGridLevels; i++)
+      {
+         if(!sellLevelTriggered[i] && currentPrice <= sellGridLevels[i])
+         {
+            OpenGridTrade(ORDER_TYPE_BUY, i);
+            sellLevelTriggered[i] = true;
+            sellLevelsFilled++;
+            Print("BUY ONLY (below) level ", i + 1, " triggered at: ", sellGridLevels[i]);
+            break;
+         }
+      }
+   }
+   else if(InpDirection == DIRECTION_SELL_ONLY)
+   {
+      // SELL ONLY: All levels trigger SELL orders
+      // Check above reference levels (SELL)
+      for(int i = 0; i < InpGridLevels; i++)
+      {
+         if(!buyLevelTriggered[i] && currentPrice >= buyGridLevels[i])
+         {
+            OpenGridTrade(ORDER_TYPE_SELL, i);
+            buyLevelTriggered[i] = true;
+            buyLevelsFilled++;
+            Print("SELL ONLY (above) level ", i + 1, " triggered at: ", buyGridLevels[i]);
+            break;
+         }
+      }
+      
+      // Check below reference levels (also SELL)
+      for(int i = 0; i < InpGridLevels; i++)
+      {
+         if(!sellLevelTriggered[i] && currentPrice <= sellGridLevels[i])
+         {
+            OpenGridTrade(ORDER_TYPE_SELL, i);
+            sellLevelTriggered[i] = true;
+            sellLevelsFilled++;
+            Print("SELL ONLY (below) level ", i + 1, " triggered at: ", sellGridLevels[i]);
+            break;
+         }
       }
    }
 }
@@ -1302,7 +1457,7 @@ void UpdateUIPanel()
    ObjectSetString(0, prefix + "Price", OBJPROP_TEXT, 
                    "Price: " + FormatNumber(currentPrice, digits));
    
-   // Line 4: Reference Price
+   // Line 4: Reference Price with Direction Mode
    string refPriceText = "";
    color refPriceColor = clrOrange;
    
@@ -1310,25 +1465,40 @@ void UpdateUIPanel()
    {
       refPriceText = "Ref: " + FormatNumber(referencePrice, digits);
       
-      // Show grid direction indicators
-      string gridStatus = " | Grid: ";
-      if(currentPrice > referencePrice)
+      // Show direction and zone
+      string directionInfo = " | ";
+      
+      if(InpDirection == DIRECTION_MOMENTUM)
       {
-         gridStatus += "↑ ABOVE (Buy Zone)";
+         // Momentum mode - show zone
+         if(currentPrice > referencePrice)
+         {
+            directionInfo += "MOMENTUM ↑ (Buy Zone)";
+            refPriceColor = clrLime;
+         }
+         else if(currentPrice < referencePrice)
+         {
+            directionInfo += "MOMENTUM ↓ (Sell Zone)";
+            refPriceColor = clrOrange;
+         }
+         else
+         {
+            directionInfo += "MOMENTUM = AT REF";
+            refPriceColor = clrYellow;
+         }
+      }
+      else if(InpDirection == DIRECTION_BUY_ONLY)
+      {
+         directionInfo += "BUY ONLY (All Levels)";
          refPriceColor = clrLime;
       }
-      else if(currentPrice < referencePrice)
+      else if(InpDirection == DIRECTION_SELL_ONLY)
       {
-         gridStatus += "↓ BELOW (Sell Zone)";
-         refPriceColor = clrOrange;
-      }
-      else
-      {
-         gridStatus += "= AT REF";
-         refPriceColor = clrYellow;
+         directionInfo += "SELL ONLY (All Levels)";
+         refPriceColor = clrCrimson;
       }
       
-      refPriceText += gridStatus;
+      refPriceText += directionInfo;
    }
    else if(referencePrice > 0)
    {
