@@ -1,7 +1,7 @@
-; saved automatically on 2025.12.25 04:00:00
+; saved automatically on 2025.12.25 05:00:00
 ; TORAMA CAPITAL - Momentum Grid EA
-; Flexible SL/TP: Set SL=0 for no stop loss, TP as % of price
-; Example: SL=0, TP=1.0 means no SL but TP at 1% profit
+; Flexible SL/TP: SL=0 (disabled by default), TP=1%
+; Manual Grid Reset button available
 InpGridLevels=20
 ||InpGridLevels||20||15||30||N||5||Y
 InpGapPercent=0.06
@@ -12,8 +12,6 @@ InpAutoLotSize=true
 ||InpAutoLotSize||true
 InpLotSize=3.00
 ||InpLotSize||3.00||2.0||5.0||N||0.5||Y
-InpRiskPercent=1.00
-||InpRiskPercent||1.00||0.50||1.50||N||0.10||Y
 InpSLPercent=0.00
 ||InpSLPercent||0.00||0.0||2.0||N||0.1||Y
 InpTPPercent=1.00

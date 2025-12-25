@@ -29,9 +29,8 @@ input ENUM_TRADE_DIRECTION InpDirection = DIRECTION_MOMENTUM; // Trading Directi
 input group "=== Risk Management ==="
 input bool     InpAutoLotSize = false;          // Auto Calculate Lot Size
 input double   InpLotSize = 0.01;               // Manual Lot Size
-input double   InpRiskPercent = 1.0;            // Risk per Trade (%)
-input double   InpSLPercent = 1.0;              // Stop Loss (% of price, 0 = No SL)
-input double   InpTPPercent = 1.0;              // Take Profit (% of price, 0 = No TP)
+input double   InpSLPercent = 0.0;              // Stop Loss (% of price, 0 = disabled)
+input double   InpTPPercent = 1.0;              // Take Profit (% of price, 0 = disabled)
 input double   InpMaxDrawdownPercent = 20.0;    // Max Drawdown (%)
 input double   InpDailyTargetPercent = 10.0;    // Daily Target (%)
 
@@ -92,6 +91,7 @@ int sellLevelsFilled = 0;
 string btnCloseAll = "TORAMA_BTN_CloseAll";
 string btnTakeTP = "TORAMA_BTN_TakeTP";
 string btnPause = "TORAMA_BTN_Pause";
+string btnResetGrid = "TORAMA_BTN_ResetGrid";
 
 //--- Lot tracking
 double totalBuyLots = 0.0;
@@ -170,7 +170,7 @@ int OnInit()
    Print("Symbol: ", _Symbol);
    Print("Broker: ", AccountInfoString(ACCOUNT_COMPANY));
    Print("Lot Size: ", calculatedLotSize);
-   Print("Risk per Trade: ", InpRiskPercent, "%");
+   Print("SL: ", InpSLPercent, "% | TP: ", InpTPPercent, "%");
    Print("Daily Target: ", InpDailyTargetPercent, "%");
    Print("========================================");
    
@@ -260,14 +260,10 @@ bool InitializeBrokerProperties()
 double CalculateOptimalLotSize()
 {
    double balance = AccountInfoDouble(ACCOUNT_BALANCE);
-   double riskAmount = balance * (InpRiskPercent / 100.0);
-   double currentPrice = SymbolInfoDouble(_Symbol, SYMBOL_BID);
-   if(currentPrice <= 0) currentPrice = SymbolInfoDouble(_Symbol, SYMBOL_ASK);
    
-   // Estimate SL distance as 0.7% of price
-   double estimatedSLDistance = currentPrice * 0.007;
-   double slDistanceInTicks = estimatedSLDistance / symbolTickSize;
-   double lotSize = riskAmount / (slDistanceInTicks * symbolTickValue);
+   // Simple calculation: 1% of balance per $1000
+   // Example: $500,000 balance = 5 lots
+   double lotSize = balance / 100000.0;
    
    // Normalize and apply safety limits
    lotSize = NormalizeLot(lotSize);
@@ -331,6 +327,30 @@ void OnChartEvent(const int id, const long &lparam, const double &dparam, const 
          ObjectSetString(0, btnPause, OBJPROP_TEXT, isPaused ? "RESUME" : "PAUSE");
          ObjectSetInteger(0, btnPause, OBJPROP_BGCOLOR, isPaused ? clrGreen : clrOrange);
          Print(isPaused ? "EA PAUSED" : "EA RESUMED");
+      }
+      else if(sparam == btnResetGrid)
+      {
+         // Manual grid reset
+         Print("========================================");
+         Print("MANUAL GRID RESET REQUESTED");
+         Print("Old Reference Price: ", referencePrice);
+         
+         // Reset grid state
+         gridActivated = false;
+         referencePrice = 0.0;
+         gridInitialized = false;
+         
+         // Reset grid level tracking
+         ArrayInitialize(buyLevelTriggered, false);
+         ArrayInitialize(sellLevelTriggered, false);
+         buyLevelsFilled = 0;
+         sellLevelsFilled = 0;
+         
+         ObjectSetInteger(0, btnResetGrid, OBJPROP_STATE, false);
+         
+         Print("Grid reset complete");
+         Print("New reference will be set on next tick");
+         Print("========================================");
       }
       
       ChartRedraw();
@@ -1247,10 +1267,10 @@ void TakeAllProfits()
 //+------------------------------------------------------------------+
 void CreateButtons()
 {
-   int buttonWidth = 100;
+   int buttonWidth = 76;  // Smaller to fit 4 buttons
    int buttonHeight = 28;
    int buttonY = panelY + panelHeight - 70;
-   int spacing = 10;
+   int spacing = 8;
    
    // Close All button
    ObjectCreate(0, btnCloseAll, OBJ_BUTTON, 0, 0, 0);
@@ -1258,9 +1278,9 @@ void CreateButtons()
    ObjectSetInteger(0, btnCloseAll, OBJPROP_YDISTANCE, buttonY);
    ObjectSetInteger(0, btnCloseAll, OBJPROP_XSIZE, buttonWidth);
    ObjectSetInteger(0, btnCloseAll, OBJPROP_YSIZE, buttonHeight);
-   ObjectSetString(0, btnCloseAll, OBJPROP_TEXT, "CLOSE ALL");
+   ObjectSetString(0, btnCloseAll, OBJPROP_TEXT, "CLOSE");
    ObjectSetString(0, btnCloseAll, OBJPROP_FONT, "Arial Bold");
-   ObjectSetInteger(0, btnCloseAll, OBJPROP_FONTSIZE, 9);
+   ObjectSetInteger(0, btnCloseAll, OBJPROP_FONTSIZE, 8);
    ObjectSetInteger(0, btnCloseAll, OBJPROP_COLOR, clrWhite);
    ObjectSetInteger(0, btnCloseAll, OBJPROP_BGCOLOR, clrCrimson);
    ObjectSetInteger(0, btnCloseAll, OBJPROP_BORDER_COLOR, clrRed);
@@ -1271,13 +1291,13 @@ void CreateButtons()
    
    // Take Profit button
    ObjectCreate(0, btnTakeTP, OBJ_BUTTON, 0, 0, 0);
-   ObjectSetInteger(0, btnTakeTP, OBJPROP_XDISTANCE, panelX + spacing + buttonWidth + spacing);
+   ObjectSetInteger(0, btnTakeTP, OBJPROP_XDISTANCE, panelX + spacing + (buttonWidth + spacing));
    ObjectSetInteger(0, btnTakeTP, OBJPROP_YDISTANCE, buttonY);
    ObjectSetInteger(0, btnTakeTP, OBJPROP_XSIZE, buttonWidth);
    ObjectSetInteger(0, btnTakeTP, OBJPROP_YSIZE, buttonHeight);
    ObjectSetString(0, btnTakeTP, OBJPROP_TEXT, "TAKE TP");
    ObjectSetString(0, btnTakeTP, OBJPROP_FONT, "Arial Bold");
-   ObjectSetInteger(0, btnTakeTP, OBJPROP_FONTSIZE, 9);
+   ObjectSetInteger(0, btnTakeTP, OBJPROP_FONTSIZE, 8);
    ObjectSetInteger(0, btnTakeTP, OBJPROP_COLOR, clrWhite);
    ObjectSetInteger(0, btnTakeTP, OBJPROP_BGCOLOR, clrGreen);
    ObjectSetInteger(0, btnTakeTP, OBJPROP_BORDER_COLOR, clrLime);
@@ -1294,7 +1314,7 @@ void CreateButtons()
    ObjectSetInteger(0, btnPause, OBJPROP_YSIZE, buttonHeight);
    ObjectSetString(0, btnPause, OBJPROP_TEXT, "PAUSE");
    ObjectSetString(0, btnPause, OBJPROP_FONT, "Arial Bold");
-   ObjectSetInteger(0, btnPause, OBJPROP_FONTSIZE, 9);
+   ObjectSetInteger(0, btnPause, OBJPROP_FONTSIZE, 8);
    ObjectSetInteger(0, btnPause, OBJPROP_COLOR, clrWhite);
    ObjectSetInteger(0, btnPause, OBJPROP_BGCOLOR, clrOrange);
    ObjectSetInteger(0, btnPause, OBJPROP_BORDER_COLOR, clrGold);
@@ -1302,6 +1322,23 @@ void CreateButtons()
    ObjectSetInteger(0, btnPause, OBJPROP_HIDDEN, true);
    ObjectSetInteger(0, btnPause, OBJPROP_SELECTABLE, false);
    ObjectSetInteger(0, btnPause, OBJPROP_ZORDER, 1002);
+   
+   // Reset Grid button
+   ObjectCreate(0, btnResetGrid, OBJ_BUTTON, 0, 0, 0);
+   ObjectSetInteger(0, btnResetGrid, OBJPROP_XDISTANCE, panelX + spacing + (buttonWidth + spacing) * 3);
+   ObjectSetInteger(0, btnResetGrid, OBJPROP_YDISTANCE, buttonY);
+   ObjectSetInteger(0, btnResetGrid, OBJPROP_XSIZE, buttonWidth);
+   ObjectSetInteger(0, btnResetGrid, OBJPROP_YSIZE, buttonHeight);
+   ObjectSetString(0, btnResetGrid, OBJPROP_TEXT, "RESET");
+   ObjectSetString(0, btnResetGrid, OBJPROP_FONT, "Arial Bold");
+   ObjectSetInteger(0, btnResetGrid, OBJPROP_FONTSIZE, 8);
+   ObjectSetInteger(0, btnResetGrid, OBJPROP_COLOR, clrWhite);
+   ObjectSetInteger(0, btnResetGrid, OBJPROP_BGCOLOR, C'100,100,255'); // Blue
+   ObjectSetInteger(0, btnResetGrid, OBJPROP_BORDER_COLOR, clrDodgerBlue);
+   ObjectSetInteger(0, btnResetGrid, OBJPROP_CORNER, CORNER_LEFT_UPPER);
+   ObjectSetInteger(0, btnResetGrid, OBJPROP_HIDDEN, true);
+   ObjectSetInteger(0, btnResetGrid, OBJPROP_SELECTABLE, false);
+   ObjectSetInteger(0, btnResetGrid, OBJPROP_ZORDER, 1002);
 }
 
 //+------------------------------------------------------------------+
@@ -1312,6 +1349,7 @@ void DeleteButtons()
    ObjectDelete(0, btnCloseAll);
    ObjectDelete(0, btnTakeTP);
    ObjectDelete(0, btnPause);
+   ObjectDelete(0, btnResetGrid);
 }
 
 //+------------------------------------------------------------------+
