@@ -281,6 +281,14 @@ bool InitializeSymbolSpecs()
    Print("   Volume Step: ", specs.lotStep);
    Print("   Stop Level: ", specs.stopLevel);
    
+   // Check and log filling modes
+   int filling = (int)SymbolInfoInteger(_Symbol, SYMBOL_FILLING_MODE);
+   Print("   Filling Modes:");
+   if((filling & SYMBOL_FILLING_FOK) == SYMBOL_FILLING_FOK)
+      Print("      - FOK (Fill or Kill) ✅");
+   if((filling & SYMBOL_FILLING_IOC) == SYMBOL_FILLING_IOC)
+      Print("      - IOC (Immediate or Cancel) ✅");
+   
    if(specs.tickValue == 0 || specs.tickSize == 0)
    {
       Print("❌ ERROR: Invalid tick value or tick size!");
@@ -847,6 +855,49 @@ double FindFurthestPositionPrice()
 }
 
 //+------------------------------------------------------------------+
+//| GET ERROR DESCRIPTION                                             |
+//+------------------------------------------------------------------+
+string ErrorDescription(int errorCode)
+{
+   switch(errorCode)
+   {
+      case 4752: return "Invalid order type for symbol (check filling mode)";
+      case 4756: return "Invalid stops (Deriv: check volume/SL/TP)";
+      case 10004: return "Requote";
+      case 10006: return "Request rejected";
+      case 10007: return "Request canceled";
+      case 10008: return "Order placed";
+      case 10009: return "Request done";
+      case 10010: return "Only part of request completed";
+      case 10011: return "Request processing error";
+      case 10012: return "Request canceled by timeout";
+      case 10013: return "Invalid request";
+      case 10014: return "Invalid volume";
+      case 10015: return "Invalid price";
+      case 10016: return "Invalid stops";
+      case 10017: return "Trade disabled";
+      case 10018: return "Market closed";
+      case 10019: return "No money";
+      case 10020: return "Prices changed";
+      case 10021: return "No quotes";
+      case 10022: return "Invalid order expiration";
+      case 10023: return "Order changed";
+      case 10024: return "Too many requests";
+      case 10025: return "No changes in request";
+      case 10026: return "Autotrading disabled";
+      case 10027: return "Autotrading disabled by client";
+      case 10028: return "Request locked for processing";
+      case 10029: return "Order/position frozen";
+      case 10030: return "Invalid fill type";
+      case 10031: return "No connection";
+      case 10032: return "Only long positions allowed";
+      case 10033: return "Only short positions allowed";
+      case 10034: return "Only closing allowed";
+      default: return "Unknown error";
+   }
+}
+
+//+------------------------------------------------------------------+
 //| OPEN GRID POSITION WITH DERIV VOLUME CONVERSION                  |
 //+------------------------------------------------------------------+
 void OpenGridPosition(double targetPrice)
@@ -906,19 +957,67 @@ void OpenGridPosition(double targetPrice)
    request.deviation = 10;
    request.magic = MagicNumber;
    request.comment = "AGG_" + EnumToString(CurrentDirection);
-   request.type_filling = ORDER_FILLING_IOC;
+   
+   // Auto-detect filling mode (Deriv-specific)
+   int filling = (int)SymbolInfoInteger(_Symbol, SYMBOL_FILLING_MODE);
+   if((filling & SYMBOL_FILLING_FOK) == SYMBOL_FILLING_FOK)
+      request.type_filling = ORDER_FILLING_FOK;
+   else if((filling & SYMBOL_FILLING_IOC) == SYMBOL_FILLING_IOC)
+      request.type_filling = ORDER_FILLING_IOC;
+   else
+      request.type_filling = ORDER_FILLING_FOK;  // Default to FOK for Deriv
    
    // Send order
    if(!OrderSend(request, result))
    {
-      Print("❌ Order failed: ", GetLastError());
+      int error = GetLastError();
+      Print("❌ Order Send FAILED:");
+      Print("   Error Code: ", error);
+      Print("   Error Description: ", ErrorDescription(error));
+      Print("   Symbol: ", _Symbol);
       Print("   Volume: ", volume, " (", DoubleToString(ConvertVolumeToLots(volume), 3), " lots)");
+      Print("   Min Volume: ", specs.minLot, " | Max Volume: ", specs.maxLot);
+      Print("   Price: ", request.price);
+      Print("   Type: ", EnumToString(request.type));
+      Print("   Filling Mode: ", request.type_filling == ORDER_FILLING_FOK ? "FOK" : 
+                                   request.type_filling == ORDER_FILLING_IOC ? "IOC" : "RETURN");
+      
+      // Deriv specific hints
+      if(brokerSpecs.isDerivBroker)
+      {
+         if(volume < 10.0)
+         {
+            Print("⚠️ DERIV HINT: Volume ", volume, " is below typical minimum (10.0)");
+            Print("   Try increasing Lot Size to 0.10 or higher");
+         }
+         if(error == 4752)
+         {
+            Print("⚠️ ERROR 4752: Invalid order type");
+            Print("   This usually means wrong filling mode");
+            int filling = (int)SymbolInfoInteger(_Symbol, SYMBOL_FILLING_MODE);
+            Print("   Symbol supports: FOK=", ((filling & SYMBOL_FILLING_FOK) != 0 ? "Yes" : "No"),
+                  ", IOC=", ((filling & SYMBOL_FILLING_IOC) != 0 ? "Yes" : "No"));
+         }
+      }
       return;
    }
    
    if(result.retcode != TRADE_RETCODE_DONE)
    {
-      Print("❌ Order rejected: ", result.retcode, " - ", result.comment);
+      Print("❌ Order REJECTED by Broker:");
+      Print("   Return Code: ", result.retcode);
+      Print("   Comment: ", result.comment);
+      Print("   Volume: ", volume, " (", DoubleToString(ConvertVolumeToLots(volume), 3), " lots)");
+      Print("   Min Volume: ", specs.minLot, " | Max Volume: ", specs.maxLot);
+      
+      // Deriv specific hint for error 4756
+      if(brokerSpecs.isDerivBroker && result.retcode == 10014)  // Invalid volume
+      {
+         Print("⚠️ DERIV ERROR: Invalid volume for this symbol");
+         Print("   Current volume: ", volume);
+         Print("   Broker minimum: ", specs.minLot);
+         Print("   Try Lot Size: ", DoubleToString(ConvertVolumeToLots(specs.minLot), 2), " or higher");
+      }
       return;
    }
    
