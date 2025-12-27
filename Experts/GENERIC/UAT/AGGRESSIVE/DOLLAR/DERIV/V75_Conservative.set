@@ -1,0 +1,21 @@
+; saved automatically on 2025.12.27 16:10:00
+; VOLATILITY 75 INDEX - CONSERVATIVE SETUP
+; Grid Gap: 0.5% (direct percentage input)
+StartDirection=0
+||<int>0
+GridGapPercent=0.5
+||<double>0.500000
+||0.100000
+||5.000000
+MaxPositions=8
+||<int>8
+LotSize=0.10
+||<double>0.100000
+IndividualTPDollars=1.00
+||<double>1.000000
+GroupTPDollars=10.00
+||<double>10.000000
+MaxDrawdownPercent=20.0
+||<double>20.000000
+MaxSpread=5000
+||<int>5000

@@ -36,7 +36,7 @@ input ENUM_TRADE_DIRECTION StartDirection = BUYONLY;  // Starting Direction
  bool     CloseOnModeSwitch = false;             // Close positions on mode switch (false = let them run)
 
 input group "=== GRID SETTINGS ==="
-input double   GridGapPercent = 0.05;                 // Grid gap % (0.01 = tight, 0.3 = wide)
+input double   GridGapPercent = 0.5;                  // Grid gap % (0.5 = tight, 1.0 = medium, 2.0 = wide)
 input int      MaxPositions = 100;                    // Maximum positions
 input double   LotSize = 0.1;                         // Lot size per position (ACTUAL lots, not volume)
 
@@ -408,9 +408,9 @@ int OnInit()
       Print("📍 New grid initialized at $", DoubleToString(referencePrice, specs.digits));
    }
    
-   // Calculate gap size
-   currentGapSize = referencePrice * GridGapPercent;
-   Print("   Grid Gap: $", DoubleToString(currentGapSize, specs.digits), " (", DoubleToString(GridGapPercent * 100, 2), "%)");
+   // Calculate gap size (convert percentage to decimal: 0.5% = 0.005)
+   currentGapSize = referencePrice * (GridGapPercent / 100.0);
+   Print("   Grid Gap: $", DoubleToString(currentGapSize, specs.digits), " (", DoubleToString(GridGapPercent, 2), "%)");
    
    // Create panel
    if(ShowPanel)
@@ -1217,7 +1217,7 @@ void UpdatePanel()
    
    // Grid
    ObjectSetString(0, panelPrefix + "Grid", OBJPROP_TEXT,
-                   DoubleToString(GridGapPercent * 100, 2) + "% ($" + DoubleToString(currentGapSize, specs.digits) + ")");
+                   DoubleToString(GridGapPercent, 2) + "% ($" + DoubleToString(currentGapSize, specs.digits) + ")");
    
    // Spread
    int spread = (int)((ask - bid) / specs.point);
