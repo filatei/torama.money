@@ -27,7 +27,7 @@ input double InpGridGapPercent = 0.5;           // Grid Gap (% of Price)
 input double InpInitialLotSize = 0.01;          // Initial Lot Size
 input double InpLotMultiplier = 1.0;            // Lot Multiplier (1.0 = Fixed)
 input int    InpMaxGridLevels = 100;            // Max Grid Levels (0 = Unlimited)
-input double InpMaxSpreadMultiplier = 3.0;      // Max Spread Multiplier (x Historic)
+input double InpMaxSpreadPoints = 50.0;         // Max Spread (Points, 0 = No Limit)
 
 input group "=== GLOBAL PROFIT & RISK ==="
 input double InpGlobalTakeProfitUSD = 100.0;    // Global Take Profit (USD)
@@ -60,7 +60,6 @@ long magicNumber = 0;
 double effectiveInitialLotSize = 0;
 
 //--- Spread tracking
-double historicSpread = 0;
 double maxAllowedSpread = 0;
 double currentSpread = 0;
 
@@ -98,11 +97,17 @@ int OnInit()
    lotStep = SymbolInfoDouble(sym, SYMBOL_VOLUME_STEP);
    stopLevel = (int)SymbolInfoInteger(sym, SYMBOL_TRADE_STOPS_LEVEL) * pt;
    
-   //--- Calculate historic spread
-   CalculateHistoricSpread();
-   
-   //--- Set max allowed spread based on historic spread
-   maxAllowedSpread = historicSpread * InpMaxSpreadMultiplier;
+   //--- Set max allowed spread
+   if(InpMaxSpreadPoints > 0)
+   {
+      maxAllowedSpread = InpMaxSpreadPoints * pt;
+      PrintFormat("Max allowed spread: %.1f points", InpMaxSpreadPoints);
+   }
+   else
+   {
+      maxAllowedSpread = 0; // No spread limit
+      Print("Spread filter: DISABLED (no limit)");
+   }
    
    //--- Validate and adjust initial lot size
    if(InpInitialLotSize < minLot)
@@ -144,9 +149,9 @@ int OnInit()
       return INIT_PARAMETERS_INCORRECT;
    }
    
-   if(InpMaxSpreadMultiplier <= 0)
+   if(InpMaxSpreadPoints < 0)
    {
-      Print("ERROR: Max spread multiplier must be positive!");
+      Print("ERROR: Max spread must be 0 or positive!");
       return INIT_PARAMETERS_INCORRECT;
    }
    
@@ -179,8 +184,6 @@ int OnInit()
    PrintFormat("Magic Number (Chart ID): %I64d", magicNumber);
    PrintFormat("Effective Lot Size: %.2f (Input: %.2f, Broker Min: %.2f, Max: %.2f)", 
                effectiveInitialLotSize, InpInitialLotSize, minLot, maxLot);
-   PrintFormat("Historic Spread: %.1f points, Max Allowed: %.1f points (%.1fx multiplier)", 
-               historicSpread/pt, maxAllowedSpread/pt, InpMaxSpreadMultiplier);
    PrintFormat("Grid Gap: %.5f (%.2f%%), Global TP: $%.2f, Max DD: %.1f%%", 
                gridGapPrice, InpGridGapPercent, InpGlobalTakeProfitUSD, InpMaxDrawdownPercent);
    
@@ -376,43 +379,6 @@ void OnChartEvent(const int id, const long &lparam, const double &dparam, const 
 }
 
 //+------------------------------------------------------------------+
-//| Calculate historic spread from chart data                         |
-//+------------------------------------------------------------------+
-void CalculateHistoricSpread()
-{
-   int spreadArray[];
-   int copied = CopySpread(sym, PERIOD_CURRENT, 0, 1000, spreadArray);
-   
-   if(copied > 0)
-   {
-      //--- Calculate average spread from historic data
-      long totalSpread = 0;
-      for(int i = 0; i < copied; i++)
-      {
-         totalSpread += spreadArray[i];
-      }
-      
-      double avgSpreadPoints = (double)totalSpread / copied;
-      historicSpread = avgSpreadPoints * pt;
-      
-      PrintFormat("Historic spread calculated from %d bars: %.1f points", copied, avgSpreadPoints);
-   }
-   else
-   {
-      //--- Fallback to current spread if historic data unavailable
-      historicSpread = SymbolInfoDouble(sym, SYMBOL_ASK) - SymbolInfoDouble(sym, SYMBOL_BID);
-      PrintFormat("WARNING: Could not load historic spread data, using current spread: %.1f points", historicSpread/pt);
-   }
-   
-   //--- Ensure minimum spread value
-   if(historicSpread <= 0)
-   {
-      historicSpread = 10 * pt; // Default 10 points minimum
-      PrintFormat("WARNING: Invalid historic spread, using default: %.1f points", historicSpread/pt);
-   }
-}
-
-//+------------------------------------------------------------------+
 //| Calculate grid gap based on current price                         |
 //+------------------------------------------------------------------+
 void CalculateGridGap()
@@ -492,11 +458,11 @@ bool OpenBuyPosition(double price)
       return false;
    }
    
-   //--- Check spread against max allowed (based on historic spread)
-   if(currentSpread > maxAllowedSpread)
+   //--- Check spread if limit is enabled
+   if(maxAllowedSpread > 0 && currentSpread > maxAllowedSpread)
    {
-      PrintFormat("WARNING: Spread %.1f points exceeds max allowed %.1f points (%.1fx historic) - Skipping trade", 
-                  currentSpread/pt, maxAllowedSpread/pt, InpMaxSpreadMultiplier);
+      PrintFormat("WARNING: Spread %.1f points exceeds max allowed %.1f points - Skipping trade", 
+                  currentSpread/pt, maxAllowedSpread/pt);
       return false;
    }
    
@@ -530,11 +496,11 @@ bool OpenSellPosition(double price)
       return false;
    }
    
-   //--- Check spread against max allowed (based on historic spread)
-   if(currentSpread > maxAllowedSpread)
+   //--- Check spread if limit is enabled
+   if(maxAllowedSpread > 0 && currentSpread > maxAllowedSpread)
    {
-      PrintFormat("WARNING: Spread %.1f points exceeds max allowed %.1f points (%.1fx historic) - Skipping trade", 
-                  currentSpread/pt, maxAllowedSpread/pt, InpMaxSpreadMultiplier);
+      PrintFormat("WARNING: Spread %.1f points exceeds max allowed %.1f points - Skipping trade", 
+                  currentSpread/pt, maxAllowedSpread/pt);
       return false;
    }
    
@@ -823,18 +789,29 @@ void UpdatePanel()
    
    //--- Spread with color coding
    double spreadPoints = currentSpread / pt;
-   double maxSpreadPoints = maxAllowedSpread / pt;
    color spreadColor = InpTextColor;
+   string spreadText = "";
    
-   if(currentSpread > maxAllowedSpread)
-      spreadColor = clrRed;
-   else if(currentSpread > maxAllowedSpread * 0.8)
-      spreadColor = clrOrange;
-   else if(currentSpread < historicSpread * 1.2)
+   if(maxAllowedSpread > 0)
+   {
+      double maxSpreadPoints = maxAllowedSpread / pt;
+      
+      if(currentSpread > maxAllowedSpread)
+         spreadColor = clrRed;
+      else if(currentSpread > maxAllowedSpread * 0.8)
+         spreadColor = clrOrange;
+      else
+         spreadColor = clrLimeGreen;
+      
+      spreadText = StringFormat("%.1f pts (max %.1f)", spreadPoints, maxSpreadPoints);
+   }
+   else
+   {
       spreadColor = clrLimeGreen;
+      spreadText = StringFormat("%.1f pts (no limit)", spreadPoints);
+   }
    
-   ObjectSetString(0, panelPrefix + "Spread", OBJPROP_TEXT, 
-                  StringFormat("%.1f pts (max %.1f)", spreadPoints, maxSpreadPoints));
+   ObjectSetString(0, panelPrefix + "Spread", OBJPROP_TEXT, spreadText);
    ObjectSetInteger(0, panelPrefix + "Spread", OBJPROP_COLOR, spreadColor);
    
    //--- Grid gap
