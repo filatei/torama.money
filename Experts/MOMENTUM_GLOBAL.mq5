@@ -27,7 +27,7 @@ input double InpGridGapPercent = 0.5;           // Grid Gap (% of Price)
 input double InpInitialLotSize = 0.01;          // Initial Lot Size
 input double InpLotMultiplier = 1.0;            // Lot Multiplier (1.0 = Fixed)
 input int    InpMaxGridLevels = 100;            // Max Grid Levels (0 = Unlimited)
-input int    InpMagicNumber = 789456;           // Magic Number
+input double InpMaxSpreadMultiplier = 3.0;      // Max Spread Multiplier (x Historic)
 
 input group "=== GLOBAL PROFIT & RISK ==="
 input double InpGlobalTakeProfitUSD = 100.0;    // Global Take Profit (USD)
@@ -56,6 +56,13 @@ bool isDrawdownPaused = false;
 bool isManuallyPaused = false;
 double accountStartBalance = 0;
 double peakBalance = 0;
+long magicNumber = 0;
+double effectiveInitialLotSize = 0;
+
+//--- Spread tracking
+double historicSpread = 0;
+double maxAllowedSpread = 0;
+double currentSpread = 0;
 
 //--- Grid tracking
 double lastBuyPrice = 0;
@@ -74,6 +81,10 @@ bool buttonPressed = false;
 //+------------------------------------------------------------------+
 int OnInit()
 {
+   //--- Get Chart ID as Magic Number
+   magicNumber = ChartID();
+   PrintFormat("Chart ID (Magic Number): %I64d", magicNumber);
+   
    //--- Initialize symbol properties
    sym = _Symbol;
    pt = SymbolInfoDouble(sym, SYMBOL_POINT);
@@ -87,7 +98,34 @@ int OnInit()
    lotStep = SymbolInfoDouble(sym, SYMBOL_VOLUME_STEP);
    stopLevel = (int)SymbolInfoInteger(sym, SYMBOL_TRADE_STOPS_LEVEL) * pt;
    
-   //--- Validate inputs
+   //--- Calculate historic spread
+   CalculateHistoricSpread();
+   
+   //--- Set max allowed spread based on historic spread
+   maxAllowedSpread = historicSpread * InpMaxSpreadMultiplier;
+   
+   //--- Validate and adjust initial lot size
+   if(InpInitialLotSize < minLot)
+   {
+      effectiveInitialLotSize = minLot;
+      PrintFormat("WARNING: Initial lot size %.2f is below broker minimum %.2f", InpInitialLotSize, minLot);
+      PrintFormat("INFO: Using broker minimum lot size: %.2f", effectiveInitialLotSize);
+   }
+   else if(InpInitialLotSize > maxLot)
+   {
+      effectiveInitialLotSize = maxLot;
+      PrintFormat("WARNING: Initial lot size %.2f exceeds broker maximum %.2f", InpInitialLotSize, maxLot);
+      PrintFormat("INFO: Using broker maximum lot size: %.2f", effectiveInitialLotSize);
+   }
+   else
+   {
+      effectiveInitialLotSize = InpInitialLotSize;
+   }
+   
+   //--- Normalize to lot step
+   effectiveInitialLotSize = NormalizeLot(effectiveInitialLotSize);
+   
+   //--- Validate other inputs
    if(InpGridGapPercent <= 0)
    {
       Print("ERROR: Grid gap must be positive!");
@@ -106,14 +144,14 @@ int OnInit()
       return INIT_PARAMETERS_INCORRECT;
    }
    
-   if(InpInitialLotSize < minLot || InpInitialLotSize > maxLot)
+   if(InpMaxSpreadMultiplier <= 0)
    {
-      PrintFormat("ERROR: Initial lot size must be between %.2f and %.2f", minLot, maxLot);
+      Print("ERROR: Max spread multiplier must be positive!");
       return INIT_PARAMETERS_INCORRECT;
    }
    
-   //--- Setup trade class
-   trade.SetExpertMagicNumber(InpMagicNumber);
+   //--- Setup trade class with Chart ID as magic number
+   trade.SetExpertMagicNumber(magicNumber);
    trade.SetDeviationInPoints(50);
    trade.SetTypeFilling(ORDER_FILLING_FOK);
    if(trade.ResultRetcode() == TRADE_RETCODE_INVALID_FILL)
@@ -138,6 +176,11 @@ int OnInit()
    ChartSetInteger(0, CHART_EVENT_OBJECT_DELETE, true);
    
    PrintFormat("TORAMA Momentum Grid EA initialized on %s", sym);
+   PrintFormat("Magic Number (Chart ID): %I64d", magicNumber);
+   PrintFormat("Effective Lot Size: %.2f (Input: %.2f, Broker Min: %.2f, Max: %.2f)", 
+               effectiveInitialLotSize, InpInitialLotSize, minLot, maxLot);
+   PrintFormat("Historic Spread: %.1f points, Max Allowed: %.1f points (%.1fx multiplier)", 
+               historicSpread/pt, maxAllowedSpread/pt, InpMaxSpreadMultiplier);
    PrintFormat("Grid Gap: %.5f (%.2f%%), Global TP: $%.2f, Max DD: %.1f%%", 
                gridGapPrice, InpGridGapPercent, InpGlobalTakeProfitUSD, InpMaxDrawdownPercent);
    
@@ -161,6 +204,9 @@ void OnDeinit(const int reason)
 //+------------------------------------------------------------------+
 void OnTick()
 {
+   //--- Update current spread
+   currentSpread = SymbolInfoDouble(sym, SYMBOL_ASK) - SymbolInfoDouble(sym, SYMBOL_BID);
+   
    //--- Update grid gap dynamically
    CalculateGridGap();
    
@@ -330,6 +376,43 @@ void OnChartEvent(const int id, const long &lparam, const double &dparam, const 
 }
 
 //+------------------------------------------------------------------+
+//| Calculate historic spread from chart data                         |
+//+------------------------------------------------------------------+
+void CalculateHistoricSpread()
+{
+   int spreadArray[];
+   int copied = CopySpread(sym, PERIOD_CURRENT, 0, 1000, spreadArray);
+   
+   if(copied > 0)
+   {
+      //--- Calculate average spread from historic data
+      long totalSpread = 0;
+      for(int i = 0; i < copied; i++)
+      {
+         totalSpread += spreadArray[i];
+      }
+      
+      double avgSpreadPoints = (double)totalSpread / copied;
+      historicSpread = avgSpreadPoints * pt;
+      
+      PrintFormat("Historic spread calculated from %d bars: %.1f points", copied, avgSpreadPoints);
+   }
+   else
+   {
+      //--- Fallback to current spread if historic data unavailable
+      historicSpread = SymbolInfoDouble(sym, SYMBOL_ASK) - SymbolInfoDouble(sym, SYMBOL_BID);
+      PrintFormat("WARNING: Could not load historic spread data, using current spread: %.1f points", historicSpread/pt);
+   }
+   
+   //--- Ensure minimum spread value
+   if(historicSpread <= 0)
+   {
+      historicSpread = 10 * pt; // Default 10 points minimum
+      PrintFormat("WARNING: Invalid historic spread, using default: %.1f points", historicSpread/pt);
+   }
+}
+
+//+------------------------------------------------------------------+
 //| Calculate grid gap based on current price                         |
 //+------------------------------------------------------------------+
 void CalculateGridGap()
@@ -368,7 +451,7 @@ void InitializeGridLevels()
       if(ticket <= 0) continue;
       
       if(PositionGetString(POSITION_SYMBOL) != sym) continue;
-      if(PositionGetInteger(POSITION_MAGIC) != InpMagicNumber) continue;
+      if(PositionGetInteger(POSITION_MAGIC) != magicNumber) continue;
       
       double openPrice = PositionGetDouble(POSITION_PRICE_OPEN);
       ENUM_POSITION_TYPE posType = (ENUM_POSITION_TYPE)PositionGetInteger(POSITION_TYPE);
@@ -409,19 +492,19 @@ bool OpenBuyPosition(double price)
       return false;
    }
    
-   //--- Check spread
-   double spread = SymbolInfoDouble(sym, SYMBOL_ASK) - SymbolInfoDouble(sym, SYMBOL_BID);
-   double maxSpreadPoints = 100 * pt; // Reasonable max spread
-   if(spread > maxSpreadPoints)
+   //--- Check spread against max allowed (based on historic spread)
+   if(currentSpread > maxAllowedSpread)
    {
-      PrintFormat("WARNING: Spread too wide: %.5f - Skipping trade", spread);
+      PrintFormat("WARNING: Spread %.1f points exceeds max allowed %.1f points (%.1fx historic) - Skipping trade", 
+                  currentSpread/pt, maxAllowedSpread/pt, InpMaxSpreadMultiplier);
       return false;
    }
    
    //--- Open buy position (no SL/TP)
    if(trade.Buy(lotSize, sym, 0, 0, 0, "TORAMA_MomentumGrid_Buy"))
    {
-      PrintFormat("BUY opened: Lot=%.2f, Price=%.5f, Grid Level=%d", lotSize, price, buyGridCount + 1);
+      PrintFormat("BUY opened: Lot=%.2f, Price=%.5f, Spread=%.1f, Grid Level=%d", 
+                  lotSize, price, currentSpread/pt, buyGridCount + 1);
       return true;
    }
    else
@@ -447,19 +530,19 @@ bool OpenSellPosition(double price)
       return false;
    }
    
-   //--- Check spread
-   double spread = SymbolInfoDouble(sym, SYMBOL_ASK) - SymbolInfoDouble(sym, SYMBOL_BID);
-   double maxSpreadPoints = 100 * pt; // Reasonable max spread
-   if(spread > maxSpreadPoints)
+   //--- Check spread against max allowed (based on historic spread)
+   if(currentSpread > maxAllowedSpread)
    {
-      PrintFormat("WARNING: Spread too wide: %.5f - Skipping trade", spread);
+      PrintFormat("WARNING: Spread %.1f points exceeds max allowed %.1f points (%.1fx historic) - Skipping trade", 
+                  currentSpread/pt, maxAllowedSpread/pt, InpMaxSpreadMultiplier);
       return false;
    }
    
    //--- Open sell position (no SL/TP)
    if(trade.Sell(lotSize, sym, 0, 0, 0, "TORAMA_MomentumGrid_Sell"))
    {
-      PrintFormat("SELL opened: Lot=%.2f, Price=%.5f, Grid Level=%d", lotSize, price, sellGridCount + 1);
+      PrintFormat("SELL opened: Lot=%.2f, Price=%.5f, Spread=%.1f, Grid Level=%d", 
+                  lotSize, price, currentSpread/pt, sellGridCount + 1);
       return true;
    }
    else
@@ -474,11 +557,11 @@ bool OpenSellPosition(double price)
 //+------------------------------------------------------------------+
 double CalculateLotSize(int gridLevel)
 {
-   double lotSize = InpInitialLotSize;
+   double lotSize = effectiveInitialLotSize;
    
    if(InpLotMultiplier != 1.0 && gridLevel > 0)
    {
-      lotSize = InpInitialLotSize * MathPow(InpLotMultiplier, gridLevel);
+      lotSize = effectiveInitialLotSize * MathPow(InpLotMultiplier, gridLevel);
    }
    
    return lotSize;
@@ -517,7 +600,7 @@ double GetTotalProfit()
       if(ticket <= 0) continue;
       
       if(PositionGetString(POSITION_SYMBOL) != sym) continue;
-      if(PositionGetInteger(POSITION_MAGIC) != InpMagicNumber) continue;
+      if(PositionGetInteger(POSITION_MAGIC) != magicNumber) continue;
       
       totalProfit += PositionGetDouble(POSITION_PROFIT) + PositionGetDouble(POSITION_SWAP);
    }
@@ -558,7 +641,7 @@ void CloseAllPositions()
       if(ticket <= 0) continue;
       
       if(PositionGetString(POSITION_SYMBOL) != sym) continue;
-      if(PositionGetInteger(POSITION_MAGIC) != InpMagicNumber) continue;
+      if(PositionGetInteger(POSITION_MAGIC) != magicNumber) continue;
       
       if(!trade.PositionClose(ticket))
       {
@@ -595,12 +678,12 @@ void CreatePanel()
    int lineHeight = 22;
    int panelWidth = 280;
    
-   //--- Background panel
-   CreateRectLabel(panelPrefix + "BG", InpPanelX, yOffset, panelWidth, 330, InpPanelColor, CORNER_LEFT_UPPER);
+   //--- Background panel (solid, on top)
+   CreateRectLabel(panelPrefix + "BG", InpPanelX, yOffset, panelWidth, 375, InpPanelColor, CORNER_LEFT_UPPER, false);
    yOffset += 5;
    
    //--- TORAMA CAPITAL Header with logo background
-   CreateRectLabel(panelPrefix + "HeaderBG", InpPanelX + 5, yOffset, panelWidth - 10, 35, InpHeaderColor, CORNER_LEFT_UPPER);
+   CreateRectLabel(panelPrefix + "HeaderBG", InpPanelX + 5, yOffset, panelWidth - 10, 35, InpHeaderColor, CORNER_LEFT_UPPER, false);
    CreateText(panelPrefix + "Logo", InpPanelX + 15, yOffset + 8, "TORAMA CAPITAL", clrWhite, 12, "Arial Black");
    CreateText(panelPrefix + "Tagline", InpPanelX + 15, yOffset + 22, "Algorithmic Trading Solutions", clrWhiteSmoke, 7, "Arial");
    yOffset += 40;
@@ -610,7 +693,7 @@ void CreatePanel()
    yOffset += lineHeight;
    
    //--- Separator line
-   CreateRectLabel(panelPrefix + "Sep1", InpPanelX + 10, yOffset, panelWidth - 20, 1, clrDimGray, CORNER_LEFT_UPPER);
+   CreateRectLabel(panelPrefix + "Sep1", InpPanelX + 10, yOffset, panelWidth - 20, 1, clrDimGray, CORNER_LEFT_UPPER, false);
    yOffset += 8;
    
    //--- Status
@@ -628,13 +711,30 @@ void CreatePanel()
    CreateText(panelPrefix + "Symbol", InpPanelX + 80, yOffset, sym, InpTextColor, 8);
    yOffset += lineHeight;
    
+   //--- Magic Number (Chart ID)
+   CreateText(panelPrefix + "MagicLabel", InpPanelX + 15, yOffset, "Magic #:", clrGray, 8);
+   CreateText(panelPrefix + "Magic", InpPanelX + 80, yOffset, IntegerToString(magicNumber), InpTextColor, 7);
+   yOffset += lineHeight;
+   
+   //--- Lot Size
+   CreateText(panelPrefix + "LotLabel", InpPanelX + 15, yOffset, "Lot Size:", clrGray, 8);
+   CreateText(panelPrefix + "LotSize", InpPanelX + 80, yOffset, 
+              StringFormat("%.2f", effectiveInitialLotSize), 
+              (effectiveInitialLotSize == InpInitialLotSize) ? InpTextColor : clrYellow, 8);
+   yOffset += lineHeight;
+   
+   //--- Current Spread
+   CreateText(panelPrefix + "SpreadLabel", InpPanelX + 15, yOffset, "Spread:", clrGray, 8);
+   CreateText(panelPrefix + "Spread", InpPanelX + 80, yOffset, "0.0 pts", InpTextColor, 8);
+   yOffset += lineHeight;
+   
    //--- Grid Gap
    CreateText(panelPrefix + "GapLabel", InpPanelX + 15, yOffset, "Grid Gap:", clrGray, 8);
    CreateText(panelPrefix + "GridGap", InpPanelX + 80, yOffset, "0.00%", InpTextColor, 8);
    yOffset += lineHeight;
    
    //--- Separator
-   CreateRectLabel(panelPrefix + "Sep2", InpPanelX + 10, yOffset, panelWidth - 20, 1, clrDimGray, CORNER_LEFT_UPPER);
+   CreateRectLabel(panelPrefix + "Sep2", InpPanelX + 10, yOffset, panelWidth - 20, 1, clrDimGray, CORNER_LEFT_UPPER, false);
    yOffset += 8;
    
    //--- Buy Grid
@@ -648,7 +748,7 @@ void CreatePanel()
    yOffset += lineHeight;
    
    //--- Separator
-   CreateRectLabel(panelPrefix + "Sep3", InpPanelX + 10, yOffset, panelWidth - 20, 1, clrDimGray, CORNER_LEFT_UPPER);
+   CreateRectLabel(panelPrefix + "Sep3", InpPanelX + 10, yOffset, panelWidth - 20, 1, clrDimGray, CORNER_LEFT_UPPER, false);
    yOffset += 8;
    
    //--- Profit
@@ -672,7 +772,7 @@ void CreatePanel()
    yOffset += lineHeight + 5;
    
    //--- Separator
-   CreateRectLabel(panelPrefix + "Sep4", InpPanelX + 10, yOffset, panelWidth - 20, 1, clrDimGray, CORNER_LEFT_UPPER);
+   CreateRectLabel(panelPrefix + "Sep4", InpPanelX + 10, yOffset, panelWidth - 20, 1, clrDimGray, CORNER_LEFT_UPPER, false);
    yOffset += 10;
    
    //--- Control Buttons
@@ -721,6 +821,22 @@ void UpdatePanel()
                      (InpTradeDirection == DIRECTION_BUY_ONLY ? "BUY ONLY" : "SELL ONLY");
    ObjectSetString(0, panelPrefix + "Direction", OBJPROP_TEXT, direction);
    
+   //--- Spread with color coding
+   double spreadPoints = currentSpread / pt;
+   double maxSpreadPoints = maxAllowedSpread / pt;
+   color spreadColor = InpTextColor;
+   
+   if(currentSpread > maxAllowedSpread)
+      spreadColor = clrRed;
+   else if(currentSpread > maxAllowedSpread * 0.8)
+      spreadColor = clrOrange;
+   else if(currentSpread < historicSpread * 1.2)
+      spreadColor = clrLimeGreen;
+   
+   ObjectSetString(0, panelPrefix + "Spread", OBJPROP_TEXT, 
+                  StringFormat("%.1f pts (max %.1f)", spreadPoints, maxSpreadPoints));
+   ObjectSetInteger(0, panelPrefix + "Spread", OBJPROP_COLOR, spreadColor);
+   
    //--- Grid gap
    ObjectSetString(0, panelPrefix + "GridGap", OBJPROP_TEXT, 
                   StringFormat("%.2f%% (%.5f)", InpGridGapPercent, gridGapPrice));
@@ -763,7 +879,7 @@ void DeletePanel()
 //+------------------------------------------------------------------+
 //| Create rectangle label                                             |
 //+------------------------------------------------------------------+
-void CreateRectLabel(string name, int x, int y, int width, int height, color bgColor, ENUM_BASE_CORNER corner)
+void CreateRectLabel(string name, int x, int y, int width, int height, color bgColor, ENUM_BASE_CORNER corner, bool back = true)
 {
    if(ObjectFind(0, name) >= 0)
       ObjectDelete(0, name);
@@ -777,7 +893,7 @@ void CreateRectLabel(string name, int x, int y, int width, int height, color bgC
    ObjectSetInteger(0, name, OBJPROP_BGCOLOR, bgColor);
    ObjectSetInteger(0, name, OBJPROP_BORDER_TYPE, BORDER_FLAT);
    ObjectSetInteger(0, name, OBJPROP_COLOR, clrDimGray);
-   ObjectSetInteger(0, name, OBJPROP_BACK, true);
+   ObjectSetInteger(0, name, OBJPROP_BACK, back);
    ObjectSetInteger(0, name, OBJPROP_SELECTABLE, false);
    ObjectSetInteger(0, name, OBJPROP_HIDDEN, true);
 }
