@@ -1,12 +1,13 @@
 //+------------------------------------------------------------------+
-//|                          TORAMA_MomentumGrid_Sacrosanct.mq5      |
+//|                       TORAMA_MomentumGrid_TrueSacrosanct.mq5     |
 //|                                          TORAMA CAPITAL           |
 //|                                   Algorithmic Trading Solutions   |
 //+------------------------------------------------------------------+
 #property copyright "TORAMA CAPITAL"
 #property link      "https://toramacapital.com"
-#property version   "2.00"
-#property description "Momentum Grid EA - Sacrosanct Grid with Pending Orders"
+#property version   "3.00"
+#property description "Momentum Grid EA - TRUE Sacrosanct Grid"
+#property description "Grid levels NEVER replaced once triggered"
 #property description "Global TP & Drawdown Control, No Individual SL/TP"
 
 //--- Include files
@@ -56,6 +57,8 @@ bool isDrawdownPaused = false;
 bool isManuallyPaused = false;
 double accountStartBalance = 0;
 double peakBalance = 0;
+double peakEquity = 0;              // NEW: Track equity high water mark
+bool isStoppedByDrawdown = false;   // NEW: Permanent stop flag
 long magicNumber = 0;
 double effectiveInitialLotSize = 0;
 
@@ -63,11 +66,22 @@ double effectiveInitialLotSize = 0;
 double maxAllowedSpread = 0;
 double currentSpread = 0;
 
-//--- Grid tracking - SACROSANCT SYSTEM
+//--- Grid tracking - TRUE SACROSANCT SYSTEM
 double referencePrice = 0;           // Sacred reference price
 int highestBuyLevel = 0;             // Highest buy level placed
 int lowestSellLevel = 0;             // Lowest sell level placed (negative)
 bool gridInitialized = false;
+
+//--- CRITICAL: Track triggered levels to prevent replacement
+int triggeredBuyLevels[];            // Array of buy levels that have been triggered
+int triggeredSellLevels[];           // Array of sell levels that have been triggered (as positive numbers)
+int buyTriggeredCount = 0;           // Count of triggered buy levels
+int sellTriggeredCount = 0;          // Count of triggered sell levels
+
+//--- Market order mode (for symbols that don't support pending orders like Deriv synthetics)
+bool useMarketOrders = false;        // Use market orders instead of pending orders
+double lastBuyTriggerPrice = 0;      // Last price where buy was triggered
+double lastSellTriggerPrice = 0;     // Last price where sell was triggered
 
 //--- Panel objects
 string panelPrefix = "TORAMA_Panel_";
@@ -165,6 +179,19 @@ int OnInit()
    //--- Initialize account tracking
    accountStartBalance = AccountInfoDouble(ACCOUNT_BALANCE);
    peakBalance = accountStartBalance;
+   peakEquity = AccountInfoDouble(ACCOUNT_EQUITY);  // Initialize equity high water mark
+   isStoppedByDrawdown = false;
+   
+   //--- Initialize triggered level arrays (max 200 levels each direction)
+   ArrayResize(triggeredBuyLevels, 200);
+   ArrayResize(triggeredSellLevels, 200);
+   ArrayFill(triggeredBuyLevels, 0, ArraySize(triggeredBuyLevels), -999999);
+   ArrayFill(triggeredSellLevels, 0, ArraySize(triggeredSellLevels), -999999);
+   buyTriggeredCount = 0;
+   sellTriggeredCount = 0;
+   
+   //--- Auto-detect if we should use market orders (for Deriv synthetics, etc.)
+   DetectMarketOrderMode();
    
    //--- Calculate initial grid gap
    CalculateGridGap();
@@ -186,7 +213,8 @@ int OnInit()
                effectiveInitialLotSize, InpInitialLotSize, minLot, maxLot);
    PrintFormat("Grid Gap: %.5f (%.2f%%), Global TP: $%.2f, Max DD: %.1f%%", 
                gridGapPrice, InpGridGapPercent, InpGlobalTakeProfitUSD, InpMaxDrawdownPercent);
-   PrintFormat("SACROSANCT GRID - Reference Price: %.*f", dgt, referencePrice);
+   PrintFormat("TRUE SACROSANCT GRID - Reference Price: %.*f", dgt, referencePrice);
+   Print("Grid levels will NEVER be replaced once triggered!");
    
    return INIT_SUCCEEDED;
 }
@@ -214,6 +242,16 @@ void OnTick()
    //--- Update grid gap dynamically
    CalculateGridGap();
    
+   //--- Track triggered levels (positions that opened from pending orders)
+   TrackTriggeredLevels();
+   
+   //--- CRITICAL: Check if EA is permanently stopped by drawdown
+   if(isStoppedByDrawdown)
+   {
+      UpdatePanel();
+      return; // EA is permanently stopped - no trading
+   }
+   
    //--- Check for global take profit
    if(CheckGlobalTakeProfit())
    {
@@ -232,35 +270,33 @@ void OnTick()
       return;
    }
    
-   //--- Check for drawdown pause
-   if(CheckDrawdown())
+   //--- Check for MAX DRAWDOWN - CLOSE ALL AND STOP
+   if(CheckMaxDrawdown())
    {
-      if(!isDrawdownPaused)
+      if(!isStoppedByDrawdown)
       {
-         isDrawdownPaused = true;
-         lastDrawdownPauseTime = TimeCurrent();
-         PrintFormat("Max drawdown reached: %.2f%% - Pausing for %d minutes", InpMaxDrawdownPercent, InpDrawdownPauseMinutes);
-      }
-      
-      //--- Check if pause duration has elapsed
-      if(TimeCurrent() - lastDrawdownPauseTime < InpDrawdownPauseMinutes * 60)
-      {
+         isStoppedByDrawdown = true;
+         double currentEquity = AccountInfoDouble(ACCOUNT_EQUITY);
+         double drawdown = ((peakEquity - currentEquity) / peakEquity) * 100.0;
+         
+         PrintFormat("========================================");
+         PrintFormat("MAX DRAWDOWN REACHED: %.2f%%", drawdown);
+         PrintFormat("Peak Equity: $%.2f", peakEquity);
+         PrintFormat("Current Equity: $%.2f", currentEquity);
+         PrintFormat("Closing all positions and STOPPING EA");
+         PrintFormat("========================================");
+         
+         CloseAllPositions();
+         DeleteAllPendingOrders();
+         
+         Comment(StringFormat("\n\n*** EA STOPPED ***\n\nMax Drawdown Reached: %.2f%%\n\nAll positions closed\nEA will not trade again\n\nRemove EA from chart to restart", drawdown));
          UpdatePanel();
-         return; // Still in pause period
+         return;
       }
-      else
-      {
-         isDrawdownPaused = false;
-         PrintFormat("Drawdown pause ended - Resuming trading");
-      }
-   }
-   else
-   {
-      isDrawdownPaused = false; // Reset if drawdown is back within limits
    }
    
-   //--- Check if all positions closed -> reset grid
-   if(GetTotalPositions() == 0 && gridInitialized)
+   //--- Check if all positions closed -> reset grid (only if not stopped by drawdown)
+   if(GetTotalPositions() == 0 && gridInitialized && !isStoppedByDrawdown)
    {
       PrintFormat("All positions closed - Resetting sacrosanct grid");
       DeleteAllPendingOrders();
@@ -275,12 +311,116 @@ void OnTick()
 }
 
 //+------------------------------------------------------------------+
+//| Track triggered levels - CRITICAL NEW FUNCTION                    |
+//+------------------------------------------------------------------+
+void TrackTriggeredLevels()
+{
+   //--- Check all open positions to see if they opened from pending orders
+   int totalPositions = PositionsTotal();
+   
+   for(int i = 0; i < totalPositions; i++)
+   {
+      ulong ticket = PositionGetTicket(i);
+      if(ticket <= 0) continue;
+      
+      if(PositionGetString(POSITION_SYMBOL) != sym) continue;
+      if(PositionGetInteger(POSITION_MAGIC) != magicNumber) continue;
+      
+      //--- Extract level from position comment
+      string comment = PositionGetString(POSITION_COMMENT);
+      if(StringFind(comment, "TORAMA_Grid_L") != 0) continue;
+      
+      //--- Parse level number from comment
+      string levelStr = StringSubstr(comment, 13); // After "TORAMA_Grid_L"
+      int level = (int)StringToInteger(levelStr);
+      
+      //--- Determine position type and mark level as triggered
+      ENUM_POSITION_TYPE posType = (ENUM_POSITION_TYPE)PositionGetInteger(POSITION_TYPE);
+      
+      if(posType == POSITION_TYPE_BUY)
+      {
+         if(!IsLevelTriggered(level, true))
+         {
+            MarkLevelAsTriggered(level, true);
+            PrintFormat("BUY Level %d TRIGGERED - Will NEVER be replaced!", level);
+         }
+      }
+      else if(posType == POSITION_TYPE_SELL)
+      {
+         if(!IsLevelTriggered(level, false))
+         {
+            MarkLevelAsTriggered(level, false);
+            PrintFormat("SELL Level %d TRIGGERED - Will NEVER be replaced!", level);
+         }
+      }
+   }
+}
+
+//+------------------------------------------------------------------+
+//| Check if a level has been triggered                               |
+//+------------------------------------------------------------------+
+bool IsLevelTriggered(int level, bool isBuy)
+{
+   if(isBuy)
+   {
+      for(int i = 0; i < buyTriggeredCount; i++)
+      {
+         if(triggeredBuyLevels[i] == level)
+            return true;
+      }
+   }
+   else
+   {
+      int absLevel = MathAbs(level);
+      for(int i = 0; i < sellTriggeredCount; i++)
+      {
+         if(triggeredSellLevels[i] == absLevel)
+            return true;
+      }
+   }
+   
+   return false;
+}
+
+//+------------------------------------------------------------------+
+//| Mark a level as triggered (sacrosanct - never to be replaced)     |
+//+------------------------------------------------------------------+
+void MarkLevelAsTriggered(int level, bool isBuy)
+{
+   if(isBuy)
+   {
+      if(buyTriggeredCount >= ArraySize(triggeredBuyLevels))
+      {
+         ArrayResize(triggeredBuyLevels, ArraySize(triggeredBuyLevels) + 100);
+      }
+      triggeredBuyLevels[buyTriggeredCount] = level;
+      buyTriggeredCount++;
+   }
+   else
+   {
+      if(sellTriggeredCount >= ArraySize(triggeredSellLevels))
+      {
+         ArrayResize(triggeredSellLevels, ArraySize(triggeredSellLevels) + 100);
+      }
+      int absLevel = MathAbs(level);
+      triggeredSellLevels[sellTriggeredCount] = absLevel;
+      sellTriggeredCount++;
+   }
+}
+
+//+------------------------------------------------------------------+
 //| ChartEvent function - Handle button clicks                        |
 //+------------------------------------------------------------------+
 void OnChartEvent(const int id, const long &lparam, const double &dparam, const string &sparam)
 {
    if(id == CHARTEVENT_OBJECT_CLICK)
    {
+      //--- Disable all buttons if EA is stopped by drawdown
+      if(isStoppedByDrawdown)
+      {
+         return; // No button actions when stopped
+      }
+      
       //--- Close All button
       if(sparam == panelPrefix + "BtnCloseAll")
       {
@@ -352,6 +492,35 @@ void OnChartEvent(const int id, const long &lparam, const double &dparam, const 
 }
 
 //+------------------------------------------------------------------+
+//| Detect if we should use market orders instead of pending         |
+//+------------------------------------------------------------------+
+void DetectMarketOrderMode()
+{
+   //--- Check if symbol name contains Deriv synthetic indicator
+   string symbolName = sym;
+   StringToUpper(symbolName);
+   
+   //--- List of Deriv synthetic symbols that don't support pending orders
+   if(StringFind(symbolName, "BOOM") >= 0 ||
+      StringFind(symbolName, "CRASH") >= 0 ||
+      StringFind(symbolName, "JUMP") >= 0 ||
+      StringFind(symbolName, "RANGE") >= 0 ||
+      StringFind(symbolName, "STEP") >= 0 ||
+      StringFind(symbolName, "VOLATILITY") >= 0 ||
+      StringFind(symbolName, "1HZ") >= 0)
+   {
+      useMarketOrders = true;
+      Print("MARKET ORDER MODE ENABLED - Deriv synthetic symbol detected");
+      Print("EA will use market orders instead of pending orders");
+   }
+   else
+   {
+      useMarketOrders = false;
+      Print("PENDING ORDER MODE - Standard symbol");
+   }
+}
+
+//+------------------------------------------------------------------+
 //| Calculate grid gap based on current price                         |
 //+------------------------------------------------------------------+
 void CalculateGridGap()
@@ -418,13 +587,21 @@ void ResetSacrosanctGrid()
    highestBuyLevel = 0;
    lowestSellLevel = 0;
    
-   //--- Update peak balance
+   //--- CRITICAL: Clear triggered level arrays
+   ArrayFill(triggeredBuyLevels, 0, ArraySize(triggeredBuyLevels), -999999);
+   ArrayFill(triggeredSellLevels, 0, ArraySize(triggeredSellLevels), -999999);
+   buyTriggeredCount = 0;
+   sellTriggeredCount = 0;
+   
+   //--- Update peak balance and equity (reset high water mark)
    peakBalance = AccountInfoDouble(ACCOUNT_BALANCE);
+   peakEquity = AccountInfoDouble(ACCOUNT_EQUITY);
    
    gridInitialized = true;
    
    PrintFormat("Sacrosanct Grid RESET - New Reference: %.*f, Gap: %.*f", 
                dgt, referencePrice, dgt, gridGapPrice);
+   PrintFormat("Triggered levels cleared. Fresh grid starting.");
    
    //--- Place initial order AT reference price
    PlaceInitialOrder();
@@ -476,7 +653,7 @@ void PlaceInitialOrder()
 }
 
 //+------------------------------------------------------------------+
-//| Maintain Sacrosanct Grid - Ensure pending orders exist            |
+//| Maintain Sacrosanct Grid - MODIFIED FOR TRUE SACROSANCT          |
 //+------------------------------------------------------------------+
 void MaintainSacrosanctGrid()
 {
@@ -485,6 +662,13 @@ void MaintainSacrosanctGrid()
    //--- Get current price
    double ask = SymbolInfoDouble(sym, SYMBOL_ASK);
    double bid = SymbolInfoDouble(sym, SYMBOL_BID);
+   
+   //--- For market order mode, check if price has crossed grid levels
+   if(useMarketOrders)
+   {
+      CheckAndExecuteMarketOrders();
+      return;
+   }
    
    //--- Calculate how many levels we need based on current price distance from reference
    int levelsAbove = (int)MathCeil((ask - referencePrice) / gridGapPrice);
@@ -496,6 +680,12 @@ void MaintainSacrosanctGrid()
       for(int level = highestBuyLevel + 1; level <= levelsAbove + 10; level++) // 10 levels ahead
       {
          if(InpMaxGridLevels > 0 && level > InpMaxGridLevels) break;
+         
+         //--- CRITICAL: Skip if level was already triggered
+         if(IsLevelTriggered(level, true))
+         {
+            continue; // Do NOT place order at triggered level
+         }
          
          double orderPrice = referencePrice + (level * gridGapPrice);
          if(!PendingOrderExists(level, true))
@@ -519,6 +709,12 @@ void MaintainSacrosanctGrid()
       {
          if(InpMaxGridLevels > 0 && MathAbs(level) > InpMaxGridLevels) break;
          
+         //--- CRITICAL: Skip if level was already triggered
+         if(IsLevelTriggered(level, false))
+         {
+            continue; // Do NOT place order at triggered level
+         }
+         
          double orderPrice = referencePrice + (level * gridGapPrice); // level is negative
          if(!PendingOrderExists(level, false))
          {
@@ -533,6 +729,160 @@ void MaintainSacrosanctGrid()
          }
       }
    }
+}
+
+//+------------------------------------------------------------------+
+//| Check price and execute market orders when levels are crossed    |
+//+------------------------------------------------------------------+
+void CheckAndExecuteMarketOrders()
+{
+   double ask = SymbolInfoDouble(sym, SYMBOL_ASK);
+   double bid = SymbolInfoDouble(sym, SYMBOL_BID);
+   
+   //--- Check BUY levels (price moving up above reference)
+   if(InpTradeDirection == DIRECTION_BOTH || InpTradeDirection == DIRECTION_BUY_ONLY)
+   {
+      //--- Calculate current level based on ask price
+      int currentLevel = (int)MathFloor((ask - referencePrice) / gridGapPrice);
+      
+      //--- Check if we've crossed into a new level
+      for(int level = 1; level <= currentLevel; level++)
+      {
+         if(InpMaxGridLevels > 0 && level > InpMaxGridLevels) break;
+         
+         //--- Skip if already triggered
+         if(IsLevelTriggered(level, true)) continue;
+         
+         //--- Skip if position already exists at this level
+         if(PositionExistsAtLevel(level, true)) continue;
+         
+         double levelPrice = referencePrice + (level * gridGapPrice);
+         
+         //--- Check if we've crossed this level
+         if(ask >= levelPrice)
+         {
+            //--- Execute market buy
+            ExecuteMarketBuy(level);
+            MarkLevelAsTriggered(level, true);
+            highestBuyLevel = MathMax(highestBuyLevel, level);
+         }
+      }
+   }
+   
+   //--- Check SELL levels (price moving down below reference)
+   if(InpTradeDirection == DIRECTION_BOTH || InpTradeDirection == DIRECTION_SELL_ONLY)
+   {
+      //--- Calculate current level based on bid price (negative)
+      int currentLevel = (int)MathFloor((referencePrice - bid) / gridGapPrice);
+      
+      //--- Check if we've crossed into a new level
+      for(int level = 1; level <= currentLevel; level++)
+      {
+         if(InpMaxGridLevels > 0 && level > InpMaxGridLevels) break;
+         
+         int sellLevel = -level; // Negative for sell
+         
+         //--- Skip if already triggered
+         if(IsLevelTriggered(sellLevel, false)) continue;
+         
+         //--- Skip if position already exists at this level
+         if(PositionExistsAtLevel(sellLevel, false)) continue;
+         
+         double levelPrice = referencePrice - (level * gridGapPrice);
+         
+         //--- Check if we've crossed this level
+         if(bid <= levelPrice)
+         {
+            //--- Execute market sell
+            ExecuteMarketSell(sellLevel);
+            MarkLevelAsTriggered(sellLevel, false);
+            lowestSellLevel = MathMin(lowestSellLevel, sellLevel);
+         }
+      }
+   }
+}
+
+//+------------------------------------------------------------------+
+//| Execute market BUY order                                          |
+//+------------------------------------------------------------------+
+void ExecuteMarketBuy(int level)
+{
+   double lotSize = CalculateLotSize(MathAbs(level));
+   lotSize = NormalizeLot(lotSize);
+   
+   if(lotSize < minLot || lotSize > maxLot)
+   {
+      PrintFormat("ERROR: Invalid lot size %.2f for level %d", lotSize, level);
+      return;
+   }
+   
+   double ask = SymbolInfoDouble(sym, SYMBOL_ASK);
+   string comment = "TORAMA_Grid_L" + IntegerToString(level);
+   
+   if(trade.Buy(lotSize, sym, ask, 0, 0, comment))
+   {
+      PrintFormat("MARKET BUY executed: Level=%d, Price=%.*f, Lot=%.2f", level, dgt, ask, lotSize);
+   }
+   else
+   {
+      PrintFormat("MARKET BUY failed: Level=%d, Error=%d - %s", level, trade.ResultRetcode(), trade.ResultRetcodeDescription());
+   }
+}
+
+//+------------------------------------------------------------------+
+//| Execute market SELL order                                         |
+//+------------------------------------------------------------------+
+void ExecuteMarketSell(int level)
+{
+   double lotSize = CalculateLotSize(MathAbs(level));
+   lotSize = NormalizeLot(lotSize);
+   
+   if(lotSize < minLot || lotSize > maxLot)
+   {
+      PrintFormat("ERROR: Invalid lot size %.2f for level %d", lotSize, level);
+      return;
+   }
+   
+   double bid = SymbolInfoDouble(sym, SYMBOL_BID);
+   string comment = "TORAMA_Grid_L" + IntegerToString(level);
+   
+   if(trade.Sell(lotSize, sym, bid, 0, 0, comment))
+   {
+      PrintFormat("MARKET SELL executed: Level=%d, Price=%.*f, Lot=%.2f", level, dgt, bid, lotSize);
+   }
+   else
+   {
+      PrintFormat("MARKET SELL failed: Level=%d, Error=%d - %s", level, trade.ResultRetcode(), trade.ResultRetcodeDescription());
+   }
+}
+
+//+------------------------------------------------------------------+
+//| Check if position exists at a specific level                      |
+//+------------------------------------------------------------------+
+bool PositionExistsAtLevel(int level, bool isBuy)
+{
+   int totalPositions = PositionsTotal();
+   
+   for(int i = 0; i < totalPositions; i++)
+   {
+      ulong ticket = PositionGetTicket(i);
+      if(ticket <= 0) continue;
+      
+      if(PositionGetString(POSITION_SYMBOL) != sym) continue;
+      if(PositionGetInteger(POSITION_MAGIC) != magicNumber) continue;
+      
+      string comment = PositionGetString(POSITION_COMMENT);
+      string expectedComment = "TORAMA_Grid_L" + IntegerToString(level);
+      
+      if(comment == expectedComment)
+      {
+         ENUM_POSITION_TYPE posType = (ENUM_POSITION_TYPE)PositionGetInteger(POSITION_TYPE);
+         if((isBuy && posType == POSITION_TYPE_BUY) || (!isBuy && posType == POSITION_TYPE_SELL))
+            return true;
+      }
+   }
+   
+   return false;
 }
 
 //+------------------------------------------------------------------+
@@ -813,22 +1163,25 @@ double GetNextPendingPrice(bool buyOrder)
 }
 
 //+------------------------------------------------------------------+
-//| Check drawdown                                                     |
+//| Check MAX drawdown from equity high water mark                   |
 //+------------------------------------------------------------------+
-bool CheckDrawdown()
+bool CheckMaxDrawdown()
 {
-   double currentBalance = AccountInfoDouble(ACCOUNT_BALANCE);
    double currentEquity = AccountInfoDouble(ACCOUNT_EQUITY);
    
-   //--- Update peak balance
-   if(currentBalance > peakBalance)
-      peakBalance = currentBalance;
+   //--- Update peak EQUITY (high water mark)
+   if(currentEquity > peakEquity)
+   {
+      peakEquity = currentEquity;
+      PrintFormat("New equity high water mark: $%.2f", peakEquity);
+   }
    
-   //--- Calculate drawdown from peak
+   //--- Calculate drawdown from peak EQUITY
    double drawdown = 0;
-   if(peakBalance > 0)
-      drawdown = ((peakBalance - currentEquity) / peakBalance) * 100.0;
+   if(peakEquity > 0)
+      drawdown = ((peakEquity - currentEquity) / peakEquity) * 100.0;
    
+   //--- Check if max drawdown exceeded
    return (drawdown >= InpMaxDrawdownPercent);
 }
 
@@ -892,7 +1245,7 @@ void DeleteAllPendingOrders()
 void CreatePanel()
 {
    int panelWidth = 340;
-   int panelHeight = 270;
+   int panelHeight = 328;  // Increased from 290 to accommodate new rows
    int lineHeight = 19;
    int colWidth = 160;
    
@@ -904,8 +1257,8 @@ void CreatePanel()
    CreateRectLabel(panelPrefix + "BG", InpPanelX, yOffset, panelWidth, panelHeight, InpPanelColor, CORNER_LEFT_UPPER, false);
    yOffset += 10;
    
-   //--- Header: Momentum Grid EA
-   CreateText(panelPrefix + "EAName", xLeft, yOffset, "MOMENTUM GRID EA", clrGold, 11, "Arial Black");
+   //--- Header: TRUE SACROSANCT
+   CreateText(panelPrefix + "EAName", xLeft, yOffset, "TRUE SACROSANCT GRID", clrGold, 11, "Arial Black");
    yOffset += 24;
    
    //--- Separator line
@@ -942,30 +1295,47 @@ void CreatePanel()
    CreateText(panelPrefix + "RefPrice", xRight + 32, yOffset, "0.00000", clrWhite, 9, "Arial Bold");
    yOffset += lineHeight;
    
+   //--- Row 4b: Peak Equity (high water mark)
+   CreateText(panelPrefix + "PeakLabel", xLeft, yOffset, "Peak:", C'120,120,120', 9);
+   CreateText(panelPrefix + "PeakEquity", xLeft + 52, yOffset, "$0.00", clrGold, 9, "Arial Bold");
+   yOffset += lineHeight;
+   
    //--- Row 5: Grid Gap (full width)
    CreateText(panelPrefix + "GapLabel", xLeft, yOffset, "Grid Gap:", C'120,120,120', 9);
    CreateText(panelPrefix + "GridGap", xLeft + 65, yOffset, "0.00%", clrWhite, 9, "Arial Bold");
+   yOffset += lineHeight;
+   
+   //--- Row 6: Triggered levels count
+   CreateText(panelPrefix + "TriggeredLabel", xLeft, yOffset, "Triggered:", clrOrange, 9, "Arial Bold");
+   CreateText(panelPrefix + "TriggeredCount", xLeft + 72, yOffset, "B:0 | S:0", clrOrange, 9, "Arial Bold");
+   yOffset += lineHeight;
+   
+   //--- Row 6b: Execution mode
+   CreateText(panelPrefix + "ModeLabel", xLeft, yOffset, "Mode:", C'120,120,120', 9);
+   string modeText = useMarketOrders ? "MARKET" : "PENDING";
+   color modeColor = useMarketOrders ? clrYellow : clrLimeGreen;
+   CreateText(panelPrefix + "Mode", xLeft + 45, yOffset, modeText, modeColor, 9, "Arial Bold");
    yOffset += lineHeight + 2;
    
    //--- Separator
    CreateRectLabel(panelPrefix + "Sep2", InpPanelX + 8, yOffset, panelWidth - 16, 1, clrDimGray, CORNER_LEFT_UPPER, false);
    yOffset += 7;
    
-   //--- Row 6: Next Buy | Next Sell
+   //--- Row 7: Next Buy | Next Sell
    CreateText(panelPrefix + "NextBuyLabel", xLeft, yOffset, "Next Buy:", clrDodgerBlue, 9, "Arial Bold");
    CreateText(panelPrefix + "NextBuy", xLeft + 65, yOffset, "---", clrDodgerBlue, 9, "Arial Bold");
    CreateText(panelPrefix + "NextSellLabel", xRight, yOffset, "Next Sell:", clrTomato, 9, "Arial Bold");
    CreateText(panelPrefix + "NextSell", xRight + 65, yOffset, "---", clrTomato, 9, "Arial Bold");
    yOffset += lineHeight;
    
-   //--- Row 7: Buy Lots (Net) | Sell Lots (Net)
+   //--- Row 8: Buy Lots (Net) | Sell Lots (Net)
    CreateText(panelPrefix + "BuyLotsLabel", xLeft, yOffset, "Buy Lots:", clrDodgerBlue, 9, "Arial Bold");
    CreateText(panelPrefix + "BuyLots", xLeft + 65, yOffset, "0.00", clrDodgerBlue, 9, "Arial Bold");
    CreateText(panelPrefix + "SellLotsLabel", xRight, yOffset, "Sell Lots:", clrTomato, 9, "Arial Bold");
    CreateText(panelPrefix + "SellLots", xRight + 65, yOffset, "0.00", clrTomato, 9, "Arial Bold");
    yOffset += lineHeight;
    
-   //--- Row 8: Buy Grid Levels | Sell Grid Levels
+   //--- Row 9: Buy Grid Levels | Sell Grid Levels
    CreateText(panelPrefix + "BuyLabel", xLeft, yOffset, "Buy:", clrDodgerBlue, 9, "Arial Bold");
    CreateText(panelPrefix + "BuyGrid", xLeft + 35, yOffset, "0 lvls", clrDodgerBlue, 9, "Arial Bold");
    CreateText(panelPrefix + "SellLabel", xRight, yOffset, "Sell:", clrTomato, 9, "Arial Bold");
@@ -976,14 +1346,14 @@ void CreatePanel()
    CreateRectLabel(panelPrefix + "Sep3", InpPanelX + 8, yOffset, panelWidth - 16, 1, clrDimGray, CORNER_LEFT_UPPER, false);
    yOffset += 7;
    
-   //--- Row 9: Profit | Target TP
+   //--- Row 10: Profit | Target TP
    CreateText(panelPrefix + "ProfitLabel", xLeft, yOffset, "Profit:", C'120,120,120', 9);
    CreateText(panelPrefix + "Profit", xLeft + 50, yOffset, "$0.00", clrLimeGreen, 10, "Arial Black");
    CreateText(panelPrefix + "TPLabel", xRight, yOffset, "Target:", C'120,120,120', 9);
    CreateText(panelPrefix + "GlobalTP", xRight + 50, yOffset, "$" + FormatWithCommas(InpGlobalTakeProfitUSD, 0), clrGold, 9, "Arial Bold");
    yOffset += lineHeight + 2;
    
-   //--- Row 10: Drawdown | Max DD
+   //--- Row 11: Drawdown | Max DD
    CreateText(panelPrefix + "DDLabel", xLeft, yOffset, "DD:", C'120,120,120', 9);
    CreateText(panelPrefix + "Drawdown", xLeft + 50, yOffset, "0.00%", clrWhite, 9, "Arial Bold");
    CreateText(panelPrefix + "MaxDDLabel", xRight, yOffset, "Max DD:", C'120,120,120', 9);
@@ -1025,26 +1395,30 @@ void UpdatePanel()
    double nextBuy = GetNextPendingPrice(true);
    double nextSell = GetNextPendingPrice(false);
    
-   //--- Calculate drawdown
-   double currentBalance = AccountInfoDouble(ACCOUNT_BALANCE);
+   //--- Calculate drawdown from equity high water mark
    double currentEquity = AccountInfoDouble(ACCOUNT_EQUITY);
+   
+   //--- Update peak equity if current is higher
+   if(currentEquity > peakEquity)
+      peakEquity = currentEquity;
+   
    double drawdown = 0;
-   if(peakBalance > 0)
-      drawdown = ((peakBalance - currentEquity) / peakBalance) * 100.0;
+   if(peakEquity > 0)
+      drawdown = ((peakEquity - currentEquity) / peakEquity) * 100.0;
    
    //--- Status
    string status = "Active";
    color statusColor = clrLimeGreen;
    
-   if(isManuallyPaused)
+   if(isStoppedByDrawdown)
+   {
+      status = "STOPPED";
+      statusColor = clrRed;
+   }
+   else if(isManuallyPaused)
    {
       status = "PAUSED";
       statusColor = clrOrange;
-   }
-   else if(isDrawdownPaused)
-   {
-      status = "PAUSED";
-      statusColor = clrOrangeRed;
    }
    
    ObjectSetString(0, panelPrefix + "Status", OBJPROP_TEXT, status);
@@ -1058,8 +1432,15 @@ void UpdatePanel()
    //--- Equity (chalk white bold)
    ObjectSetString(0, panelPrefix + "Equity", OBJPROP_TEXT, "$" + FormatWithCommas(equity, 2));
    
+   //--- Peak Equity (high water mark in gold)
+   ObjectSetString(0, panelPrefix + "PeakEquity", OBJPROP_TEXT, "$" + FormatWithCommas(peakEquity, 2));
+   
    //--- Reference Price (SACROSANCT)
    ObjectSetString(0, panelPrefix + "RefPrice", OBJPROP_TEXT, FormatWithCommas(referencePrice, dgt));
+   
+   //--- Triggered levels count
+   ObjectSetString(0, panelPrefix + "TriggeredCount", OBJPROP_TEXT, 
+                  StringFormat("B:%d | S:%d", buyTriggeredCount, sellTriggeredCount));
    
    //--- Spread with color coding
    double spreadPoints = currentSpread / pt;
@@ -1092,16 +1473,24 @@ void UpdatePanel()
    ObjectSetString(0, panelPrefix + "GridGap", OBJPROP_TEXT, 
                   StringFormat("%.2f%% (%s)", InpGridGapPercent, FormatWithCommas(gridGapPrice, dgt)));
    
-   //--- Next Buy/Sell (from pending orders)
-   if(nextBuy > 0)
-      ObjectSetString(0, panelPrefix + "NextBuy", OBJPROP_TEXT, FormatWithCommas(nextBuy, dgt));
+   //--- Next Buy/Sell (from pending orders - or N/A for market mode)
+   if(useMarketOrders)
+   {
+      ObjectSetString(0, panelPrefix + "NextBuy", OBJPROP_TEXT, "N/A");
+      ObjectSetString(0, panelPrefix + "NextSell", OBJPROP_TEXT, "N/A");
+   }
    else
-      ObjectSetString(0, panelPrefix + "NextBuy", OBJPROP_TEXT, "---");
-   
-   if(nextSell > 0)
-      ObjectSetString(0, panelPrefix + "NextSell", OBJPROP_TEXT, FormatWithCommas(nextSell, dgt));
-   else
-      ObjectSetString(0, panelPrefix + "NextSell", OBJPROP_TEXT, "---");
+   {
+      if(nextBuy > 0)
+         ObjectSetString(0, panelPrefix + "NextBuy", OBJPROP_TEXT, FormatWithCommas(nextBuy, dgt));
+      else
+         ObjectSetString(0, panelPrefix + "NextBuy", OBJPROP_TEXT, "---");
+      
+      if(nextSell > 0)
+         ObjectSetString(0, panelPrefix + "NextSell", OBJPROP_TEXT, FormatWithCommas(nextSell, dgt));
+      else
+         ObjectSetString(0, panelPrefix + "NextSell", OBJPROP_TEXT, "---");
+   }
    
    //--- Buy/Sell Lots with Net in parentheses
    string buyLotsText = StringFormat("%.2f (%.2f)", buyLots, netLots);
