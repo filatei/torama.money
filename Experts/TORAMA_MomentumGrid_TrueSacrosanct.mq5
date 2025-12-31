@@ -22,6 +22,7 @@ enum ENUM_TRADE_DIRECTION
    DIRECTION_SELL_ONLY = 2  // Sell Only (Downward Momentum)
 };
 input ENUM_TRADE_DIRECTION InpTradeDirection = DIRECTION_BOTH; // Trading Direction
+input bool InpBidirectionalGrid = false;  // Buy & Sell Every Level (Both Directions)
 
 input group "=== GRID SETTINGS ==="
 input double InpGridGapPercent = 0.5;           // Grid Gap (% of Price)
@@ -296,11 +297,19 @@ void OnTick()
    }
    
    //--- Check if all positions closed -> reset grid (only if not stopped by drawdown)
+   //--- IMPORTANT: Only reset if grid was actually trading (had positions that closed)
+   //--- This prevents pending orders from regenerating when no position was taken
    if(GetTotalPositions() == 0 && gridInitialized && !isStoppedByDrawdown)
    {
-      PrintFormat("All positions closed - Resetting sacrosanct grid");
-      DeleteAllPendingOrders();
-      ResetSacrosanctGrid();
+      //--- Check if we have any triggered levels (meaning positions were opened and closed)
+      if(buyTriggeredCount > 0 || sellTriggeredCount > 0)
+      {
+         PrintFormat("All positions closed - Resetting sacrosanct grid");
+         DeleteAllPendingOrders();
+         ResetSacrosanctGrid();
+      }
+      //--- If no triggered levels, just maintain existing pending orders
+      //--- This prevents auto-reset when EA starts with no positions
    }
    
    //--- Maintain sacrosanct grid - ensure pending orders exist
@@ -846,6 +855,56 @@ void MaintainSacrosanctGrid()
    int levelsAbove = (int)MathCeil((ask - referencePrice) / gridGapPrice);
    int levelsBelow = (int)MathCeil((referencePrice - bid) / gridGapPrice);
    
+   //--- BIDIRECTIONAL GRID MODE: Place both BUY and SELL at every level
+   if(InpBidirectionalGrid && (InpTradeDirection == DIRECTION_BUY_ONLY || InpTradeDirection == DIRECTION_SELL_ONLY))
+   {
+      //--- For BUY_ONLY or SELL_ONLY with bidirectional enabled:
+      //--- Place both buy and sell orders at every grid level (up and down)
+      
+      bool placeBuys = (InpTradeDirection == DIRECTION_BUY_ONLY);
+      bool placeSells = (InpTradeDirection == DIRECTION_SELL_ONLY);
+      
+      //--- Place orders ABOVE reference (positive levels)
+      for(int level = 1; level <= levelsAbove + 10; level++)
+      {
+         if(InpMaxGridLevels > 0 && level > InpMaxGridLevels) break;
+         
+         double orderPrice = referencePrice + (level * gridGapPrice);
+         
+         //--- Place the primary direction order (BUY if BUY_ONLY, SELL if SELL_ONLY)
+         if(placeBuys && !IsLevelTriggered(level, true) && !PendingOrderExists(level, true))
+         {
+            PlaceBuyOrder(level, orderPrice);
+         }
+         else if(placeSells && !IsLevelTriggered(level, false) && !PendingOrderExists(level, false))
+         {
+            PlaceSellOrder(level, orderPrice);
+         }
+      }
+      
+      //--- Place orders BELOW reference (negative levels)
+      for(int level = -1; level >= -(levelsBelow + 10); level--)
+      {
+         if(InpMaxGridLevels > 0 && MathAbs(level) > InpMaxGridLevels) break;
+         
+         double orderPrice = referencePrice + (level * gridGapPrice);
+         
+         //--- Place the primary direction order (BUY if BUY_ONLY, SELL if SELL_ONLY)
+         if(placeBuys && !IsLevelTriggered(level, true) && !PendingOrderExists(level, true))
+         {
+            PlaceBuyOrder(level, orderPrice);
+         }
+         else if(placeSells && !IsLevelTriggered(level, false) && !PendingOrderExists(level, false))
+         {
+            PlaceSellOrder(level, orderPrice);
+         }
+      }
+      
+      return; // Exit - bidirectional mode handled
+   }
+   
+   //--- STANDARD MODE: Place BUY orders above reference, SELL orders below
+   
    //--- Place BUY orders (above reference for momentum up)
    if(InpTradeDirection == DIRECTION_BOTH || InpTradeDirection == DIRECTION_BUY_ONLY)
    {
@@ -910,6 +969,59 @@ void CheckAndExecuteMarketOrders()
 {
    double ask = SymbolInfoDouble(sym, SYMBOL_ASK);
    double bid = SymbolInfoDouble(sym, SYMBOL_BID);
+   
+   //--- BIDIRECTIONAL MODE: Execute both BUY and SELL at every level crossed
+   if(InpBidirectionalGrid && (InpTradeDirection == DIRECTION_BUY_ONLY || InpTradeDirection == DIRECTION_SELL_ONLY))
+   {
+      bool executeBuys = (InpTradeDirection == DIRECTION_BUY_ONLY);
+      bool executeSells = (InpTradeDirection == DIRECTION_SELL_ONLY);
+      
+      //--- Check levels ABOVE reference
+      int levelsAbove = (int)MathFloor((ask - referencePrice) / gridGapPrice);
+      for(int level = 1; level <= levelsAbove; level++)
+      {
+         if(InpMaxGridLevels > 0 && level > InpMaxGridLevels) break;
+         
+         double levelPrice = referencePrice + (level * gridGapPrice);
+         
+         //--- Execute primary direction at this level
+         if(executeBuys && !IsLevelTriggered(level, true) && !PositionExistsAtLevel(level, true) && ask >= levelPrice)
+         {
+            ExecuteMarketBuy(level);
+            MarkLevelAsTriggered(level, true);
+         }
+         else if(executeSells && !IsLevelTriggered(level, false) && !PositionExistsAtLevel(level, false) && ask >= levelPrice)
+         {
+            ExecuteMarketSell(level);
+            MarkLevelAsTriggered(level, false);
+         }
+      }
+      
+      //--- Check levels BELOW reference
+      int levelsBelow = (int)MathFloor((referencePrice - bid) / gridGapPrice);
+      for(int level = -1; level >= -levelsBelow; level--)
+      {
+         if(InpMaxGridLevels > 0 && MathAbs(level) > InpMaxGridLevels) break;
+         
+         double levelPrice = referencePrice + (level * gridGapPrice);
+         
+         //--- Execute primary direction at this level
+         if(executeBuys && !IsLevelTriggered(level, true) && !PositionExistsAtLevel(level, true) && bid <= levelPrice)
+         {
+            ExecuteMarketBuy(level);
+            MarkLevelAsTriggered(level, true);
+         }
+         else if(executeSells && !IsLevelTriggered(level, false) && !PositionExistsAtLevel(level, false) && bid <= levelPrice)
+         {
+            ExecuteMarketSell(level);
+            MarkLevelAsTriggered(level, false);
+         }
+      }
+      
+      return; // Exit - bidirectional mode handled
+   }
+   
+   //--- STANDARD MODE: BUY above reference, SELL below reference
    
    //--- Check BUY levels (price moving up above reference)
    if(InpTradeDirection == DIRECTION_BOTH || InpTradeDirection == DIRECTION_BUY_ONLY)
@@ -1600,9 +1712,21 @@ void UpdatePanel()
    ObjectSetString(0, panelPrefix + "Status", OBJPROP_TEXT, status);
    ObjectSetInteger(0, panelPrefix + "Status", OBJPROP_COLOR, statusColor);
    
-   //--- Direction
-   string direction = InpTradeDirection == DIRECTION_BOTH ? "BOTH" : 
-                     (InpTradeDirection == DIRECTION_BUY_ONLY ? "BUY" : "SELL");
+   //--- Direction (with bidirectional indicator)
+   string direction = "";
+   if(InpTradeDirection == DIRECTION_BOTH)
+   {
+      direction = "BOTH";
+   }
+   else if(InpBidirectionalGrid)
+   {
+      // Bidirectional mode active
+      direction = (InpTradeDirection == DIRECTION_BUY_ONLY ? "BUY⇅" : "SELL⇅");
+   }
+   else
+   {
+      direction = (InpTradeDirection == DIRECTION_BUY_ONLY ? "BUY" : "SELL");
+   }
    ObjectSetString(0, panelPrefix + "Direction", OBJPROP_TEXT, direction);
    
    //--- Equity (chalk white bold)
