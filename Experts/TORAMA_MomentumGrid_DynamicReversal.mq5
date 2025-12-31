@@ -489,8 +489,11 @@ void MaintainDynamicGrid()
       {
          int sellStartLevel = highBuyWatermark - InpReversalLevels;
          
-         //--- Sell from reversal point downward
-         for(int level = sellStartLevel; level >= currentLevel - 10; level--)
+         //--- Sell from reversal point downward (fixed 10 levels lookahead)
+         int lowestSellLevel = sellWatermarkActive ? lowSellWatermark : sellStartLevel;
+         int targetLevel = MathMin(sellStartLevel - 10, currentLevel - 5);
+         
+         for(int level = lowestSellLevel - 1; level >= targetLevel; level--)
          {
             if(InpMaxGridLevels > 0 && MathAbs(level) > InpMaxGridLevels) break;
             
@@ -505,7 +508,10 @@ void MaintainDynamicGrid()
       //--- Still above reversal threshold: Continue buying up
       else if(currentLevel > highBuyWatermark)
       {
-         for(int level = highBuyWatermark + 1; level <= currentLevel + 10; level++)
+         //--- Only place orders up to 10 levels above current buy watermark
+         int targetLevel = MathMin(highBuyWatermark + 10, currentLevel + 5);
+         
+         for(int level = highBuyWatermark + 1; level <= targetLevel; level++)
          {
             if(InpMaxGridLevels > 0 && level > InpMaxGridLevels) break;
             
@@ -528,8 +534,11 @@ void MaintainDynamicGrid()
       {
          int buyStartLevel = lowSellWatermark + InpReversalLevels;
          
-         //--- Buy from reversal point upward
-         for(int level = buyStartLevel; level <= currentLevel + 10; level++)
+         //--- Buy from reversal point upward (fixed 10 levels lookahead)
+         int highestBuyLevel = buyWatermarkActive ? highBuyWatermark : buyStartLevel;
+         int targetLevel = MathMax(buyStartLevel + 10, currentLevel + 5);
+         
+         for(int level = highestBuyLevel + 1; level <= targetLevel; level++)
          {
             if(InpMaxGridLevels > 0 && level > InpMaxGridLevels) break;
             
@@ -544,7 +553,10 @@ void MaintainDynamicGrid()
       //--- Still below reversal threshold: Continue selling down
       else if(currentLevel < lowSellWatermark)
       {
-         for(int level = lowSellWatermark - 1; level >= currentLevel - 10; level--)
+         //--- Only place orders up to 10 levels below current sell watermark
+         int targetLevel = MathMax(lowSellWatermark - 10, currentLevel - 5);
+         
+         for(int level = lowSellWatermark - 1; level >= targetLevel; level--)
          {
             if(InpMaxGridLevels > 0 && MathAbs(level) > InpMaxGridLevels) break;
             
