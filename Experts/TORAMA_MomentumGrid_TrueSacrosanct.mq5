@@ -488,6 +488,23 @@ void OnChartEvent(const int id, const long &lparam, const double &dparam, const 
             UpdatePanel();
          }
       }
+      
+      //--- Reset Reference button
+      else if(sparam == panelPrefix + "BtnResetRef")
+      {
+         if(!buttonPressed)
+         {
+            buttonPressed = true;
+            ObjectSetInteger(0, panelPrefix + "BtnResetRef", OBJPROP_STATE, false);
+            
+            Print("Reset Reference pressed - Realigning grid reference (keeping existing positions)");
+            ResetGridReference();
+            
+            Sleep(100);
+            buttonPressed = false;
+            UpdatePanel();
+         }
+      }
    }
 }
 
@@ -608,6 +625,161 @@ void ResetSacrosanctGrid()
    
    //--- Place fresh grid of pending orders
    MaintainSacrosanctGrid();
+}
+
+//+------------------------------------------------------------------+
+//| Reset Grid Reference - Realign without closing positions         |
+//+------------------------------------------------------------------+
+void ResetGridReference()
+{
+   //--- Get current mid-price
+   double ask = SymbolInfoDouble(sym, SYMBOL_ASK);
+   double bid = SymbolInfoDouble(sym, SYMBOL_BID);
+   double currentMidPrice = NormalizeDouble((ask + bid) / 2.0, dgt);
+   
+   //--- Align to tick size
+   currentMidPrice = MathRound(currentMidPrice / tickSize) * tickSize;
+   
+   PrintFormat("========================================");
+   PrintFormat("RESETTING GRID REFERENCE");
+   PrintFormat("Old Reference: %.*f", dgt, referencePrice);
+   PrintFormat("Current Mid-Price: %.*f", dgt, currentMidPrice);
+   
+   //--- Calculate how to align new reference to existing grid
+   //--- We want the new reference to be at a grid level that aligns with the old grid
+   //--- This maintains sacrosanct property - existing positions stay on valid grid levels
+   
+   //--- Calculate distance from old reference to current price
+   double priceMovement = currentMidPrice - referencePrice;
+   
+   //--- Find nearest grid level to current price
+   int levelsFromOldRef = (int)MathRound(priceMovement / gridGapPrice);
+   
+   //--- Set new reference at a grid level that aligns with old grid
+   //--- This ensures all old triggered levels remain valid
+   double newReference = referencePrice + (levelsFromOldRef * gridGapPrice);
+   
+   //--- Align to tick size
+   newReference = MathRound(newReference / tickSize) * tickSize;
+   
+   PrintFormat("New Reference: %.*f (aligned to grid)", dgt, newReference);
+   PrintFormat("Grid alignment: %d levels from old reference", levelsFromOldRef);
+   
+   //--- Update reference price
+   referencePrice = newReference;
+   
+   //--- Recalculate triggered levels based on existing positions
+   RecalculateTriggeredLevels();
+   
+   //--- Delete ALL pending orders (we'll rebuild them from new reference)
+   PrintFormat("Deleting all pending orders...");
+   DeleteAllPendingOrders();
+   
+   //--- Reset highest/lowest tracking to recalculate from existing positions
+   highestBuyLevel = 0;
+   lowestSellLevel = 0;
+   
+   //--- Scan existing positions to update grid level tracking
+   UpdateGridLevelsFromPositions();
+   
+   //--- Rebuild pending orders from new reference
+   PrintFormat("Rebuilding pending orders from new reference...");
+   MaintainSacrosanctGrid();
+   
+   PrintFormat("Grid reference reset complete!");
+   PrintFormat("Existing positions: %d (unchanged)", GetTotalPositions());
+   PrintFormat("Triggered buy levels: %d", buyTriggeredCount);
+   PrintFormat("Triggered sell levels: %d", sellTriggeredCount);
+   PrintFormat("========================================");
+}
+
+//+------------------------------------------------------------------+
+//| Recalculate triggered levels based on existing positions         |
+//+------------------------------------------------------------------+
+void RecalculateTriggeredLevels()
+{
+   //--- Clear existing triggered level arrays
+   ArrayFill(triggeredBuyLevels, 0, ArraySize(triggeredBuyLevels), -999999);
+   ArrayFill(triggeredSellLevels, 0, ArraySize(triggeredSellLevels), -999999);
+   buyTriggeredCount = 0;
+   sellTriggeredCount = 0;
+   
+   //--- Scan all open positions
+   int totalPositions = PositionsTotal();
+   
+   for(int i = 0; i < totalPositions; i++)
+   {
+      ulong ticket = PositionGetTicket(i);
+      if(ticket <= 0) continue;
+      
+      if(PositionGetString(POSITION_SYMBOL) != sym) continue;
+      if(PositionGetInteger(POSITION_MAGIC) != magicNumber) continue;
+      
+      //--- Get position entry price
+      double entryPrice = PositionGetDouble(POSITION_PRICE_OPEN);
+      ENUM_POSITION_TYPE posType = (ENUM_POSITION_TYPE)PositionGetInteger(POSITION_TYPE);
+      
+      //--- Calculate which grid level this position is at
+      double distanceFromRef = entryPrice - referencePrice;
+      int level = (int)MathRound(distanceFromRef / gridGapPrice);
+      
+      //--- Mark this level as triggered
+      if(posType == POSITION_TYPE_BUY)
+      {
+         if(!IsLevelTriggered(level, true))
+         {
+            MarkLevelAsTriggered(level, true);
+            PrintFormat("Recalculated: BUY Level %d at price %.*f", level, dgt, entryPrice);
+         }
+      }
+      else if(posType == POSITION_TYPE_SELL)
+      {
+         if(!IsLevelTriggered(level, false))
+         {
+            MarkLevelAsTriggered(level, false);
+            PrintFormat("Recalculated: SELL Level %d at price %.*f", level, dgt, entryPrice);
+         }
+      }
+   }
+}
+
+//+------------------------------------------------------------------+
+//| Update grid level tracking from existing positions               |
+//+------------------------------------------------------------------+
+void UpdateGridLevelsFromPositions()
+{
+   //--- Scan all open positions to find highest/lowest levels
+   int totalPositions = PositionsTotal();
+   
+   for(int i = 0; i < totalPositions; i++)
+   {
+      ulong ticket = PositionGetTicket(i);
+      if(ticket <= 0) continue;
+      
+      if(PositionGetString(POSITION_SYMBOL) != sym) continue;
+      if(PositionGetInteger(POSITION_MAGIC) != magicNumber) continue;
+      
+      //--- Get position entry price
+      double entryPrice = PositionGetDouble(POSITION_PRICE_OPEN);
+      ENUM_POSITION_TYPE posType = (ENUM_POSITION_TYPE)PositionGetInteger(POSITION_TYPE);
+      
+      //--- Calculate which grid level this position is at
+      double distanceFromRef = entryPrice - referencePrice;
+      int level = (int)MathRound(distanceFromRef / gridGapPrice);
+      
+      //--- Update highest/lowest tracking
+      if(posType == POSITION_TYPE_BUY && level > highestBuyLevel)
+      {
+         highestBuyLevel = level;
+      }
+      else if(posType == POSITION_TYPE_SELL && level < lowestSellLevel)
+      {
+         lowestSellLevel = level;
+      }
+   }
+   
+   PrintFormat("Grid levels from positions - Highest Buy: %d, Lowest Sell: %d", 
+               highestBuyLevel, lowestSellLevel);
 }
 
 //+------------------------------------------------------------------+
@@ -1245,7 +1417,7 @@ void DeleteAllPendingOrders()
 void CreatePanel()
 {
    int panelWidth = 340;
-   int panelHeight = 328;  // Increased from 290 to accommodate new rows
+   int panelHeight = 358;  // Increased from 328 to accommodate Reset Reference button
    int lineHeight = 19;
    int colWidth = 160;
    
@@ -1364,10 +1536,14 @@ void CreatePanel()
    CreateRectLabel(panelPrefix + "Sep4", InpPanelX + 8, yOffset, panelWidth - 16, 1, clrDimGray, CORNER_LEFT_UPPER, false);
    yOffset += 8;
    
-   //--- Control Buttons (inside panel, 3 buttons in row)
+   //--- Control Buttons Row 1 (inside panel, 3 buttons)
    CreateButton(panelPrefix + "BtnCloseAll", InpPanelX + 12, yOffset, 103, 26, "CLOSE ALL", clrWhite, clrCrimson);
    CreateButton(panelPrefix + "BtnPause", InpPanelX + 121, yOffset, 103, 26, "PAUSE", clrWhite, C'255,152,0');
    CreateButton(panelPrefix + "BtnTakeProfit", InpPanelX + 230, yOffset, 98, 26, "TAKE TP", clrWhite, C'34,139,34');
+   yOffset += 30;
+   
+   //--- Control Buttons Row 2 (Reset Reference - full width)
+   CreateButton(panelPrefix + "BtnResetRef", InpPanelX + 12, yOffset, 316, 26, "RESET REFERENCE", clrWhite, C'65,105,225');
    yOffset += 32;
    
    //--- TORAMA CAPITAL branding - bottom right, INSIDE panel, SOLID GOLD
