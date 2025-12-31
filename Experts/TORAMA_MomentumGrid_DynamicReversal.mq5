@@ -60,6 +60,7 @@ double currentSpread = 0;
 //--- Grid tracking - DYNAMIC REVERSAL SYSTEM
 double referencePrice = 0;
 bool gridInitialized = false;
+int cycleCount = 0;  // Track number of successful TP cycles
 
 //--- Watermark tracking - CRITICAL FOR REVERSAL LOGIC
 int highBuyWatermark = 0;      // Highest level where BUY was placed
@@ -230,8 +231,11 @@ void OnTick()
    if(CheckGlobalTakeProfit())
    {
       double profit = GetTotalProfit();
+      cycleCount++;  // Increment successful cycle counter
+      
       PrintFormat("========================================");
       PrintFormat("GLOBAL TAKE PROFIT REACHED: $%.2f", profit);
+      PrintFormat("Cycle #%d completed successfully", cycleCount);
       PrintFormat("Closing all positions and resetting grid");
       PrintFormat("========================================");
       
@@ -338,6 +342,7 @@ void InitializeGrid()
    lowSellWatermark = 0;
    buyWatermarkActive = false;
    sellWatermarkActive = false;
+   cycleCount = 0;  // Initialize cycle counter
    
    gridInitialized = true;
    
@@ -973,7 +978,7 @@ void OnChartEvent(const int id, const long &lparam, const double &dparam, const 
 void CreatePanel()
 {
    int panelWidth = 340;
-   int panelHeight = 310;
+   int panelHeight = 329;  // Increased for Cycles row
    int lineHeight = 19;
    int colWidth = 160;
    
@@ -1008,11 +1013,16 @@ void CreatePanel()
    CreateText(panelPrefix + "Reversal", xRight + 60, yOffset, IntegerToString(InpReversalLevels) + " lvls", clrCyan, 9, "Arial Bold");
    yOffset += lineHeight;
    
-   //--- Row 3: Lot | Spread
+   //--- Row 2b: Lot | Cycles
    CreateText(panelPrefix + "LotLabel", xLeft, yOffset, "Lot:", C'120,120,120', 9);
    CreateText(panelPrefix + "LotSize", xLeft + 52, yOffset, StringFormat("%.2f", effectiveInitialLotSize), clrWhite, 9, "Arial Bold");
-   CreateText(panelPrefix + "SpreadLabel", xRight, yOffset, "Spread:", C'120,120,120', 9);
-   CreateText(panelPrefix + "Spread", xRight + 50, yOffset, "0.0", clrWhite, 9, "Arial Bold");
+   CreateText(panelPrefix + "CycleLabel", xRight, yOffset, "Cycles:", C'120,120,120', 9);
+   CreateText(panelPrefix + "Cycles", xRight + 50, yOffset, "0", clrGold, 9, "Arial Bold");
+   yOffset += lineHeight;
+   
+   //--- Row 3: Spread
+   CreateText(panelPrefix + "SpreadLabel", xLeft, yOffset, "Spread:", C'120,120,120', 9);
+   CreateText(panelPrefix + "Spread", xLeft + 52, yOffset, "0.0", clrWhite, 9, "Arial Bold");
    yOffset += lineHeight;
    
    //--- Row 4: Equity | Peak
@@ -1119,6 +1129,9 @@ void UpdatePanel()
    
    ObjectSetString(0, panelPrefix + "Status", OBJPROP_TEXT, status);
    ObjectSetInteger(0, panelPrefix + "Status", OBJPROP_COLOR, statusColor);
+   
+   //--- Cycles
+   ObjectSetString(0, panelPrefix + "Cycles", OBJPROP_TEXT, IntegerToString(cycleCount));
    
    //--- Equity & Peak
    ObjectSetString(0, panelPrefix + "Equity", OBJPROP_TEXT, "$" + DoubleToString(equity, 2));
