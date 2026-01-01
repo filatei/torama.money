@@ -1,12 +1,12 @@
 //+------------------------------------------------------------------+
-//|                  TORAMA_MomentumGrid_TrueSacrosanct_v3.03.mq5    |
+//|                  TORAMA_MomentumGrid_TrueSacrosanct_v3.04.mq5    |
 //|                                          TORAMA CAPITAL           |
 //+------------------------------------------------------------------+
 #property copyright "TORAMA CAPITAL"
 #property link      "https://toramacapital.com"
-#property version   "3.03"
-#property description "Momentum Grid EA - TRUE Sacrosanct - FINAL"
-#property description "✓ Parallel position closure | ✓ Debug P/L tracking | ✓ All features"
+#property version   "3.04"
+#property description "Momentum Grid EA - TRUE Sacrosanct - COMPLETE"
+#property description "✓ Reversal Threshold | ✓ Parallel Closure | ✓ Debug P/L | ✓ All Features"
 
 #include <Trade\Trade.mqh>
 
@@ -27,6 +27,10 @@ input group "=== GLOBAL PROFIT & RISK ==="
 input double InpGlobalTakeProfitUSD = 100.0;
 input double InpMaxDrawdownPercent = 10.0;
 input int    InpDrawdownPauseMinutes = 30;
+
+input group "=== REVERSAL THRESHOLD ==="
+input bool   InpEnableReversal = false;           // Enable Auto-Reversal
+input int    InpReversalLevels = 5;               // Reversal Threshold (Levels)
 
 input group "=== DISPLAY ==="
 input color  InpPanelColor = C'20,25,30';
@@ -54,6 +58,11 @@ int totalCycleCount = 0;
 double cycleNetPL[];              // Array to store net P/L for each cycle
 string cycleType[];               // Array to store cycle type (TP/CA/DD)
 bool debugMode = false;           // Debug mode flag (press 'D' to toggle)
+
+//--- Reversal tracking
+int peakBuyLevelsActivated = 0;   // Peak number of buy levels activated before reversal
+int peakSellLevelsActivated = 0;  // Peak number of sell levels activated before reversal
+bool reversalTriggered = false;   // Flag to prevent multiple reversals in same trend
 
 //--- Triggered level tracking
 int triggeredBuyLevels[], triggeredSellLevels[], buyTriggeredCount, sellTriggeredCount;
@@ -101,6 +110,11 @@ int OnInit()
    ArrayResize(cycleType, 500);
    ArrayInitialize(cycleNetPL, 0.0);
    
+   // Initialize reversal tracking
+   peakBuyLevelsActivated = 0;
+   peakSellLevelsActivated = 0;
+   reversalTriggered = false;
+   
    ArrayResize(triggeredBuyLevels, 200);
    ArrayResize(triggeredSellLevels, 200);
    ArrayResize(buyEntryPrices, 200);
@@ -120,9 +134,11 @@ int OnInit()
    EventSetMillisecondTimer(500);  // Timer for keyboard events
    
    PrintFormat("╔════════════════════════════════════════════════════════════════╗");
-   PrintFormat("║  TORAMA Grid v3.03 FINAL - Magic: %I64d", magicNumber);
-   PrintFormat("║  ✓ Parallel Position Closure | ✓ Debug P/L Tracking");
-   PrintFormat("║  Press 'D' for Debug Mode | Lot: %.2f | Gap: %.2f%%", effectiveInitialLotSize, InpGridGapPercent);
+   PrintFormat("║  TORAMA Grid v3.04 COMPLETE - Magic: %I64d", magicNumber);
+   PrintFormat("║  ✓ Reversal Threshold | ✓ Parallel Closure | ✓ Debug P/L");
+   PrintFormat("║  Press 'D' for Debug | Reversal: %s | Threshold: %d levels", 
+               InpEnableReversal ? "ON" : "OFF", InpReversalLevels);
+   PrintFormat("║  Lot: %.2f | Gap: %.2f%%", effectiveInitialLotSize, InpGridGapPercent);
    PrintFormat("╚════════════════════════════════════════════════════════════════╝");
    
    return INIT_SUCCEEDED;
@@ -141,6 +157,10 @@ void OnTick()
    CalculateGridGap();
    TrackTriggeredLevels();
    UpdateEntryPriceTracking();
+   
+   // Check for reversal threshold (only in BOTH direction mode)
+   if(InpEnableReversal && InpTradeDirection == DIRECTION_BOTH)
+      CheckReversalThreshold();
    
    if(isStoppedByDrawdown) 
    { 
@@ -454,6 +474,113 @@ bool PositionExistsAtPrice(double price, bool isBuy)
 }
 
 //+------------------------------------------------------------------+
+// Check for reversal threshold and close opposite positions if triggered
+void CheckReversalThreshold()
+{
+   if(!InpEnableReversal) return;
+   
+   int currentBuyLevels = GetGridLevelCount(true);
+   int currentSellLevels = GetGridLevelCount(false);
+   
+   // Track peak levels in each direction
+   if(currentBuyLevels > peakBuyLevelsActivated)
+      peakBuyLevelsActivated = currentBuyLevels;
+   
+   if(currentSellLevels > peakSellLevelsActivated)
+      peakSellLevelsActivated = currentSellLevels;
+   
+   // Check if reversal threshold is met
+   // Scenario 1: Had many BUY positions, now SELL positions are building up
+   if(peakBuyLevelsActivated > 0 && currentSellLevels >= InpReversalLevels && !reversalTriggered)
+   {
+      // Reverse from BUY to SELL - close all BUY positions
+      if(currentBuyLevels > 0)
+      {
+         PrintFormat("╔════════════════════════════════════════════════════════════════╗");
+         PrintFormat("║  REVERSAL TRIGGERED: BUY → SELL");
+         PrintFormat("║  Peak BUY levels: %d | Current SELL levels: %d | Threshold: %d", 
+                     peakBuyLevelsActivated, currentSellLevels, InpReversalLevels);
+         PrintFormat("╚════════════════════════════════════════════════════════════════╝");
+         
+         ClosePositionsByType(true);  // Close all BUY positions
+         peakBuyLevelsActivated = 0;
+         reversalTriggered = true;
+      }
+   }
+   
+   // Scenario 2: Had many SELL positions, now BUY positions are building up
+   if(peakSellLevelsActivated > 0 && currentBuyLevels >= InpReversalLevels && !reversalTriggered)
+   {
+      // Reverse from SELL to BUY - close all SELL positions
+      if(currentSellLevels > 0)
+      {
+         PrintFormat("╔════════════════════════════════════════════════════════════════╗");
+         PrintFormat("║  REVERSAL TRIGGERED: SELL → BUY");
+         PrintFormat("║  Peak SELL levels: %d | Current BUY levels: %d | Threshold: %d", 
+                     peakSellLevelsActivated, currentBuyLevels, InpReversalLevels);
+         PrintFormat("╚════════════════════════════════════════════════════════════════╝");
+         
+         ClosePositionsByType(false);  // Close all SELL positions
+         peakSellLevelsActivated = 0;
+         reversalTriggered = true;
+      }
+   }
+   
+   // Reset reversal flag when both directions have low position counts
+   if(reversalTriggered && currentBuyLevels < 2 && currentSellLevels < 2)
+   {
+      reversalTriggered = false;
+      peakBuyLevelsActivated = 0;
+      peakSellLevelsActivated = 0;
+   }
+}
+
+//+------------------------------------------------------------------+
+// Close positions by type (BUY or SELL) in parallel
+void ClosePositionsByType(bool closeBuy)
+{
+   int totalPos = PositionsTotal();
+   if(totalPos == 0) return;
+   
+   ulong tickets[];
+   ArrayResize(tickets, totalPos);
+   int validCount = 0;
+   
+   // Collect tickets for the specified position type
+   for(int i = 0; i < totalPos; i++)
+   {
+      ulong ticket = PositionGetTicket(i);
+      if(ticket <= 0) continue;
+      if(!PositionSelectByTicket(ticket)) continue;
+      if(PositionGetString(POSITION_SYMBOL) != sym || PositionGetInteger(POSITION_MAGIC) != magicNumber) continue;
+      
+      ENUM_POSITION_TYPE posType = (ENUM_POSITION_TYPE)PositionGetInteger(POSITION_TYPE);
+      if((closeBuy && posType == POSITION_TYPE_BUY) || (!closeBuy && posType == POSITION_TYPE_SELL))
+         tickets[validCount++] = ticket;
+   }
+   
+   if(validCount == 0) return;
+   
+   string dirText = closeBuy ? "BUY" : "SELL";
+   PrintFormat("▶ Closing %d %s positions in parallel (Reversal)...", validCount, dirText);
+   uint startTime = GetTickCount();
+   
+   // Close all positions of the specified type
+   int closedCount = 0;
+   for(int i = 0; i < validCount; i++)
+   {
+      if(trade.PositionClose(tickets[i]))
+         closedCount++;
+   }
+   
+   uint endTime = GetTickCount();
+   double elapsedMs = (endTime - startTime);
+   
+   PrintFormat("✓ Reversal close complete: %d %s positions closed in %.0fms", 
+               closedCount, dirText, elapsedMs);
+}
+
+//+------------------------------------------------------------------+
 void TrackTriggeredLevels()
 {
    for(int i = 0; i < PositionsTotal(); i++)
@@ -553,6 +680,12 @@ void ResetSacrosanctGrid()
    ArrayInitialize(buyEntryPrices, 0.0);
    ArrayInitialize(sellEntryPrices, 0.0);
    buyTriggeredCount = sellTriggeredCount = buyEntryCount = sellEntryCount = 0;
+   
+   // Reset reversal tracking
+   peakBuyLevelsActivated = 0;
+   peakSellLevelsActivated = 0;
+   reversalTriggered = false;
+   
    PlaceInitialOrder();
    MaintainSacrosanctGrid();
 }
@@ -987,6 +1120,14 @@ void UpdatePanelFast()
    else
       ObjSetS("DbgMode", "");
    
+   // Reversal status
+   if(InpEnableReversal)
+   {
+      color revColor = reversalTriggered ? clrOrange : clrCyan;
+      ObjSetS("Rev", StringFormat("Thr:%d|B:%d|S:%d", InpReversalLevels, peakBuyLevelsActivated, peakSellLevelsActivated));
+      ObjSetC("Rev", revColor);
+   }
+   
    if(!useMarketOrders)
    {
       ObjSetS("Nb", nBuy > 0 ? Fmt(nBuy, dgt) : "---");
@@ -1006,7 +1147,8 @@ void UpdatePanelFast()
 //+------------------------------------------------------------------+
 void CreatePanel()
 {
-   int w = 340, h = 390, lh = 19, x = InpPanelX, y = InpPanelY;
+   int h = InpEnableReversal ? 410 : 390;  // Adjust height if reversal enabled
+   int w = 340, lh = 19, x = InpPanelX, y = InpPanelY;
    int x1 = x + 12, x2 = x + 170;
    
    CreateRect("BG", x, y, w, h, InpPanelColor, false); y += 10;
@@ -1048,7 +1190,17 @@ void CreatePanel()
    
    CreateTxt("MoL", x1, y, "Mode:", C'120,120,120', 9);
    CreateTxt("Mo", x1 + 45, y, useMarketOrders ? "MARKET" : "PENDING", useMarketOrders ? clrYellow : clrLimeGreen, 9, "Arial Bold"); 
-   CreateTxt("DbgMode", x2, y, "", clrYellow, 9, "Arial Bold"); y += lh + 2;
+   CreateTxt("DbgMode", x2, y, "", clrYellow, 9, "Arial Bold"); y += lh;
+   
+   // Reversal indicator (if enabled)
+   if(InpEnableReversal)
+   {
+      CreateTxt("RevL", x1, y, "Reversal:", clrCyan, 9, "Arial Bold");
+      CreateTxt("Rev", x1 + 68, y, StringFormat("Thr:%d|B:%d|S:%d", InpReversalLevels, peakBuyLevelsActivated, peakSellLevelsActivated), 
+                clrCyan, 8, "Arial Bold"); y += lh;
+   }
+   
+   y += 2;
    
    CreateRect("S2", x + 8, y, w - 16, 1, clrDimGray, false); y += 7;
    
