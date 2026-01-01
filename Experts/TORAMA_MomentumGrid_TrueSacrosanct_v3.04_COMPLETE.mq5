@@ -20,7 +20,7 @@ input group "=== GRID SETTINGS ==="
 input double InpGridGapPercent = 0.5;
 input double InpInitialLotSize = 0.01;
 input double InpLotMultiplier = 1.0;
-input int    InpMaxGridLevels = 30;
+input int    InpMaxGridLevels = 30;               // Max Grid Levels (0 = Unlimited)
 input double InpMaxSpreadPoints = 0;
 
 input group "=== GLOBAL PROFIT & RISK ==="
@@ -1112,7 +1112,7 @@ void UpdatePanelFast()
    
    ObjSetS("Gg", StringFormat("%.2f%% (%s)", InpGridGapPercent, Fmt(gridGapPrice, dgt)));
    ObjSetS("Tr", StringFormat("B:%d|S:%d", buyTriggeredCount, sellTriggeredCount));
-   ObjSetS("Cyc", StringFormat("TP:%d|CA:%d|Tot:%d", globalTPCycleCount, closeAllCycleCount, totalCycleCount));
+   ObjSetS("Cyc", StringFormat("TP:%d|CA:%d|T:%d", globalTPCycleCount, closeAllCycleCount, totalCycleCount));
    
    // Debug mode indicator
    if(debugMode)
@@ -1147,85 +1147,91 @@ void UpdatePanelFast()
 //+------------------------------------------------------------------+
 void CreatePanel()
 {
-   int h = InpEnableReversal ? 410 : 390;  // Adjust height if reversal enabled
+   int h = InpEnableReversal ? 350 : 335;  // Reduced height
    int w = 340, lh = 19, x = InpPanelX, y = InpPanelY;
-   int x1 = x + 12, x2 = x + 170;
+   int x1 = x + 12, x2 = x + 170, x3 = x + 240;
    
    CreateRect("BG", x, y, w, h, InpPanelColor, false); y += 10;
    CreateTxt("Title", x1, y, "TRUE SACROSANCT GRID", clrGold, 11, "Arial Black"); y += 24;
    CreateRect("S1", x + 8, y, w - 16, 1, clrDimGray, false); y += 7;
    
+   // Row 1: Status | Dir
    CreateTxt("StL", x1, y, "Status:", C'120,120,120', 9);
    CreateTxt("Status", x1 + 52, y, "Active", clrLimeGreen, 9, "Arial Bold");
    CreateTxt("DiL", x2, y, "Dir:", C'120,120,120', 9);
    string dirText = InpTradeDirection == DIRECTION_BUY_ONLY ? "BUY⬆" : InpTradeDirection == DIRECTION_SELL_ONLY ? "SELL⬇" : "BOTH↕";
    CreateTxt("Dir", x2 + 32, y, dirText, clrWhite, 9, "Arial Bold"); y += lh;
    
+   // Row 2: Symbol | Magic
    CreateTxt("SyL", x1, y, "Symbol:", C'120,120,120', 9);
    CreateTxt("Sym", x1 + 52, y, sym, clrWhite, 9, "Arial Bold");
    CreateTxt("MgL", x2, y, "Magic:", C'120,120,120', 9);
    CreateTxt("Mag", x2 + 45, y, IntegerToString(magicNumber), clrWhite, 8); y += lh;
    
+   // Row 3: Lot | Spread | Ref
    CreateTxt("LoL", x1, y, "Lot:", C'120,120,120', 9);
-   CreateTxt("Lot", x1 + 52, y, StringFormat("%.2f", effectiveInitialLotSize), clrWhite, 9, "Arial Bold");
-   CreateTxt("SpL", x2, y, "Spread:", C'120,120,120', 9);
-   CreateTxt("Spr", x2 + 50, y, "0.0", clrWhite, 9, "Arial Bold"); y += lh;
+   CreateTxt("Lot", x1 + 32, y, StringFormat("%.2f", effectiveInitialLotSize), clrWhite, 8, "Arial Bold");
+   CreateTxt("SpL", x1 + 90, y, "Spr:", C'120,120,120', 9);
+   CreateTxt("Spr", x1 + 120, y, "0.0", clrWhite, 8, "Arial Bold");
+   CreateTxt("ReL", x2 + 20, y, "Ref:", C'120,120,120', 9);
+   CreateTxt("Ref", x2 + 50, y, "0.00000", clrWhite, 8, "Arial Bold"); y += lh;
    
-   CreateTxt("EqL", x1, y, "Equity:", C'120,120,120', 9);
-   CreateTxt("Eq", x1 + 52, y, "$0.00", C'240,248,255', 9, "Arial Black");
-   CreateTxt("ReL", x2, y, "Ref:", C'120,120,120', 9);
-   CreateTxt("Ref", x2 + 32, y, "0.00000", clrWhite, 9, "Arial Bold"); y += lh;
+   // Row 4: Equity | Peak | Gap (COMBINED)
+   CreateTxt("EqL", x1, y, "Eq:", C'120,120,120', 9);
+   CreateTxt("Eq", x1 + 28, y, "$0.00", C'240,248,255', 8, "Arial Bold");
+   CreateTxt("PkL", x1 + 100, y, "Pk:", C'120,120,120', 9);
+   CreateTxt("Pk", x1 + 125, y, "$0.00", clrGold, 8, "Arial Bold");
+   CreateTxt("GgL", x2 + 20, y, "Gap:", C'120,120,120', 9);
+   CreateTxt("Gg", x2 + 53, y, "0.00%", clrWhite, 8, "Arial Bold"); y += lh;
    
-   CreateTxt("PkL", x1, y, "Peak:", C'120,120,120', 9);
-   CreateTxt("Pk", x1 + 52, y, "$0.00", clrGold, 9, "Arial Bold"); y += lh;
+   // Row 5: Trig (Triggered) | Cyc (Cycles) - COMBINED
+   CreateTxt("TrL", x1, y, "Trig:", clrOrange, 9, "Arial Bold");
+   CreateTxt("Tr", x1 + 38, y, "B:0|S:0", clrOrange, 8, "Arial Bold");
+   CreateTxt("CyL", x1 + 130, y, "Cyc:", clrLimeGreen, 9, "Arial Bold");
+   CreateTxt("Cyc", x1 + 165, y, "TP:0|CA:0|T:0", clrLimeGreen, 8, "Arial Bold"); y += lh;
    
-   CreateTxt("GgL", x1, y, "Grid Gap:", C'120,120,120', 9);
-   CreateTxt("Gg", x1 + 65, y, "0.00%", clrWhite, 9, "Arial Bold"); y += lh;
-   
-   CreateTxt("TrL", x1, y, "Triggered:", clrOrange, 9, "Arial Bold");
-   CreateTxt("Tr", x1 + 72, y, "B:0|S:0", clrOrange, 9, "Arial Bold"); y += lh;
-   
-   CreateTxt("CyL", x1, y, "Cycles:", clrLimeGreen, 9, "Arial Bold");
-   CreateTxt("Cyc", x1 + 55, y, "TP:0|CA:0|Tot:0", clrLimeGreen, 9, "Arial Bold"); y += lh;
-   
+   // Row 6: Mode | Debug
    CreateTxt("MoL", x1, y, "Mode:", C'120,120,120', 9);
    CreateTxt("Mo", x1 + 45, y, useMarketOrders ? "MARKET" : "PENDING", useMarketOrders ? clrYellow : clrLimeGreen, 9, "Arial Bold"); 
    CreateTxt("DbgMode", x2, y, "", clrYellow, 9, "Arial Bold"); y += lh;
    
-   // Reversal indicator (if enabled)
+   // Row 7: Reversal (if enabled)
    if(InpEnableReversal)
    {
-      CreateTxt("RevL", x1, y, "Reversal:", clrCyan, 9, "Arial Bold");
-      CreateTxt("Rev", x1 + 68, y, StringFormat("Thr:%d|B:%d|S:%d", InpReversalLevels, peakBuyLevelsActivated, peakSellLevelsActivated), 
+      CreateTxt("RevL", x1, y, "Rev:", clrCyan, 9, "Arial Bold");
+      CreateTxt("Rev", x1 + 35, y, StringFormat("Thr:%d|B:%d|S:%d", InpReversalLevels, peakBuyLevelsActivated, peakSellLevelsActivated), 
                 clrCyan, 8, "Arial Bold"); y += lh;
    }
    
-   y += 2;
-   
    CreateRect("S2", x + 8, y, w - 16, 1, clrDimGray, false); y += 7;
    
+   // Row 8: Next Buy | Next Sell
    CreateTxt("NbL", x1, y, "Next Buy:", clrDodgerBlue, 9, "Arial Bold");
    CreateTxt("Nb", x1 + 65, y, "---", clrDodgerBlue, 9, "Arial Bold");
    CreateTxt("NsL", x2, y, "Next Sell:", clrTomato, 9, "Arial Bold");
    CreateTxt("Ns", x2 + 65, y, "---", clrTomato, 9, "Arial Bold"); y += lh;
    
+   // Row 9: Buy Lots | Sell Lots
    CreateTxt("BlL", x1, y, "Buy Lots:", clrDodgerBlue, 9, "Arial Bold");
    CreateTxt("Bl", x1 + 65, y, "0.00", clrDodgerBlue, 9, "Arial Bold");
    CreateTxt("SlL", x2, y, "Sell Lots:", clrTomato, 9, "Arial Bold");
    CreateTxt("Sl", x2 + 65, y, "0.00", clrTomato, 9, "Arial Bold"); y += lh;
    
+   // Row 10: Buy Levels | Sell Levels
    CreateTxt("BgL", x1, y, "Buy:", clrDodgerBlue, 9, "Arial Bold");
    CreateTxt("Bg", x1 + 35, y, "0 lvls", clrDodgerBlue, 9, "Arial Bold");
    CreateTxt("SgL", x2, y, "Sell:", clrTomato, 9, "Arial Bold");
-   CreateTxt("Sg", x2 + 35, y, "0 lvls", clrTomato, 9, "Arial Bold"); y += lh + 2;
+   CreateTxt("Sg", x2 + 35, y, "0 lvls", clrTomato, 9, "Arial Bold"); y += lh;
    
    CreateRect("S3", x + 8, y, w - 16, 1, clrDimGray, false); y += 7;
    
+   // Row 11: Profit | Target
    CreateTxt("PrL", x1, y, "Profit:", C'120,120,120', 9);
    CreateTxt("Pr", x1 + 50, y, "$0.00", clrLimeGreen, 10, "Arial Black");
    CreateTxt("TpL", x2, y, "Target:", C'120,120,120', 9);
-   CreateTxt("Tp", x2 + 50, y, "$" + Fmt(InpGlobalTakeProfitUSD, 0), clrGold, 9, "Arial Bold"); y += lh + 2;
+   CreateTxt("Tp", x2 + 50, y, "$" + Fmt(InpGlobalTakeProfitUSD, 0), clrGold, 9, "Arial Bold"); y += lh;
    
+   // Row 12: DD | Max DD
    CreateTxt("DdL", x1, y, "DD:", C'120,120,120', 9);
    CreateTxt("Dd", x1 + 50, y, "0.00%", clrWhite, 9, "Arial Bold");
    CreateTxt("MdL", x2, y, "Max DD:", C'120,120,120', 9);
@@ -1233,11 +1239,13 @@ void CreatePanel()
    
    CreateRect("S4", x + 8, y, w - 16, 1, clrDimGray, false); y += 8;
    
+   // Buttons
    CreateBtn("BtnCloseAll", x + 12, y, 103, 26, "CLOSE ALL", clrWhite, clrCrimson);
    CreateBtn("BtnPause", x + 121, y, 103, 26, "PAUSE", clrWhite, C'255,152,0');
    CreateBtn("BtnTakeProfit", x + 230, y, 98, 26, "TAKE TP", clrWhite, C'34,139,34'); y += 30;
    CreateBtn("BtnResetRef", x + 12, y, 316, 26, "RESET REFERENCE", clrWhite, C'65,105,225'); y += 32;
    
+   // Footer
    CreateTxt("Brand", x + w - 130, y - 6, "TORAMA CAPITAL", clrGold, 9, "Arial Black");
    CreateTxt("Debug", x + 12, y - 6, "Press 'D' for Debug", C'80,80,80', 7);
    ChartRedraw();
