@@ -39,6 +39,9 @@ input color  InpTextColor = clrWhite;
 input int    InpPanelX = 20;
 input int    InpPanelY = 50;
 
+input group "=== EXPERT SETTINGS ==="
+input int    InpMagicNumber = 0;                  // Magic Number (0 = Auto from ChartID)
+
 //--- Global variables
 CTrade trade;
 string sym;
@@ -73,7 +76,8 @@ double lastBuyTriggerPrice, lastSellTriggerPrice;
 //+------------------------------------------------------------------+
 int OnInit()
 {
-   magicNumber = ChartID();
+   // Set magic number: user-defined or auto from ChartID
+   magicNumber = (InpMagicNumber > 0) ? InpMagicNumber : ChartID();
    sym = _Symbol;
    pt = SymbolInfoDouble(sym, SYMBOL_POINT);
    dgt = (int)SymbolInfoInteger(sym, SYMBOL_DIGITS);
