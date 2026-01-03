@@ -42,7 +42,7 @@ string eaStatus = "Active";
 int panelX = 20;
 int panelY = 30;
 int panelWidth = 280;
-int panelHeight = 380;
+int panelHeight = 410;
 int buttonHeight = 25;
 int buttonWidth = 85;
 int buttonSpacing = 5;
@@ -436,6 +436,33 @@ int CountMyPositions()
 }
 
 //+------------------------------------------------------------------+
+//| Count buys and sells separately                                  |
+//+------------------------------------------------------------------+
+void CountBuysSells(int &buys, int &sells)
+{
+   buys = 0;
+   sells = 0;
+   
+   for(int i = PositionsTotal() - 1; i >= 0; i--)
+   {
+      ulong ticket = PositionGetTicket(i);
+      if(ticket > 0)
+      {
+         if(PositionGetString(POSITION_SYMBOL) == _Symbol &&
+            PositionGetInteger(POSITION_MAGIC) == magicNumber)
+         {
+            ENUM_POSITION_TYPE posType = (ENUM_POSITION_TYPE)PositionGetInteger(POSITION_TYPE);
+            
+            if(posType == POSITION_TYPE_BUY)
+               buys++;
+            else if(posType == POSITION_TYPE_SELL)
+               sells++;
+         }
+      }
+   }
+}
+
+//+------------------------------------------------------------------+
 //| Reset grid after all positions closed                            |
 //+------------------------------------------------------------------+
 void ResetGridAfterClose()
@@ -578,8 +605,20 @@ void CreatePanel()
    //--- Grid Cycles & Position Count on same line
    CreateLabel("ToramaPanelLblTPHits", "Cycles:", col1, yOffset, 8, textColor, ANCHOR_LEFT_UPPER);
    CreateLabel("ToramaPanelValTPHits", "", col1 + 45, yOffset, 8, clrLime, ANCHOR_LEFT_UPPER);
-   CreateLabel("ToramaPanelLblPosCount", "Pos:", col2, yOffset, 8, textColor, ANCHOR_LEFT_UPPER);
-   CreateLabel("ToramaPanelValPosCount", "", col2 + 30, yOffset, 8, clrWhite, ANCHOR_LEFT_UPPER);
+   CreateLabel("ToramaPanelLblPosCount", "Total:", col2, yOffset, 8, textColor, ANCHOR_LEFT_UPPER);
+   CreateLabel("ToramaPanelValPosCount", "", col2 + 35, yOffset, 8, clrWhite, ANCHOR_LEFT_UPPER);
+   yOffset += 18;
+   
+   //--- Buys & Sells on same line
+   CreateLabel("ToramaPanelLblBuys", "Buys:", col1, yOffset, 8, textColor, ANCHOR_LEFT_UPPER);
+   CreateLabel("ToramaPanelValBuys", "", col1 + 40, yOffset, 8, clrLime, ANCHOR_LEFT_UPPER);
+   CreateLabel("ToramaPanelLblSells", "Sells:", col2, yOffset, 8, textColor, ANCHOR_LEFT_UPPER);
+   CreateLabel("ToramaPanelValSells", "", col2 + 35, yOffset, 8, clrRed, ANCHOR_LEFT_UPPER);
+   yOffset += 18;
+   
+   //--- Net Position
+   CreateLabel("ToramaPanelLblNet", "Net:", col1, yOffset, 8, textColor, ANCHOR_LEFT_UPPER);
+   CreateLabel("ToramaPanelValNet", "", col1 + 30, yOffset, 8, clrWhite, ANCHOR_LEFT_UPPER);
    yOffset += 18;
    
    //--- Magic Number
@@ -707,9 +746,32 @@ void UpdatePanel()
    ObjectSetString(0, "ToramaPanelValNextBuy", OBJPROP_TEXT, DoubleToString(nextBuy, _Digits));
    ObjectSetString(0, "ToramaPanelValNextSell", OBJPROP_TEXT, DoubleToString(nextSell, _Digits));
    
-   //--- Statistics
+   //--- Statistics - Get buy/sell counts
+   int buys = 0, sells = 0;
+   CountBuysSells(buys, sells);
+   int net = buys - sells;
+   
    ObjectSetString(0, "ToramaPanelValTPHits", OBJPROP_TEXT, IntegerToString(tpHitCount));
    ObjectSetString(0, "ToramaPanelValPosCount", OBJPROP_TEXT, IntegerToString(CountMyPositions()));
+   
+   ObjectSetString(0, "ToramaPanelValBuys", OBJPROP_TEXT, IntegerToString(buys));
+   ObjectSetString(0, "ToramaPanelValSells", OBJPROP_TEXT, IntegerToString(sells));
+   
+   // Net position with color indication
+   string netText = IntegerToString(net);
+   if(net > 0)
+      netText = "+" + netText + " (Long)";
+   else if(net < 0)
+      netText = netText + " (Short)";
+   else
+      netText = netText + " (Flat)";
+   
+   ObjectSetString(0, "ToramaPanelValNet", OBJPROP_TEXT, netText);
+   color netColor = clrWhite;
+   if(net > 0) netColor = clrLime;
+   else if(net < 0) netColor = clrRed;
+   ObjectSetInteger(0, "ToramaPanelValNet", OBJPROP_COLOR, netColor);
+   
    ObjectSetString(0, "ToramaPanelValMagic", OBJPROP_TEXT, IntegerToString(magicNumber));
 }
 
