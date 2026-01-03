@@ -37,12 +37,14 @@ bool eaPaused = false;
 int tpHitCount = 0;
 int slHitCount = 0;
 double dailyPnL = 0.0;
+int lastPositionCount = 0;
+string eaStatus = "Active";
 
 //--- Panel coordinates and sizes
 int panelX = 20;
 int panelY = 30;
 int panelWidth = 280;
-int panelHeight = 520;
+int panelHeight = 380;
 int buttonHeight = 25;
 int buttonWidth = 85;
 int buttonSpacing = 5;
@@ -110,13 +112,26 @@ void OnTick()
    UpdateDailyPnL();
    
    //--- Check risk limits
-   if(CheckDrawdownLimit() || CheckDailyProfitTarget())
+   if(CheckDrawdownLimit())
    {
       if(!eaPaused)
       {
          CloseAllPositions();
          eaPaused = true;
-         Print("EA Paused due to risk limit breach");
+         eaStatus = "Stopped - Max DD";
+         Print("EA Paused - Max Drawdown reached");
+      }
+      return;
+   }
+   
+   if(CheckDailyProfitTarget())
+   {
+      if(!eaPaused)
+      {
+         CloseAllPositions();
+         eaPaused = true;
+         eaStatus = "Stopped - Profit Target";
+         Print("EA Paused - Daily Profit Target reached");
       }
       return;
    }
@@ -124,6 +139,14 @@ void OnTick()
    //--- Don't trade if paused
    if(eaPaused)
       return;
+   
+   //--- Check for position closure and reset grid
+   int currentPositionCount = CountMyPositions();
+   if(lastPositionCount > 0 && currentPositionCount == 0)
+   {
+      ResetGridAfterClose();
+   }
+   lastPositionCount = currentPositionCount;
    
    //--- Check and manage existing positions
    ManagePositions();
@@ -189,12 +212,10 @@ void CheckGridLevels()
       for(int i = 1; i <= levelsAbove; i++)
       {
          double gridLevel = refPrice + (i * gap);
-         if(!HasPositionAtLevel(gridLevel, ORDER_TYPE_BUY))
+         // Open position if we're at or past this level (allows replaceable levels)
+         if(currentPrice >= gridLevel && !HasActivePositionAtLevel(gridLevel, ORDER_TYPE_BUY))
          {
-            if(currentPrice >= gridLevel)
-            {
-               OpenGridPosition(ORDER_TYPE_BUY, gridLevel);
-            }
+            OpenGridPosition(ORDER_TYPE_BUY, gridLevel);
          }
       }
    }
@@ -205,21 +226,19 @@ void CheckGridLevels()
       for(int i = 1; i <= levelsBelow; i++)
       {
          double gridLevel = refPrice - (i * gap);
-         if(!HasPositionAtLevel(gridLevel, ORDER_TYPE_SELL))
+         // Open position if we're at or past this level (allows replaceable levels)
+         if(currentPrice <= gridLevel && !HasActivePositionAtLevel(gridLevel, ORDER_TYPE_SELL))
          {
-            if(currentPrice <= gridLevel)
-            {
-               OpenGridPosition(ORDER_TYPE_SELL, gridLevel);
-            }
+            OpenGridPosition(ORDER_TYPE_SELL, gridLevel);
          }
       }
    }
 }
 
 //+------------------------------------------------------------------+
-//| Check if position exists at grid level                           |
+//| Check if ACTIVE position exists at grid level                    |
 //+------------------------------------------------------------------+
-bool HasPositionAtLevel(double level, ENUM_ORDER_TYPE type)
+bool HasActivePositionAtLevel(double level, ENUM_ORDER_TYPE type)
 {
    double tolerance = SymbolInfoDouble(_Symbol, SYMBOL_POINT) * 10;
    
@@ -461,6 +480,7 @@ void CheckNewDay()
       startDayBalance = AccountInfoDouble(ACCOUNT_BALANCE);
       dailyPnL = 0.0;
       eaPaused = false;
+      eaStatus = "Active";
       tpHitCount = 0;
       slHitCount = 0;
       Print("New day started. Balance: ", startDayBalance);
@@ -478,6 +498,36 @@ datetime GetStartOfDay()
    tm.min = 0;
    tm.sec = 0;
    return StructToTime(tm);
+}
+
+//+------------------------------------------------------------------+
+//| Count my positions                                                |
+//+------------------------------------------------------------------+
+int CountMyPositions()
+{
+   int count = 0;
+   for(int i = PositionsTotal() - 1; i >= 0; i--)
+   {
+      ulong ticket = PositionGetTicket(i);
+      if(ticket > 0)
+      {
+         if(PositionGetString(POSITION_SYMBOL) == _Symbol &&
+            PositionGetInteger(POSITION_MAGIC) == magicNumber)
+         {
+            count++;
+         }
+      }
+   }
+   return count;
+}
+
+//+------------------------------------------------------------------+
+//| Reset grid after all positions closed                            |
+//+------------------------------------------------------------------+
+void ResetGridAfterClose()
+{
+   refPrice = SymbolInfoDouble(_Symbol, SYMBOL_BID);
+   Print("Grid reset after position closure. New reference: ", refPrice);
 }
 
 //+------------------------------------------------------------------+
@@ -536,6 +586,8 @@ void TakeAllProfits()
 void ResetReference()
 {
    refPrice = SymbolInfoDouble(_Symbol, SYMBOL_BID);
+   eaPaused = false;
+   eaStatus = "Active";
    Print("Reference price reset to: ", refPrice);
 }
 
@@ -561,62 +613,67 @@ void CreatePanel()
    //--- Title
    CreateLabel("ToramaPanelTitle", "TORAMA GRID PRO", panelX + 10, panelY + 8, 10, clrWhiteSmoke, ANCHOR_LEFT_UPPER);
    
-   int yOffset = panelY + 40;
+   int yOffset = panelY + 35;
+   int col1 = panelX + 10;
+   int col2 = panelX + 145;
    
-   //--- Account Info
-   CreateLabel("ToramaPanelLblBalance", "Balance:", panelX + 10, yOffset, 8, textColor, ANCHOR_LEFT_UPPER);
-   CreateLabel("ToramaPanelValBalance", "", panelX + panelWidth - 10, yOffset, 8, clrLime, ANCHOR_RIGHT_UPPER);
+   //--- Status
+   CreateLabel("ToramaPanelLblStatus", "Status:", col1, yOffset, 8, textColor, ANCHOR_LEFT_UPPER);
+   CreateLabel("ToramaPanelValStatus", "", col1 + 45, yOffset, 8, clrLime, ANCHOR_LEFT_UPPER);
    yOffset += 20;
    
-   CreateLabel("ToramaPanelLblEquity", "Equity:", panelX + 10, yOffset, 8, textColor, ANCHOR_LEFT_UPPER);
-   CreateLabel("ToramaPanelValEquity", "", panelX + panelWidth - 10, yOffset, 8, clrLime, ANCHOR_RIGHT_UPPER);
-   yOffset += 20;
+   //--- Balance & Equity on same line
+   CreateLabel("ToramaPanelLblBalance", "Bal:", col1, yOffset, 8, textColor, ANCHOR_LEFT_UPPER);
+   CreateLabel("ToramaPanelValBalance", "", col1 + 30, yOffset, 8, clrLime, ANCHOR_LEFT_UPPER);
+   CreateLabel("ToramaPanelLblEquity", "Eq:", col2, yOffset, 8, textColor, ANCHOR_LEFT_UPPER);
+   CreateLabel("ToramaPanelValEquity", "", col2 + 25, yOffset, 8, clrLime, ANCHOR_RIGHT_UPPER);
+   yOffset += 18;
    
-   CreateLabel("ToramaPanelLblMargin", "Margin:", panelX + 10, yOffset, 8, textColor, ANCHOR_LEFT_UPPER);
-   CreateLabel("ToramaPanelValMargin", "", panelX + panelWidth - 10, yOffset, 8, clrYellow, ANCHOR_RIGHT_UPPER);
-   yOffset += 20;
+   //--- Margin & Daily P/L on same line
+   CreateLabel("ToramaPanelLblMargin", "Margin:", col1, yOffset, 8, textColor, ANCHOR_LEFT_UPPER);
+   CreateLabel("ToramaPanelValMargin", "", col1 + 45, yOffset, 8, clrYellow, ANCHOR_LEFT_UPPER);
+   CreateLabel("ToramaPanelLblDailyPL", "Daily:", col2, yOffset, 8, textColor, ANCHOR_LEFT_UPPER);
+   CreateLabel("ToramaPanelValDailyPL", "", col2 + 35, yOffset, 8, clrWhite, ANCHOR_LEFT_UPPER);
+   yOffset += 22;
    
-   CreateLabel("ToramaPanelLblDailyPL", "Daily P/L:", panelX + 10, yOffset, 8, textColor, ANCHOR_LEFT_UPPER);
-   CreateLabel("ToramaPanelValDailyPL", "", panelX + panelWidth - 10, yOffset, 8, clrWhite, ANCHOR_RIGHT_UPPER);
+   //--- Gap Info
+   CreateLabel("ToramaPanelLblGap", "Gap:", col1, yOffset, 8, textColor, ANCHOR_LEFT_UPPER);
+   CreateLabel("ToramaPanelValGapPct", "", col1 + 30, yOffset, 8, clrAqua, ANCHOR_LEFT_UPPER);
+   CreateLabel("ToramaPanelValGapUSD", "", col2 + 15, yOffset, 8, clrAqua, ANCHOR_LEFT_UPPER);
+   yOffset += 18;
+   
+   //--- Ref Price & Current Price on same line
+   CreateLabel("ToramaPanelLblRefPrice", "Ref:", col1, yOffset, 8, textColor, ANCHOR_LEFT_UPPER);
+   CreateLabel("ToramaPanelValRefPrice", "", col1 + 30, yOffset, 8, clrAqua, ANCHOR_LEFT_UPPER);
+   CreateLabel("ToramaPanelLblCurrPrice", "Curr:", col2, yOffset, 8, textColor, ANCHOR_LEFT_UPPER);
+   CreateLabel("ToramaPanelValCurrPrice", "", col2 + 35, yOffset, 8, clrWhite, ANCHOR_LEFT_UPPER);
+   yOffset += 18;
+   
+   //--- Next Buy & Next Sell on same line
+   CreateLabel("ToramaPanelLblNextBuy", "Buy:", col1, yOffset, 8, textColor, ANCHOR_LEFT_UPPER);
+   CreateLabel("ToramaPanelValNextBuy", "", col1 + 30, yOffset, 8, clrLime, ANCHOR_LEFT_UPPER);
+   CreateLabel("ToramaPanelLblNextSell", "Sell:", col2, yOffset, 8, textColor, ANCHOR_LEFT_UPPER);
+   CreateLabel("ToramaPanelValNextSell", "", col2 + 30, yOffset, 8, clrRed, ANCHOR_LEFT_UPPER);
+   yOffset += 18;
+   
+   //--- TP Target & SL Target on same line
+   CreateLabel("ToramaPanelLblTPTarget", "TP:", col1, yOffset, 8, textColor, ANCHOR_LEFT_UPPER);
+   CreateLabel("ToramaPanelValTPTarget", "", col1 + 25, yOffset, 8, clrLime, ANCHOR_LEFT_UPPER);
+   CreateLabel("ToramaPanelLblSLTarget", "SL:", col2, yOffset, 8, textColor, ANCHOR_LEFT_UPPER);
+   CreateLabel("ToramaPanelValSLTarget", "", col2 + 25, yOffset, 8, clrRed, ANCHOR_LEFT_UPPER);
+   yOffset += 22;
+   
+   //--- TP Hits & SL Hits on same line
+   CreateLabel("ToramaPanelLblTPHits", "TP Hits:", col1, yOffset, 8, textColor, ANCHOR_LEFT_UPPER);
+   CreateLabel("ToramaPanelValTPHits", "", col1 + 50, yOffset, 8, clrLime, ANCHOR_LEFT_UPPER);
+   CreateLabel("ToramaPanelLblSLHits", "SL Hits:", col2, yOffset, 8, textColor, ANCHOR_LEFT_UPPER);
+   CreateLabel("ToramaPanelValSLHits", "", col2 + 45, yOffset, 8, clrRed, ANCHOR_LEFT_UPPER);
+   yOffset += 18;
+   
+   //--- Magic Number
+   CreateLabel("ToramaPanelLblMagic", "Magic:", col1, yOffset, 8, textColor, ANCHOR_LEFT_UPPER);
+   CreateLabel("ToramaPanelValMagic", "", col1 + 40, yOffset, 8, clrWhite, ANCHOR_LEFT_UPPER);
    yOffset += 25;
-   
-   //--- Grid Info
-   CreateLabel("ToramaPanelLblRefPrice", "Ref Price:", panelX + 10, yOffset, 8, textColor, ANCHOR_LEFT_UPPER);
-   CreateLabel("ToramaPanelValRefPrice", "", panelX + panelWidth - 10, yOffset, 8, clrAqua, ANCHOR_RIGHT_UPPER);
-   yOffset += 20;
-   
-   CreateLabel("ToramaPanelLblCurrPrice", "Curr Price:", panelX + 10, yOffset, 8, textColor, ANCHOR_LEFT_UPPER);
-   CreateLabel("ToramaPanelValCurrPrice", "", panelX + panelWidth - 10, yOffset, 8, clrWhite, ANCHOR_RIGHT_UPPER);
-   yOffset += 20;
-   
-   CreateLabel("ToramaPanelLblNextBuy", "Next Buy:", panelX + 10, yOffset, 8, textColor, ANCHOR_LEFT_UPPER);
-   CreateLabel("ToramaPanelValNextBuy", "", panelX + panelWidth - 10, yOffset, 8, clrLime, ANCHOR_RIGHT_UPPER);
-   yOffset += 20;
-   
-   CreateLabel("ToramaPanelLblNextSell", "Next Sell:", panelX + 10, yOffset, 8, textColor, ANCHOR_LEFT_UPPER);
-   CreateLabel("ToramaPanelValNextSell", "", panelX + panelWidth - 10, yOffset, 8, clrRed, ANCHOR_RIGHT_UPPER);
-   yOffset += 20;
-   
-   CreateLabel("ToramaPanelLblTPTarget", "TP Target:", panelX + 10, yOffset, 8, textColor, ANCHOR_LEFT_UPPER);
-   CreateLabel("ToramaPanelValTPTarget", "", panelX + panelWidth - 10, yOffset, 8, clrLime, ANCHOR_RIGHT_UPPER);
-   yOffset += 20;
-   
-   CreateLabel("ToramaPanelLblSLTarget", "SL Target:", panelX + 10, yOffset, 8, textColor, ANCHOR_LEFT_UPPER);
-   CreateLabel("ToramaPanelValSLTarget", "", panelX + panelWidth - 10, yOffset, 8, clrRed, ANCHOR_RIGHT_UPPER);
-   yOffset += 25;
-   
-   //--- Statistics
-   CreateLabel("ToramaPanelLblTPHits", "TP Hits:", panelX + 10, yOffset, 8, textColor, ANCHOR_LEFT_UPPER);
-   CreateLabel("ToramaPanelValTPHits", "", panelX + panelWidth - 10, yOffset, 8, clrLime, ANCHOR_RIGHT_UPPER);
-   yOffset += 20;
-   
-   CreateLabel("ToramaPanelLblSLHits", "SL Hits:", panelX + 10, yOffset, 8, textColor, ANCHOR_LEFT_UPPER);
-   CreateLabel("ToramaPanelValSLHits", "", panelX + panelWidth - 10, yOffset, 8, clrRed, ANCHOR_RIGHT_UPPER);
-   yOffset += 20;
-   
-   CreateLabel("ToramaPanelLblMagic", "Magic No:", panelX + 10, yOffset, 8, textColor, ANCHOR_LEFT_UPPER);
-   CreateLabel("ToramaPanelValMagic", "", panelX + panelWidth - 10, yOffset, 8, clrWhite, ANCHOR_RIGHT_UPPER);
-   yOffset += 30;
    
    //--- Buttons
    int btnY = yOffset;
@@ -675,6 +732,13 @@ void CreateButton(string name, string text, int x, int y, int width, int height)
 //+------------------------------------------------------------------+
 void UpdatePanel()
 {
+   //--- Status with color
+   ObjectSetString(0, "ToramaPanelValStatus", OBJPROP_TEXT, eaStatus);
+   color statusColor = clrLime;
+   if(StringFind(eaStatus, "Stopped") >= 0)
+      statusColor = clrRed;
+   ObjectSetInteger(0, "ToramaPanelValStatus", OBJPROP_COLOR, statusColor);
+   
    //--- Account info
    ObjectSetString(0, "ToramaPanelValBalance", OBJPROP_TEXT, DoubleToString(AccountInfoDouble(ACCOUNT_BALANCE), 2));
    ObjectSetString(0, "ToramaPanelValEquity", OBJPROP_TEXT, DoubleToString(AccountInfoDouble(ACCOUNT_EQUITY), 2));
@@ -682,13 +746,19 @@ void UpdatePanel()
    
    //--- Daily P/L with color
    double plPercent = (dailyPnL / startDayBalance) * 100.0;
-   string plText = DoubleToString(dailyPnL, 2) + " (" + DoubleToString(plPercent, 2) + "%)";
+   string plText = DoubleToString(dailyPnL, 2) + " (" + DoubleToString(plPercent, 1) + "%)";
    ObjectSetString(0, "ToramaPanelValDailyPL", OBJPROP_TEXT, plText);
    ObjectSetInteger(0, "ToramaPanelValDailyPL", OBJPROP_COLOR, dailyPnL >= 0 ? clrLime : clrRed);
    
+   //--- Gap in % and USD
+   double gap = refPrice * InpGapPercent / 100.0;
+   string gapPctText = DoubleToString(InpGapPercent, 2) + "%";
+   string gapUsdText = "($" + DoubleToString(gap, _Digits) + ")";
+   ObjectSetString(0, "ToramaPanelValGapPct", OBJPROP_TEXT, gapPctText);
+   ObjectSetString(0, "ToramaPanelValGapUSD", OBJPROP_TEXT, gapUsdText);
+   
    //--- Grid info
    double currentPrice = SymbolInfoDouble(_Symbol, SYMBOL_BID);
-   double gap = refPrice * InpGapPercent / 100.0;
    
    ObjectSetString(0, "ToramaPanelValRefPrice", OBJPROP_TEXT, DoubleToString(refPrice, _Digits));
    ObjectSetString(0, "ToramaPanelValCurrPrice", OBJPROP_TEXT, DoubleToString(currentPrice, _Digits));
