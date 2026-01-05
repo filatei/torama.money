@@ -5,8 +5,9 @@
 //+------------------------------------------------------------------+
 #property copyright "Copyright 2025, TORAMA CAPITAL"
 #property link      "https://torama.money"
-#property version   "1.10"
-#property description "Unidirectional Momentum Grid EA with Aggressive Breakeven Protection"
+#property version   "1.20"
+#property description "Directional Momentum Grid EA with Aggressive Breakeven Protection"
+#property description "Supports: BUY ONLY (up), SELL ONLY (down), or BOTH directions"
 #property description "Moves to breakeven at FIRST SIGN of profit, then trails aggressively"
 #property description "Optimized for Gold (XAU/USD) - Never lets winners become losers"
 
@@ -18,10 +19,23 @@ input double   InpGapPercent        = 0.15;     // Gap (% of price) - Optimized
 input int      InpMaxPositions      = 10;       // Max Grid Positions Per Side
 input double   InpManualReference   = 0.0;      // Manual Reference Price (0=auto)
 
+input group "==== Trading Direction ===="
+enum ENUM_TRADE_DIRECTION
+{
+   DIR_BOTH = 0,      // Both Directions
+   DIR_BUY_ONLY = 1,  // Buy Only (Above Reference)
+   DIR_SELL_ONLY = 2  // Sell Only (Below Reference)
+};
+input ENUM_TRADE_DIRECTION InpDirection = DIR_BOTH;  // Trading Direction
+
 input group "==== Trailing Stop Settings ===="
 input double   InpTrailingStart     = 0.3;      // Trailing Start (% of price) - Optimized
 input double   InpTrailingStep      = 0.05;     // Trailing Step (% of price)
 input double   InpInitialSL         = 1.0;      // Initial Stop Loss (% of price) - Optimized
+input bool     InpAggressiveTrail   = true;     // Aggressive Trailing (locks more profit)
+input double   InpProfitLock1       = 0.5;      // First Profit Lock Level (%)
+input double   InpProfitLock2       = 1.0;      // Second Profit Lock Level (%)
+input double   InpProfitLock3       = 2.0;      // Third Profit Lock Level (%)
 
 input group "==== Risk Management ===="
 input double   InpLotSize           = 0.01;     // Lot Size
@@ -56,13 +70,13 @@ int      g_spread = 0;
 ENUM_ORDER_TYPE_FILLING g_fillingMode;
 
 // Panel objects
-string g_panelBG = "ToramaPanelBG";
-string g_panelLabel = "ToramaLabel";
-string g_brandingLabel = "ToramaBranding";
-string g_btnCloseAll = "BtnCloseAll";
-string g_btnPause = "BtnPause";
-string g_btnTakeTP = "BtnTakeTP";
-string g_btnReset = "BtnReset";
+string g_panelBG = "ToramaPanelBG_" + IntegerToString(ChartID());
+string g_panelLabel = "ToramaLabel_" + IntegerToString(ChartID());
+string g_brandingLabel = "ToramaBranding_" + IntegerToString(ChartID());
+string g_btnCloseAll = "BtnCloseAll_" + IntegerToString(ChartID());
+string g_btnPause = "BtnPause_" + IntegerToString(ChartID());
+string g_btnTakeTP = "BtnTakeTP_" + IntegerToString(ChartID());
+string g_btnReset = "BtnReset_" + IntegerToString(ChartID());
 
 //+------------------------------------------------------------------+
 //| Expert initialization function                                     |
@@ -137,7 +151,7 @@ int OnInit()
    CreateDashboard();
    
    Print("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
-   Print("TORAMA Momentum Grid EA - BIDIRECTIONAL");
+   Print("TORAMA Momentum Grid EA");
    Print("AGGRESSIVE BREAKEVEN PROTECTION");
    Print("OPTIMIZED FOR GOLD (XAU/USD)");
    Print("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
@@ -153,9 +167,13 @@ int OnInit()
    Print("Filling Mode: ", EnumToString(g_fillingMode));
    Print("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
    Print("Reference Price: ", g_referencePrice);
-   Print("Strategy: BUY above reference, SELL below reference");
+   string dirStr = "";
+   if(InpDirection == DIR_BUY_ONLY) dirStr = "BUY ONLY (Above Reference)";
+   else if(InpDirection == DIR_SELL_ONLY) dirStr = "SELL ONLY (Below Reference)";
+   else dirStr = "BOTH DIRECTIONS";
+   Print("Trading Direction: ", dirStr);
    Print("Gap: ", InpGapPercent, "% (OPTIMIZED)");
-   Print("Max Positions Per Side: ", InpMaxPositions);
+   Print("Max Positions: ", InpMaxPositions);
    Print("Initial SL: ", InpInitialSL, "% (OPTIMIZED)");
    Print("Max Drawdown: ", InpMaxDrawdown, "%");
    Print("Daily Profit Target: ", InpDailyProfitTarget, "%");
@@ -481,7 +499,7 @@ double GetDailyPL()
 }
 
 //+------------------------------------------------------------------+
-//| Trail all open positions                                           |
+//| Trail all open positions with aggressive profit protection         |
 //+------------------------------------------------------------------+
 void TrailAllPositions()
 {
@@ -502,86 +520,151 @@ void TrailAllPositions()
                            SymbolInfoDouble(_Symbol, SYMBOL_BID) :
                            SymbolInfoDouble(_Symbol, SYMBOL_ASK);
       
-      // Calculate profit
-      double profit = 0;
+      // Calculate profit in percentage
+      double profitPercent = 0;
       if(type == POSITION_TYPE_BUY)
-         profit = (currentPrice - openPrice) / openPrice * 100.0;
+         profitPercent = ((currentPrice - openPrice) / openPrice) * 100.0;
       else
-         profit = (openPrice - currentPrice) / openPrice * 100.0;
-      
-      double trailingStartDist = openPrice * (InpTrailingStart / 100.0);
-      double trailingStep = openPrice * (InpTrailingStep / 100.0);
+         profitPercent = ((openPrice - currentPrice) / openPrice) * 100.0;
       
       double newSL = 0;
       bool shouldModify = false;
+      string reason = "";
       
       if(type == POSITION_TYPE_BUY)
       {
-         // AGGRESSIVE BREAKEVEN: If ANY profit exists, move SL to breakeven or better
-         if(profit > 0)
+         // MULTI-LEVEL PROFIT PROTECTION FOR BUY
+         
+         // Level 1: ANY PROFIT → Immediate breakeven
+         if(profitPercent > 0.001) // Any profit at all (even 0.001%)
          {
-            // If we haven't reached trailing start distance yet, move to breakeven
-            if(currentPrice < openPrice + trailingStartDist)
+            double breakevenSL = openPrice + (g_point * 2);
+            
+            if(currentSL < openPrice || currentSL == 0)
             {
-               newSL = openPrice + (g_point * 2); // Breakeven + 2 points (to cover spread/commission)
-               
-               // Only move to breakeven if current SL is below breakeven
-               if(currentSL < openPrice || currentSL == 0)
-               {
-                  shouldModify = true;
-               }
+               newSL = breakevenSL;
+               shouldModify = true;
+               reason = "BREAKEVEN";
             }
-            else // Once we've hit trailing start, trail normally
+         }
+         
+         // Level 2: Profit Lock 1 (0.5% default) → Lock 50% of profit
+         if(profitPercent >= InpProfitLock1 && currentSL < openPrice + (openPrice * InpProfitLock1 * 0.5 / 100.0))
+         {
+            newSL = openPrice + (openPrice * InpProfitLock1 * 0.5 / 100.0); // Lock 50% of profit
+            shouldModify = true;
+            reason = "LOCK 50% @" + DoubleToString(InpProfitLock1, 2) + "%";
+         }
+         
+         // Level 3: Profit Lock 2 (1.0% default) → Lock 70% of profit
+         if(profitPercent >= InpProfitLock2 && currentSL < openPrice + (openPrice * InpProfitLock2 * 0.7 / 100.0))
+         {
+            newSL = openPrice + (openPrice * InpProfitLock2 * 0.7 / 100.0); // Lock 70% of profit
+            shouldModify = true;
+            reason = "LOCK 70% @" + DoubleToString(InpProfitLock2, 2) + "%";
+         }
+         
+         // Level 4: Profit Lock 3 (2.0% default) → Lock 80% of profit
+         if(profitPercent >= InpProfitLock3 && currentSL < openPrice + (openPrice * InpProfitLock3 * 0.8 / 100.0))
+         {
+            newSL = openPrice + (openPrice * InpProfitLock3 * 0.8 / 100.0); // Lock 80% of profit
+            shouldModify = true;
+            reason = "LOCK 80% @" + DoubleToString(InpProfitLock3, 2) + "%";
+         }
+         
+         // Level 5: Aggressive Trailing (after profit threshold)
+         double trailingStartDist = openPrice * (InpTrailingStart / 100.0);
+         if(currentPrice >= openPrice + trailingStartDist)
+         {
+            double trailingStep = InpAggressiveTrail ? 
+                                  openPrice * (InpTrailingStep * 0.5 / 100.0) : // 50% tighter if aggressive
+                                  openPrice * (InpTrailingStep / 100.0);
+            
+            double calculatedSL = currentPrice - trailingStep;
+            calculatedSL = NormalizePrice(calculatedSL);
+            calculatedSL = ValidateStopLoss(currentPrice, calculatedSL, type);
+            
+            // Only trail if it moves SL higher
+            if(calculatedSL > newSL && calculatedSL > currentSL)
             {
-               newSL = currentPrice - trailingStep;
-               newSL = NormalizePrice(newSL);
-               
-               // Validate against broker minimum stop level
-               newSL = ValidateStopLoss(currentPrice, newSL, type);
-               
-               // Only move SL up, never down
-               if(newSL > currentSL || currentSL == 0)
-               {
-                  shouldModify = true;
-               }
+               newSL = calculatedSL;
+               shouldModify = true;
+               reason = "TRAILING";
             }
          }
       }
-      else // SELL
+      else // SELL POSITION
       {
-         // AGGRESSIVE BREAKEVEN: If ANY profit exists, move SL to breakeven or better
-         if(profit > 0)
+         // MULTI-LEVEL PROFIT PROTECTION FOR SELL
+         
+         // Level 1: ANY PROFIT → Immediate breakeven
+         if(profitPercent > 0.001)
          {
-            // If we haven't reached trailing start distance yet, move to breakeven
-            if(currentPrice > openPrice - trailingStartDist)
+            double breakevenSL = openPrice - (g_point * 2);
+            
+            if(currentSL > openPrice || currentSL == 0)
             {
-               newSL = openPrice - (g_point * 2); // Breakeven + 2 points
-               
-               // Only move to breakeven if current SL is above breakeven
-               if(currentSL > openPrice || currentSL == 0)
-               {
-                  shouldModify = true;
-               }
+               newSL = breakevenSL;
+               shouldModify = true;
+               reason = "BREAKEVEN";
             }
-            else // Once we've hit trailing start, trail normally
+         }
+         
+         // Level 2: Profit Lock 1 → Lock 50% of profit
+         if(profitPercent >= InpProfitLock1 && (currentSL > openPrice - (openPrice * InpProfitLock1 * 0.5 / 100.0) || currentSL == 0))
+         {
+            newSL = openPrice - (openPrice * InpProfitLock1 * 0.5 / 100.0);
+            shouldModify = true;
+            reason = "LOCK 50% @" + DoubleToString(InpProfitLock1, 2) + "%";
+         }
+         
+         // Level 3: Profit Lock 2 → Lock 70% of profit
+         if(profitPercent >= InpProfitLock2 && (currentSL > openPrice - (openPrice * InpProfitLock2 * 0.7 / 100.0) || currentSL == 0))
+         {
+            newSL = openPrice - (openPrice * InpProfitLock2 * 0.7 / 100.0);
+            shouldModify = true;
+            reason = "LOCK 70% @" + DoubleToString(InpProfitLock2, 2) + "%";
+         }
+         
+         // Level 4: Profit Lock 3 → Lock 80% of profit
+         if(profitPercent >= InpProfitLock3 && (currentSL > openPrice - (openPrice * InpProfitLock3 * 0.8 / 100.0) || currentSL == 0))
+         {
+            newSL = openPrice - (openPrice * InpProfitLock3 * 0.8 / 100.0);
+            shouldModify = true;
+            reason = "LOCK 80% @" + DoubleToString(InpProfitLock3, 2) + "%";
+         }
+         
+         // Level 5: Aggressive Trailing
+         double trailingStartDist = openPrice * (InpTrailingStart / 100.0);
+         if(currentPrice <= openPrice - trailingStartDist)
+         {
+            double trailingStep = InpAggressiveTrail ? 
+                                  openPrice * (InpTrailingStep * 0.5 / 100.0) :
+                                  openPrice * (InpTrailingStep / 100.0);
+            
+            double calculatedSL = currentPrice + trailingStep;
+            calculatedSL = NormalizePrice(calculatedSL);
+            calculatedSL = ValidateStopLoss(currentPrice, calculatedSL, type);
+            
+            // Only trail if it moves SL lower
+            if((calculatedSL < newSL || newSL == 0) && (calculatedSL < currentSL || currentSL == 0))
             {
-               newSL = currentPrice + trailingStep;
-               newSL = NormalizePrice(newSL);
-               
-               // Validate against broker minimum stop level
-               newSL = ValidateStopLoss(currentPrice, newSL, type);
-               
-               // Only move SL down, never up
-               if((newSL < currentSL && newSL > 0) || currentSL == 0)
-               {
-                  shouldModify = true;
-               }
+               newSL = calculatedSL;
+               shouldModify = true;
+               reason = "TRAILING";
             }
          }
       }
       
+      // Execute the modification
       if(shouldModify && newSL > 0)
       {
+         // Additional validation: ensure new SL is better than current
+         if(type == POSITION_TYPE_BUY && newSL <= currentSL && currentSL > 0)
+            continue;
+         if(type == POSITION_TYPE_SELL && newSL >= currentSL && currentSL > 0)
+            continue;
+            
          ResetLastError();
          
          if(!trade.PositionModify(ticket, newSL, currentTP))
@@ -596,16 +679,8 @@ void TrailAllPositions()
          }
          else
          {
-            if(newSL == openPrice + (g_point * 2) || newSL == openPrice - (g_point * 2))
-            {
-               Print("✓ Moved to BREAKEVEN ", (type == POSITION_TYPE_BUY ? "BUY" : "SELL"), 
-                     " position #", ticket, " | SL: ", newSL, " | Profit: ", profit, "%");
-            }
-            else
-            {
-               Print("✓ Trailed ", (type == POSITION_TYPE_BUY ? "BUY" : "SELL"), 
-                     " position #", ticket, " | New SL: ", newSL, " | Profit: ", profit, "%");
-            }
+            Print("✓ ", reason, " ", (type == POSITION_TYPE_BUY ? "BUY" : "SELL"), 
+                  " #", ticket, " | SL: ", newSL, " | Profit: ", DoubleToString(profitPercent, 3), "%");
          }
       }
    }
@@ -636,14 +711,18 @@ void ManageGrid()
    // Normalize gap to tick size
    gap = NormalizePrice(gap);
    
-   // BIDIRECTIONAL MOMENTUM LOGIC:
-   // When price moves ABOVE reference → BUY (betting on upward momentum)
-   // When price moves BELOW reference → SELL (betting on downward momentum)
+   // DIRECTIONAL MOMENTUM LOGIC:
+   // BUY ONLY: Only buys ABOVE reference (upward momentum)
+   // SELL ONLY: Only sells BELOW reference (downward momentum)
+   // BOTH: Buys above, sells below (bidirectional)
    
    // Check if price is above reference - open BUY positions
    if(currentPrice > g_referencePrice && buyCount < InpMaxPositions)
    {
-      for(int level = 1; level <= InpMaxPositions; level++)
+      // Only trade BUYs if direction allows it
+      if(InpDirection == DIR_BOTH || InpDirection == DIR_BUY_ONLY)
+      {
+         for(int level = 1; level <= InpMaxPositions; level++)
       {
          double gridPrice = g_referencePrice + (gap * level);
          gridPrice = NormalizePrice(gridPrice);
@@ -707,12 +786,16 @@ void ManageGrid()
             }
          }
       }
+      } // End direction check for BUY
    }
    
    // Check if price is below reference - open SELL positions
    if(currentPrice < g_referencePrice && sellCount < InpMaxPositions)
    {
-      for(int level = 1; level <= InpMaxPositions; level++)
+      // Only trade SELLs if direction allows it
+      if(InpDirection == DIR_BOTH || InpDirection == DIR_SELL_ONLY)
+      {
+         for(int level = 1; level <= InpMaxPositions; level++)
       {
          double gridPrice = g_referencePrice - (gap * level);
          gridPrice = NormalizePrice(gridPrice);
@@ -776,6 +859,7 @@ void ManageGrid()
             }
          }
       }
+      } // End direction check for SELL
    }
 }
 
@@ -867,36 +951,55 @@ void CreateDashboard()
    ObjectSetInteger(0, g_panelBG, OBJPROP_ZORDER, 1000);
    
    // TORAMA CAPITAL branding at bottom right
-   ObjectCreate(0, g_brandingLabel, OBJ_LABEL, 0, 0, 0);
+   if(ObjectFind(0, g_brandingLabel) >= 0)
+      ObjectDelete(0, g_brandingLabel);
+      
+   if(!ObjectCreate(0, g_brandingLabel, OBJ_LABEL, 0, 0, 0))
+   {
+      Print("ERROR: Failed to create branding label");
+      return;
+   }
+   
    ObjectSetInteger(0, g_brandingLabel, OBJPROP_CORNER, CORNER_LEFT_UPPER);
    ObjectSetInteger(0, g_brandingLabel, OBJPROP_ANCHOR, ANCHOR_LEFT_UPPER);
    ObjectSetInteger(0, g_brandingLabel, OBJPROP_XDISTANCE, InpPanelX + panelWidth - 180);
    ObjectSetInteger(0, g_brandingLabel, OBJPROP_YDISTANCE, InpPanelY + panelHeight - 35);
-   ObjectSetString(0, g_brandingLabel, OBJPROP_TEXT, "TORAMA CAPITAL");
    ObjectSetString(0, g_brandingLabel, OBJPROP_FONT, "Arial Black");
    ObjectSetInteger(0, g_brandingLabel, OBJPROP_FONTSIZE, 14);
    ObjectSetInteger(0, g_brandingLabel, OBJPROP_COLOR, clrGold);
    ObjectSetInteger(0, g_brandingLabel, OBJPROP_BACK, false);
    ObjectSetInteger(0, g_brandingLabel, OBJPROP_SELECTABLE, false);
    ObjectSetInteger(0, g_brandingLabel, OBJPROP_SELECTED, false);
-   ObjectSetInteger(0, g_brandingLabel, OBJPROP_HIDDEN, false); // Changed to false
-   ObjectSetInteger(0, g_brandingLabel, OBJPROP_ZORDER, 1001);
+   ObjectSetInteger(0, g_brandingLabel, OBJPROP_HIDDEN, false);
+   ObjectSetInteger(0, g_brandingLabel, OBJPROP_ZORDER, 1002);
+   ObjectSetString(0, g_brandingLabel, OBJPROP_TEXT, "TORAMA CAPITAL");
    
    // Info label (will be updated in UpdateDashboard)
-   ObjectCreate(0, g_panelLabel, OBJ_LABEL, 0, 0, 0);
+   if(ObjectFind(0, g_panelLabel) >= 0)
+      ObjectDelete(0, g_panelLabel);
+      
+   if(!ObjectCreate(0, g_panelLabel, OBJ_LABEL, 0, 0, 0))
+   {
+      Print("ERROR: Failed to create panel label");
+      return;
+   }
+   
    ObjectSetInteger(0, g_panelLabel, OBJPROP_CORNER, CORNER_LEFT_UPPER);
    ObjectSetInteger(0, g_panelLabel, OBJPROP_ANCHOR, ANCHOR_LEFT_UPPER);
    ObjectSetInteger(0, g_panelLabel, OBJPROP_XDISTANCE, InpPanelX + 15);
    ObjectSetInteger(0, g_panelLabel, OBJPROP_YDISTANCE, InpPanelY + 15);
-   ObjectSetString(0, g_panelLabel, OBJPROP_TEXT, "Initializing..."); // Set initial text
-   ObjectSetString(0, g_panelLabel, OBJPROP_FONT, "Courier New");
-   ObjectSetInteger(0, g_panelLabel, OBJPROP_FONTSIZE, 9);
+   ObjectSetString(0, g_panelLabel, OBJPROP_FONT, "Arial");
+   ObjectSetInteger(0, g_panelLabel, OBJPROP_FONTSIZE, 8);
    ObjectSetInteger(0, g_panelLabel, OBJPROP_COLOR, clrWhite);
    ObjectSetInteger(0, g_panelLabel, OBJPROP_BACK, false);
    ObjectSetInteger(0, g_panelLabel, OBJPROP_SELECTABLE, false);
    ObjectSetInteger(0, g_panelLabel, OBJPROP_SELECTED, false);
-   ObjectSetInteger(0, g_panelLabel, OBJPROP_HIDDEN, false); // Changed to false - must be visible
-   ObjectSetInteger(0, g_panelLabel, OBJPROP_ZORDER, 1001);
+   ObjectSetInteger(0, g_panelLabel, OBJPROP_HIDDEN, false);
+   ObjectSetInteger(0, g_panelLabel, OBJPROP_ZORDER, 1002);
+   
+   // Set test text immediately to verify label works
+   string testText = "TORAMA EA ACTIVE\nLoading data...";
+   ObjectSetString(0, g_panelLabel, OBJPROP_TEXT, testText);
    
    // Buttons
    int btnWidth = 90;
@@ -969,11 +1072,16 @@ void UpdateDashboard()
    else if(g_drawdownPause) status = "PAUSED (Drawdown)";
    else if(TimeCurrent() < g_pauseUntil) status = "PAUSED (Profit Target)";
    
+   string direction = "";
+   if(InpDirection == DIR_BUY_ONLY) direction = "BUY ONLY";
+   else if(InpDirection == DIR_SELL_ONLY) direction = "SELL ONLY";
+   else direction = "BOTH";
+   
    string info = StringFormat(
       "TORAMA Momentum Grid EA\n" +
       "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n" +
       "Status:          %s\n" +
-      "Strategy:        Bidirectional Momentum\n" +
+      "Direction:       %s\n" +
       "Reference:       %.5f\n" +
       "Gap:             %.3f%%\n" +
       "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n" +
@@ -985,13 +1093,21 @@ void UpdateDashboard()
       "Buys (Above):    %d\n" +
       "Sells (Below):   %d\n" +
       "Total P/L:       $%.2f",
-      status, g_referencePrice, InpGapPercent,
+      status, direction, g_referencePrice, InpGapPercent,
       equity, balance, margin,
       dailyPL, (dailyPL / g_dayStartBalance) * 100.0,
       buyCount, sellCount, totalProfit
    );
    
-   ObjectSetString(0, g_panelLabel, OBJPROP_TEXT, info);
+   // Set the text
+   if(!ObjectSetString(0, g_panelLabel, OBJPROP_TEXT, info))
+   {
+      Print("ERROR: Failed to set panel text");
+      // Fallback: use Comment which always works
+      Comment(info);
+   }
+   
+   ChartRedraw(0);
 }
 
 //+------------------------------------------------------------------+
