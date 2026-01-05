@@ -859,10 +859,11 @@ void CreateDashboard()
    ObjectSetInteger(0, g_panelBG, OBJPROP_BORDER_TYPE, BORDER_FLAT);
    ObjectSetInteger(0, g_panelBG, OBJPROP_COLOR, clrGold);
    ObjectSetInteger(0, g_panelBG, OBJPROP_WIDTH, 2);
+   ObjectSetInteger(0, g_panelBG, OBJPROP_CORNER, CORNER_LEFT_UPPER);
    ObjectSetInteger(0, g_panelBG, OBJPROP_BACK, false);
    ObjectSetInteger(0, g_panelBG, OBJPROP_SELECTABLE, false);
    ObjectSetInteger(0, g_panelBG, OBJPROP_SELECTED, false);
-   ObjectSetInteger(0, g_panelBG, OBJPROP_HIDDEN, true);
+   ObjectSetInteger(0, g_panelBG, OBJPROP_HIDDEN, false); // Changed to false
    ObjectSetInteger(0, g_panelBG, OBJPROP_ZORDER, 1000);
    
    // TORAMA CAPITAL branding at bottom right
@@ -878,7 +879,7 @@ void CreateDashboard()
    ObjectSetInteger(0, g_brandingLabel, OBJPROP_BACK, false);
    ObjectSetInteger(0, g_brandingLabel, OBJPROP_SELECTABLE, false);
    ObjectSetInteger(0, g_brandingLabel, OBJPROP_SELECTED, false);
-   ObjectSetInteger(0, g_brandingLabel, OBJPROP_HIDDEN, true);
+   ObjectSetInteger(0, g_brandingLabel, OBJPROP_HIDDEN, false); // Changed to false
    ObjectSetInteger(0, g_brandingLabel, OBJPROP_ZORDER, 1001);
    
    // Info label (will be updated in UpdateDashboard)
@@ -887,13 +888,14 @@ void CreateDashboard()
    ObjectSetInteger(0, g_panelLabel, OBJPROP_ANCHOR, ANCHOR_LEFT_UPPER);
    ObjectSetInteger(0, g_panelLabel, OBJPROP_XDISTANCE, InpPanelX + 15);
    ObjectSetInteger(0, g_panelLabel, OBJPROP_YDISTANCE, InpPanelY + 15);
+   ObjectSetString(0, g_panelLabel, OBJPROP_TEXT, "Initializing..."); // Set initial text
    ObjectSetString(0, g_panelLabel, OBJPROP_FONT, "Courier New");
    ObjectSetInteger(0, g_panelLabel, OBJPROP_FONTSIZE, 9);
    ObjectSetInteger(0, g_panelLabel, OBJPROP_COLOR, clrWhite);
    ObjectSetInteger(0, g_panelLabel, OBJPROP_BACK, false);
    ObjectSetInteger(0, g_panelLabel, OBJPROP_SELECTABLE, false);
    ObjectSetInteger(0, g_panelLabel, OBJPROP_SELECTED, false);
-   ObjectSetInteger(0, g_panelLabel, OBJPROP_HIDDEN, true);
+   ObjectSetInteger(0, g_panelLabel, OBJPROP_HIDDEN, false); // Changed to false - must be visible
    ObjectSetInteger(0, g_panelLabel, OBJPROP_ZORDER, 1001);
    
    // Buttons
@@ -929,9 +931,10 @@ void CreateButton(string name, int x, int y, int width, int height, string text,
    ObjectSetString(0, name, OBJPROP_FONT, "Arial Bold");
    ObjectSetInteger(0, name, OBJPROP_FONTSIZE, 9);
    ObjectSetInteger(0, name, OBJPROP_BACK, false);
+   ObjectSetInteger(0, name, OBJPROP_CORNER, CORNER_LEFT_UPPER);
    ObjectSetInteger(0, name, OBJPROP_SELECTABLE, false);
    ObjectSetInteger(0, name, OBJPROP_SELECTED, false);
-   ObjectSetInteger(0, name, OBJPROP_HIDDEN, true);
+   ObjectSetInteger(0, name, OBJPROP_HIDDEN, false); // Changed to false
    ObjectSetInteger(0, name, OBJPROP_ZORDER, 1001);
 }
 
