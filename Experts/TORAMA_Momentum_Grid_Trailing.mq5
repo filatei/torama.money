@@ -70,13 +70,7 @@ int      g_spread = 0;
 ENUM_ORDER_TYPE_FILLING g_fillingMode;
 
 // Panel objects
-string g_panelBG = "ToramaPanelBG_" + IntegerToString(ChartID());
-string g_panelLabel = "ToramaLabel_" + IntegerToString(ChartID());
-string g_brandingLabel = "ToramaBranding_" + IntegerToString(ChartID());
-string g_btnCloseAll = "BtnCloseAll_" + IntegerToString(ChartID());
-string g_btnPause = "BtnPause_" + IntegerToString(ChartID());
-string g_btnTakeTP = "BtnTakeTP_" + IntegerToString(ChartID());
-string g_btnReset = "BtnReset_" + IntegerToString(ChartID());
+string panelPrefix = "TORAMA_MOM_" + IntegerToString(ChartID()) + "_";
 
 //+------------------------------------------------------------------+
 //| Expert initialization function                                     |
@@ -930,97 +924,157 @@ void CloseAllPositions()
 //+------------------------------------------------------------------+
 void CreateDashboard()
 {
-   int panelWidth = 400;
-   int panelHeight = 280;
+   int x = 20;
+   int y = 30;
+   int width = 380;
+   int lineHeight = 22;
    
-   // Background panel (solid, on top of chart)
-   ObjectCreate(0, g_panelBG, OBJ_RECTANGLE_LABEL, 0, 0, 0);
-   ObjectSetInteger(0, g_panelBG, OBJPROP_XDISTANCE, InpPanelX);
-   ObjectSetInteger(0, g_panelBG, OBJPROP_YDISTANCE, InpPanelY);
-   ObjectSetInteger(0, g_panelBG, OBJPROP_XSIZE, panelWidth);
-   ObjectSetInteger(0, g_panelBG, OBJPROP_YSIZE, panelHeight);
-   ObjectSetInteger(0, g_panelBG, OBJPROP_BGCOLOR, C'20,30,40'); // Dark slate instead of Navy
-   ObjectSetInteger(0, g_panelBG, OBJPROP_BORDER_TYPE, BORDER_FLAT);
-   ObjectSetInteger(0, g_panelBG, OBJPROP_COLOR, clrGold);
-   ObjectSetInteger(0, g_panelBG, OBJPROP_WIDTH, 2);
-   ObjectSetInteger(0, g_panelBG, OBJPROP_CORNER, CORNER_LEFT_UPPER);
-   ObjectSetInteger(0, g_panelBG, OBJPROP_BACK, false);
-   ObjectSetInteger(0, g_panelBG, OBJPROP_SELECTABLE, false);
-   ObjectSetInteger(0, g_panelBG, OBJPROP_SELECTED, false);
-   ObjectSetInteger(0, g_panelBG, OBJPROP_HIDDEN, false); // Changed to false
-   ObjectSetInteger(0, g_panelBG, OBJPROP_ZORDER, 1000);
+   // Background
+   ObjectCreate(0, panelPrefix + "Background", OBJ_RECTANGLE_LABEL, 0, 0, 0);
+   ObjectSetInteger(0, panelPrefix + "Background", OBJPROP_XDISTANCE, x);
+   ObjectSetInteger(0, panelPrefix + "Background", OBJPROP_YDISTANCE, y);
+   ObjectSetInteger(0, panelPrefix + "Background", OBJPROP_XSIZE, width);
+   ObjectSetInteger(0, panelPrefix + "Background", OBJPROP_YSIZE, 420);
+   ObjectSetInteger(0, panelPrefix + "Background", OBJPROP_BGCOLOR, C'20,20,25');
+   ObjectSetInteger(0, panelPrefix + "Background", OBJPROP_BORDER_TYPE, BORDER_FLAT);
+   ObjectSetInteger(0, panelPrefix + "Background", OBJPROP_COLOR, clrGold);
+   ObjectSetInteger(0, panelPrefix + "Background", OBJPROP_WIDTH, 2);
+   ObjectSetInteger(0, panelPrefix + "Background", OBJPROP_BACK, false);
+   ObjectSetInteger(0, panelPrefix + "Background", OBJPROP_SELECTABLE, false);
+   ObjectSetInteger(0, panelPrefix + "Background", OBJPROP_HIDDEN, false);
    
-   // TORAMA CAPITAL branding at bottom right
-   if(ObjectFind(0, g_brandingLabel) >= 0)
-      ObjectDelete(0, g_brandingLabel);
-      
-   if(!ObjectCreate(0, g_brandingLabel, OBJ_LABEL, 0, 0, 0))
-   {
-      Print("ERROR: Failed to create branding label");
-      return;
-   }
+   int yPos = y + 12;
    
-   ObjectSetInteger(0, g_brandingLabel, OBJPROP_CORNER, CORNER_LEFT_UPPER);
-   ObjectSetInteger(0, g_brandingLabel, OBJPROP_ANCHOR, ANCHOR_LEFT_UPPER);
-   ObjectSetInteger(0, g_brandingLabel, OBJPROP_XDISTANCE, InpPanelX + panelWidth - 180);
-   ObjectSetInteger(0, g_brandingLabel, OBJPROP_YDISTANCE, InpPanelY + panelHeight - 35);
-   ObjectSetString(0, g_brandingLabel, OBJPROP_FONT, "Arial Black");
-   ObjectSetInteger(0, g_brandingLabel, OBJPROP_FONTSIZE, 14);
-   ObjectSetInteger(0, g_brandingLabel, OBJPROP_COLOR, clrGold);
-   ObjectSetInteger(0, g_brandingLabel, OBJPROP_BACK, false);
-   ObjectSetInteger(0, g_brandingLabel, OBJPROP_SELECTABLE, false);
-   ObjectSetInteger(0, g_brandingLabel, OBJPROP_SELECTED, false);
-   ObjectSetInteger(0, g_brandingLabel, OBJPROP_HIDDEN, false);
-   ObjectSetInteger(0, g_brandingLabel, OBJPROP_ZORDER, 1002);
-   ObjectSetString(0, g_brandingLabel, OBJPROP_TEXT, "TORAMA CAPITAL");
+   // === TITLE ROW ===
+   CreateLabel(panelPrefix + "Title", x + 10, yPos, "MOMENTUM GRID TRADER", clrGold, 11, "Arial Black");
+   CreateLabel(panelPrefix + "Status", x + width - 80, yPos, "✅ ACTIVE", clrLimeGreen, 9, "Arial Bold");
+   yPos += 26;
    
-   // Info label (will be updated in UpdateDashboard)
-   if(ObjectFind(0, g_panelLabel) >= 0)
-      ObjectDelete(0, g_panelLabel);
-      
-   if(!ObjectCreate(0, g_panelLabel, OBJ_LABEL, 0, 0, 0))
-   {
-      Print("ERROR: Failed to create panel label");
-      return;
-   }
+   // === BUTTONS ROW ===
+   CreateButton(panelPrefix + "CloseBtn", x + 10, yPos, 75, 26, "CLOSE", clrRed, clrWhite);
+   CreateButton(panelPrefix + "PauseBtn", x + 90, yPos, 75, 26, "PAUSE", clrOrange, clrWhite);
+   CreateButton(panelPrefix + "TPBtn", x + 170, yPos, 65, 26, "TP", clrGreen, clrWhite);
+   CreateButton(panelPrefix + "ResetBtn", x + 240, yPos, 65, 26, "RESET", clrDodgerBlue, clrWhite);
+   yPos += 34;
    
-   ObjectSetInteger(0, g_panelLabel, OBJPROP_CORNER, CORNER_LEFT_UPPER);
-   ObjectSetInteger(0, g_panelLabel, OBJPROP_ANCHOR, ANCHOR_LEFT_UPPER);
-   ObjectSetInteger(0, g_panelLabel, OBJPROP_XDISTANCE, InpPanelX + 15);
-   ObjectSetInteger(0, g_panelLabel, OBJPROP_YDISTANCE, InpPanelY + 15);
-   ObjectSetString(0, g_panelLabel, OBJPROP_FONT, "Arial");
-   ObjectSetInteger(0, g_panelLabel, OBJPROP_FONTSIZE, 8);
-   ObjectSetInteger(0, g_panelLabel, OBJPROP_COLOR, clrWhite);
-   ObjectSetInteger(0, g_panelLabel, OBJPROP_BACK, false);
-   ObjectSetInteger(0, g_panelLabel, OBJPROP_SELECTABLE, false);
-   ObjectSetInteger(0, g_panelLabel, OBJPROP_SELECTED, false);
-   ObjectSetInteger(0, g_panelLabel, OBJPROP_HIDDEN, false);
-   ObjectSetInteger(0, g_panelLabel, OBJPROP_ZORDER, 1002);
+   // === DIRECTION ROW ===
+   color dirColor = clrDodgerBlue;
+   if(InpDirection == DIR_BUY_ONLY) dirColor = clrDodgerBlue;
+   else if(InpDirection == DIR_SELL_ONLY) dirColor = clrOrangeRed;
+   else dirColor = clrYellow;
    
-   // Set test text immediately to verify label works
-   string testText = "TORAMA EA ACTIVE\nLoading data...";
-   ObjectSetString(0, g_panelLabel, OBJPROP_TEXT, testText);
+   CreateLabel(panelPrefix + "DirectionLabel", x + 10, yPos, "Direction:", clrGold, 9, "Arial Bold");
+   CreateLabel(panelPrefix + "Direction", x + 90, yPos, "BOTH", dirColor, 10, "Arial Black");
+   yPos += lineHeight;
    
-   // Buttons
-   int btnWidth = 90;
-   int btnHeight = 25;
-   int btnSpacing = 5;
-   int btnY = InpPanelY + panelHeight - 70;
+   // === PRICE ROW ===
+   CreateLabel(panelPrefix + "PriceLabel", x + 10, yPos, "Price:", clrGold, 9, "Arial Bold");
+   CreateLabel(panelPrefix + "Price", x + 70, yPos, "$0", clrWhite, 10, "Arial Bold");
+   yPos += lineHeight;
    
-   CreateButton(g_btnCloseAll, InpPanelX + 10, btnY, btnWidth, btnHeight, "Close All", clrDarkRed);
-   CreateButton(g_btnPause, InpPanelX + 10 + btnWidth + btnSpacing, btnY, btnWidth, btnHeight, "Pause EA", clrOrange);
-   CreateButton(g_btnTakeTP, InpPanelX + 10 + (btnWidth + btnSpacing) * 2, btnY, btnWidth, btnHeight, "Take TP", clrGreen);
-   CreateButton(g_btnReset, InpPanelX + 10 + (btnWidth + btnSpacing) * 3, btnY, btnWidth, btnHeight, "Reset Ref", clrDodgerBlue);
+   // === REFERENCE ROW ===
+   CreateLabel(panelPrefix + "RefLabel", x + 10, yPos, "Reference:", clrGold, 9, "Arial Bold");
+   CreateLabel(panelPrefix + "RefPrice", x + 95, yPos, "$0", clrWhite, 9, "Arial");
+   CreateLabel(panelPrefix + "GapLabel", x + 200, yPos, "Gap:", clrGold, 9, "Arial Bold");
+   CreateLabel(panelPrefix + "GapValue", x + 240, yPos, "0%", clrWhite, 9, "Arial");
+   yPos += lineHeight + 4;
    
-   // Set initial text immediately
-   UpdateDashboard();
-   ChartRedraw(0);
+   // === POSITIONS ROW ===
+   CreateLabel(panelPrefix + "PosLabel", x + 10, yPos, "⚡Positions:", clrGold, 9, "Arial Black");
+   CreateLabel(panelPrefix + "Positions", x + 105, yPos, "0", clrWhite, 10, "Arial Black");
+   yPos += lineHeight;
+   
+   // === BUY/SELL COUNT ROW ===
+   CreateLabel(panelPrefix + "BuyLabel", x + 10, yPos, "Buys:", clrDodgerBlue, 9, "Arial Bold");
+   CreateLabel(panelPrefix + "BuyCount", x + 70, yPos, "0", clrDodgerBlue, 9, "Arial");
+   CreateLabel(panelPrefix + "SellLabel", x + 200, yPos, "Sells:", clrOrangeRed, 9, "Arial Bold");
+   CreateLabel(panelPrefix + "SellCount", x + 260, yPos, "0", clrOrangeRed, 9, "Arial");
+   yPos += lineHeight + 4;
+   
+   // === P/L ROW ===
+   CreateLabel(panelPrefix + "PnLLabel", x + 10, yPos, "P/L:", clrGold, 9, "Arial Bold");
+   CreateLabel(panelPrefix + "PnL", x + 60, yPos, "$0", clrWhite, 11, "Arial Black");
+   yPos += lineHeight;
+   
+   // === EQUITY ROW ===
+   CreateLabel(panelPrefix + "EquityLabel", x + 10, yPos, "Equity:", clrGold, 9, "Arial Bold");
+   CreateLabel(panelPrefix + "Equity", x + 75, yPos, "$0", clrWhite, 9, "Arial");
+   CreateLabel(panelPrefix + "BalanceLabel", x + 200, yPos, "Balance:", clrGold, 9, "Arial Bold");
+   CreateLabel(panelPrefix + "Balance", x + 275, yPos, "$0", clrWhite, 9, "Arial");
+   yPos += lineHeight;
+   
+   // === MARGIN ROW ===
+   CreateLabel(panelPrefix + "MarginLabel", x + 10, yPos, "Margin:", clrGold, 9, "Arial Bold");
+   CreateLabel(panelPrefix + "Margin", x + 75, yPos, "$0", clrWhite, 9, "Arial");
+   yPos += lineHeight;
+   
+   // === DRAWDOWN ROW ===
+   CreateLabel(panelPrefix + "DDLabel", x + 10, yPos, "Drawdown:", clrGold, 9, "Arial Bold");
+   CreateLabel(panelPrefix + "DD", x + 95, yPos, "0%", clrWhite, 9, "Arial");
+   yPos += lineHeight;
+   
+   // === DAILY P/L ROW ===
+   CreateLabel(panelPrefix + "DailyLabel", x + 10, yPos, "Daily P/L:", clrGold, 9, "Arial Bold");
+   CreateLabel(panelPrefix + "DailyProfit", x + 95, yPos, "$0", clrWhite, 9, "Arial");
+   yPos += lineHeight + 4;
+   
+   // === TRAILING INFO ROW ===
+   CreateLabel(panelPrefix + "TrailLabel", x + 10, yPos, "Trail:", clrGold, 9, "Arial Bold");
+   CreateLabel(panelPrefix + "TrailInfo", x + 65, yPos, "Breakeven → 0.3% → Trail", clrCyan, 8, "Arial");
+   yPos += lineHeight + 15;
+   
+   // === BRANDING - Bottom Right Corner ===
+   int brandY = y + 420 - 35;
+   int brandX = x + width - 12;
+   
+   ObjectCreate(0, panelPrefix + "Brand", OBJ_LABEL, 0, 0, 0);
+   ObjectSetInteger(0, panelPrefix + "Brand", OBJPROP_XDISTANCE, brandX);
+   ObjectSetInteger(0, panelPrefix + "Brand", OBJPROP_YDISTANCE, brandY);
+   ObjectSetInteger(0, panelPrefix + "Brand", OBJPROP_COLOR, clrGold);
+   ObjectSetInteger(0, panelPrefix + "Brand", OBJPROP_FONTSIZE, 10);
+   ObjectSetString(0, panelPrefix + "Brand", OBJPROP_FONT, "Arial Black");
+   ObjectSetString(0, panelPrefix + "Brand", OBJPROP_TEXT, "© TORAMA CAPITAL");
+   ObjectSetInteger(0, panelPrefix + "Brand", OBJPROP_ANCHOR, ANCHOR_RIGHT_UPPER);
+   ObjectSetInteger(0, panelPrefix + "Brand", OBJPROP_SELECTABLE, false);
+   ObjectSetInteger(0, panelPrefix + "Brand", OBJPROP_BACK, false);
+   ObjectSetInteger(0, panelPrefix + "Brand", OBJPROP_HIDDEN, false);
+   
+   ObjectCreate(0, panelPrefix + "Email", OBJ_LABEL, 0, 0, 0);
+   ObjectSetInteger(0, panelPrefix + "Email", OBJPROP_XDISTANCE, brandX);
+   ObjectSetInteger(0, panelPrefix + "Email", OBJPROP_YDISTANCE, brandY + 16);
+   ObjectSetInteger(0, panelPrefix + "Email", OBJPROP_COLOR, C'150,150,100');
+   ObjectSetInteger(0, panelPrefix + "Email", OBJPROP_FONTSIZE, 7);
+   ObjectSetString(0, panelPrefix + "Email", OBJPROP_FONT, "Arial");
+   ObjectSetString(0, panelPrefix + "Email", OBJPROP_TEXT, "ea@torama.money");
+   ObjectSetInteger(0, panelPrefix + "Email", OBJPROP_ANCHOR, ANCHOR_RIGHT_UPPER);
+   ObjectSetInteger(0, panelPrefix + "Email", OBJPROP_SELECTABLE, false);
+   ObjectSetInteger(0, panelPrefix + "Email", OBJPROP_BACK, false);
+   ObjectSetInteger(0, panelPrefix + "Email", OBJPROP_HIDDEN, false);
+   
+   Print("Dashboard created successfully");
+}
+
+//+------------------------------------------------------------------+
+//| Create Label                                                       |
+//+------------------------------------------------------------------+
+void CreateLabel(string name, int x, int y, string text, color clr, int fontSize, string font)
+{
+   ObjectCreate(0, name, OBJ_LABEL, 0, 0, 0);
+   ObjectSetInteger(0, name, OBJPROP_XDISTANCE, x);
+   ObjectSetInteger(0, name, OBJPROP_YDISTANCE, y);
+   ObjectSetInteger(0, name, OBJPROP_COLOR, clr);
+   ObjectSetInteger(0, name, OBJPROP_FONTSIZE, fontSize);
+   ObjectSetString(0, name, OBJPROP_FONT, font);
+   ObjectSetString(0, name, OBJPROP_TEXT, text);
+   ObjectSetInteger(0, name, OBJPROP_SELECTABLE, false);
+   ObjectSetInteger(0, name, OBJPROP_BACK, false);
+   ObjectSetInteger(0, name, OBJPROP_HIDDEN, false);
 }
 
 //+------------------------------------------------------------------+
 //| Create Button                                                      |
 //+------------------------------------------------------------------+
-void CreateButton(string name, int x, int y, int width, int height, string text, color clr)
+void CreateButton(string name, int x, int y, int width, int height, string text, color bgColor, color txtColor)
 {
    ObjectCreate(0, name, OBJ_BUTTON, 0, 0, 0);
    ObjectSetInteger(0, name, OBJPROP_XDISTANCE, x);
@@ -1028,17 +1082,13 @@ void CreateButton(string name, int x, int y, int width, int height, string text,
    ObjectSetInteger(0, name, OBJPROP_XSIZE, width);
    ObjectSetInteger(0, name, OBJPROP_YSIZE, height);
    ObjectSetString(0, name, OBJPROP_TEXT, text);
-   ObjectSetInteger(0, name, OBJPROP_COLOR, clrWhite);
-   ObjectSetInteger(0, name, OBJPROP_BGCOLOR, clr);
+   ObjectSetInteger(0, name, OBJPROP_COLOR, txtColor);
+   ObjectSetInteger(0, name, OBJPROP_BGCOLOR, bgColor);
    ObjectSetInteger(0, name, OBJPROP_BORDER_COLOR, clrGold);
-   ObjectSetString(0, name, OBJPROP_FONT, "Arial Bold");
    ObjectSetInteger(0, name, OBJPROP_FONTSIZE, 9);
+   ObjectSetString(0, name, OBJPROP_FONT, "Arial Bold");
    ObjectSetInteger(0, name, OBJPROP_BACK, false);
-   ObjectSetInteger(0, name, OBJPROP_CORNER, CORNER_LEFT_UPPER);
-   ObjectSetInteger(0, name, OBJPROP_SELECTABLE, false);
-   ObjectSetInteger(0, name, OBJPROP_SELECTED, false);
-   ObjectSetInteger(0, name, OBJPROP_HIDDEN, false); // Changed to false
-   ObjectSetInteger(0, name, OBJPROP_ZORDER, 1001);
+   ObjectSetInteger(0, name, OBJPROP_HIDDEN, false);
 }
 
 //+------------------------------------------------------------------+
@@ -1046,11 +1096,68 @@ void CreateButton(string name, int x, int y, int width, int height, string text,
 //+------------------------------------------------------------------+
 void UpdateDashboard()
 {
-   double equity = AccountInfoDouble(ACCOUNT_EQUITY);
-   double balance = AccountInfoDouble(ACCOUNT_BALANCE);
-   double margin = AccountInfoDouble(ACCOUNT_MARGIN);
-   double dailyPL = GetDailyPL();
+   // Status
+   string statusText = "✅ ACTIVE";
+   color statusColor = clrLimeGreen;
    
+   if(g_manualPause)
+   {
+      statusText = "⏸️ PAUSED";
+      statusColor = clrOrange;
+   }
+   else if(g_drawdownPause)
+   {
+      statusText = "🛑 DD STOP";
+      statusColor = clrRed;
+   }
+   else if(TimeCurrent() < g_pauseUntil)
+   {
+      statusText = "🎯 TARGET";
+      statusColor = clrGold;
+   }
+   
+   ObjectSetString(0, panelPrefix + "Status", OBJPROP_TEXT, statusText);
+   ObjectSetInteger(0, panelPrefix + "Status", OBJPROP_COLOR, statusColor);
+   
+   // Pause button
+   ObjectSetString(0, panelPrefix + "PauseBtn", OBJPROP_TEXT, g_manualPause ? "RESUME" : "PAUSE");
+   ObjectSetInteger(0, panelPrefix + "PauseBtn", OBJPROP_BGCOLOR, g_manualPause ? clrGreen : clrOrange);
+   
+   // Direction
+   string dirText = "";
+   color dirColor = clrWhite;
+   
+   if(InpDirection == DIR_BUY_ONLY)
+   {
+      dirText = "BUY ONLY";
+      dirColor = clrDodgerBlue;
+   }
+   else if(InpDirection == DIR_SELL_ONLY)
+   {
+      dirText = "SELL ONLY";
+      dirColor = clrOrangeRed;
+   }
+   else
+   {
+      dirText = "BOTH";
+      dirColor = clrYellow;
+   }
+   
+   ObjectSetString(0, panelPrefix + "Direction", OBJPROP_TEXT, dirText);
+   ObjectSetInteger(0, panelPrefix + "Direction", OBJPROP_COLOR, dirColor);
+   
+   // Price
+   double ask = SymbolInfoDouble(_Symbol, SYMBOL_ASK);
+   double bid = SymbolInfoDouble(_Symbol, SYMBOL_BID);
+   double currentPrice = (ask + bid) / 2.0;
+   
+   ObjectSetString(0, panelPrefix + "Price", OBJPROP_TEXT, "$" + DoubleToString(currentPrice, g_digits));
+   
+   // Reference and Gap
+   ObjectSetString(0, panelPrefix + "RefPrice", OBJPROP_TEXT, "$" + DoubleToString(g_referencePrice, g_digits));
+   ObjectSetString(0, panelPrefix + "GapValue", OBJPROP_TEXT, DoubleToString(InpGapPercent, 2) + "%");
+   
+   // Count positions
    int buyCount = 0, sellCount = 0;
    double totalProfit = 0;
    
@@ -1067,47 +1174,50 @@ void UpdateDashboard()
       totalProfit += PositionGetDouble(POSITION_PROFIT);
    }
    
-   string status = "Active";
-   if(g_manualPause) status = "PAUSED (Manual)";
-   else if(g_drawdownPause) status = "PAUSED (Drawdown)";
-   else if(TimeCurrent() < g_pauseUntil) status = "PAUSED (Profit Target)";
+   int totalPos = buyCount + sellCount;
    
-   string direction = "";
-   if(InpDirection == DIR_BUY_ONLY) direction = "BUY ONLY";
-   else if(InpDirection == DIR_SELL_ONLY) direction = "SELL ONLY";
-   else direction = "BOTH";
+   // Positions
+   ObjectSetString(0, panelPrefix + "Positions", OBJPROP_TEXT, IntegerToString(totalPos));
    
-   string info = StringFormat(
-      "TORAMA Momentum Grid EA\n" +
-      "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n" +
-      "Status:          %s\n" +
-      "Direction:       %s\n" +
-      "Reference:       %.5f\n" +
-      "Gap:             %.3f%%\n" +
-      "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n" +
-      "EQUITY:          $%.2f\n" +
-      "BALANCE:         $%.2f\n" +
-      "MARGIN:          $%.2f\n" +
-      "DAILY P/L:       $%.2f (%.2f%%)\n" +
-      "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n" +
-      "Buys (Above):    %d\n" +
-      "Sells (Below):   %d\n" +
-      "Total P/L:       $%.2f",
-      status, direction, g_referencePrice, InpGapPercent,
-      equity, balance, margin,
-      dailyPL, (dailyPL / g_dayStartBalance) * 100.0,
-      buyCount, sellCount, totalProfit
-   );
+   // Buy/Sell counts
+   ObjectSetString(0, panelPrefix + "BuyCount", OBJPROP_TEXT, IntegerToString(buyCount));
+   ObjectSetString(0, panelPrefix + "SellCount", OBJPROP_TEXT, IntegerToString(sellCount));
    
-   // Set the text
-   if(!ObjectSetString(0, g_panelLabel, OBJPROP_TEXT, info))
-   {
-      Print("ERROR: Failed to set panel text");
-      // Fallback: use Comment which always works
-      Comment(info);
-   }
+   // P/L
+   color pnlColor = (totalProfit >= 0) ? clrLimeGreen : clrRed;
+   ObjectSetString(0, panelPrefix + "PnL", OBJPROP_TEXT, 
+                   (totalProfit >= 0 ? "+" : "") + "$" + DoubleToString(totalProfit, 2));
+   ObjectSetInteger(0, panelPrefix + "PnL", OBJPROP_COLOR, pnlColor);
    
-   ChartRedraw(0);
+   // Equity, Balance, Margin
+   double equity = AccountInfoDouble(ACCOUNT_EQUITY);
+   double balance = AccountInfoDouble(ACCOUNT_BALANCE);
+   double margin = AccountInfoDouble(ACCOUNT_MARGIN);
+   
+   ObjectSetString(0, panelPrefix + "Equity", OBJPROP_TEXT, "$" + DoubleToString(equity, 2));
+   ObjectSetString(0, panelPrefix + "Balance", OBJPROP_TEXT, "$" + DoubleToString(balance, 2));
+   ObjectSetString(0, panelPrefix + "Margin", OBJPROP_TEXT, "$" + DoubleToString(margin, 2));
+   
+   // Drawdown
+   double peakBalance = MathMax(g_startBalance, balance);
+   double dd = 0;
+   if(peakBalance > 0)
+      dd = ((balance - peakBalance) / peakBalance) * 100.0;
+   
+   color ddColor = (dd >= -5) ? clrLimeGreen : (dd >= -10) ? clrYellow : clrRed;
+   ObjectSetString(0, panelPrefix + "DD", OBJPROP_TEXT, DoubleToString(dd, 1) + "%");
+   ObjectSetInteger(0, panelPrefix + "DD", OBJPROP_COLOR, ddColor);
+   
+   // Daily P/L
+   double dailyPL = GetDailyPL();
+   color dailyColor = (dailyPL >= 0) ? clrLimeGreen : clrRed;
+   ObjectSetString(0, panelPrefix + "DailyProfit", OBJPROP_TEXT, 
+                   (dailyPL >= 0 ? "+" : "") + "$" + DoubleToString(dailyPL, 2));
+   ObjectSetInteger(0, panelPrefix + "DailyProfit", OBJPROP_COLOR, dailyColor);
+   
+   // Trailing info
+   string trailText = StringFormat("B/E → %.2f%% → Trail %.2f%%", InpTrailingStart, InpTrailingStep);
+   ObjectSetString(0, panelPrefix + "TrailInfo", OBJPROP_TEXT, trailText);
 }
 
 //+------------------------------------------------------------------+
@@ -1115,14 +1225,8 @@ void UpdateDashboard()
 //+------------------------------------------------------------------+
 void DeleteDashboard()
 {
-   // Delete all panel objects
-   ObjectDelete(0, g_panelBG);
-   ObjectDelete(0, g_panelLabel);
-   ObjectDelete(0, g_brandingLabel);
-   ObjectDelete(0, g_btnCloseAll);
-   ObjectDelete(0, g_btnPause);
-   ObjectDelete(0, g_btnTakeTP);
-   ObjectDelete(0, g_btnReset);
+   // Delete all panel objects using prefix
+   ObjectsDeleteAll(0, panelPrefix);
    
    // Force chart redraw to ensure objects are removed
    ChartRedraw(0);
@@ -1135,33 +1239,31 @@ void OnChartEvent(const int id, const long &lparam, const double &dparam, const 
 {
    if(id == CHARTEVENT_OBJECT_CLICK)
    {
-      if(sparam == g_btnCloseAll)
+      if(sparam == panelPrefix + "CloseBtn")
       {
          CloseAllPositions();
          Alert("All positions closed");
-         ObjectSetInteger(0, g_btnCloseAll, OBJPROP_STATE, false);
+         ObjectSetInteger(0, panelPrefix + "CloseBtn", OBJPROP_STATE, false);
       }
-      else if(sparam == g_btnPause)
+      else if(sparam == panelPrefix + "PauseBtn")
       {
          g_manualPause = !g_manualPause;
-         string text = g_manualPause ? "Resume EA" : "Pause EA";
-         ObjectSetString(0, g_btnPause, OBJPROP_TEXT, text);
-         ObjectSetInteger(0, g_btnPause, OBJPROP_STATE, false);
+         ObjectSetInteger(0, panelPrefix + "PauseBtn", OBJPROP_STATE, false);
          Alert(g_manualPause ? "EA Paused" : "EA Resumed");
       }
-      else if(sparam == g_btnTakeTP)
+      else if(sparam == panelPrefix + "TPBtn")
       {
          CloseAllPositions();
          g_pauseUntil = TimeCurrent() + (30 * 60);
          Alert("Take profit executed - EA paused for 30 minutes");
-         ObjectSetInteger(0, g_btnTakeTP, OBJPROP_STATE, false);
+         ObjectSetInteger(0, panelPrefix + "TPBtn", OBJPROP_STATE, false);
       }
-      else if(sparam == g_btnReset)
+      else if(sparam == panelPrefix + "ResetBtn")
       {
          g_referencePrice = SymbolInfoDouble(_Symbol, SYMBOL_BID);
          g_drawdownPause = false;
          Alert("Reference price reset to: ", g_referencePrice);
-         ObjectSetInteger(0, g_btnReset, OBJPROP_STATE, false);
+         ObjectSetInteger(0, panelPrefix + "ResetBtn", OBJPROP_STATE, false);
       }
    }
 }

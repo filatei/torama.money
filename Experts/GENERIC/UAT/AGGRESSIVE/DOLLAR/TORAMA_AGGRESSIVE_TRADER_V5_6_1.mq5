@@ -49,6 +49,7 @@ input double   MaxDrawdownPercent = 20.0;             // Max drawdown % (emergen
 double   DailyTargetPercent = 200.0;            // Daily profit target (% of start balance)
 
 input group "=== SETTINGS ==="
+input int      MagicNumber = 777888;                  // Magic number for order identification
 input int      MaxSpread = 2000;                      // Maximum spread (points)
 bool     ShowPanel = true;                      // Show info panel
 
@@ -106,9 +107,6 @@ int totalTrades = 0;
 bool isPaused = false;
 int modeSwitchCount = 0;
 
-// Magic number
-int MagicNumber = 0;
-
 // Panel
 string panelPrefix = "TORAMA_AGG_";
 bool panelVisible = true;
@@ -132,35 +130,6 @@ SymbolSpecs specs;
 double validatedLotSize = 0;
 
 //+------------------------------------------------------------------+
-//| GENERATE PERSISTENT CHART-BASED MAGIC NUMBER                     |
-//+------------------------------------------------------------------+
-int GenerateChartBasedMagicNumber()
-{
-   // Use chart ID as the unique identifier
-   // Chart ID remains constant even when EA parameters change
-   long chartId = ChartID();
-   
-   // Generate hash from symbol name for additional uniqueness
-   string symbolStr = _Symbol;
-   int symbolHash = 0;
-   
-   for(int i = 0; i < StringLen(symbolStr); i++)
-   {
-      symbolHash = (symbolHash * 31 + StringGetCharacter(symbolStr, i)) % 1000000;
-   }
-   
-   // Combine chart ID and symbol hash to create unique magic number
-   // Chart ID is typically a large number, so we take modulo and combine with symbol hash
-   int magic = (int)((chartId % 1000000) * 1000 + symbolHash) % 2147483647;
-   
-   // Ensure magic number is not zero
-   if(magic == 0) magic = (int)(chartId % 2147483647);
-   if(magic == 0) magic = 123456;
-   
-   return magic;
-}
-
-//+------------------------------------------------------------------+
 //| INITIALIZATION                                                    |
 //+------------------------------------------------------------------+
 int OnInit()
@@ -176,9 +145,8 @@ int OnInit()
    Print("   Leverage: 1:", IntegerToString(AccountInfoInteger(ACCOUNT_LEVERAGE)));
    Print("   Currency: ", AccountInfoString(ACCOUNT_CURRENCY));
    
-   // Generate persistent chart-based magic number
-   MagicNumber = GenerateChartBasedMagicNumber();
-   Print("🔢 Magic Number (Chart ID: ", ChartID(), "): ", MagicNumber);
+   // Log magic number
+   Print("🔢 Magic Number: ", MagicNumber);
    
    // Initialize symbol specifications
    if(!InitializeSymbolSpecs())
