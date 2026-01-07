@@ -1,0 +1,12 @@
+; ToramaGrid Classic - SELL ONLY (Sell the Rallies)
+; For ranging/downtrending markets
+InpGridDirection=1
+InpGapPercent=0.5
+InpBaseLotSize=0.01
+InpMaxPositions=10
+InpIndividualTPPercent=100.0
+InpGlobalTPDollar=50.0
+InpIndividualSLPercent=0.0
+InpMaxDrawdownPercent=20.0
+InpMagicNumber=0
+InpComment=ToramaClassic

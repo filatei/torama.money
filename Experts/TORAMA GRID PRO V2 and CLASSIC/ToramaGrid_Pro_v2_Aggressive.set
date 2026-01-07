@@ -1,0 +1,10 @@
+; ToramaGrid Pro V2 - Aggressive Settings
+; For trending news events and large accounts
+InpGapPercent=0.5
+InpBaseLotSize=0.02
+InpMaxPositionsPerSide=20
+InpGlobalTPDollar=200.0
+InpMaxDrawdownPercent=20.0
+InpIndividualTPPercent=0.0
+InpMagicNumber=0
+InpComment=ToramaGridPro

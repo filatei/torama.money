@@ -1,0 +1,10 @@
+; ToramaGrid Pro V2 - Bitcoin Settings
+; For BTCUSD with larger gaps
+InpGapPercent=1.5
+InpBaseLotSize=0.01
+InpMaxPositionsPerSide=15
+InpGlobalTPDollar=150.0
+InpMaxDrawdownPercent=20.0
+InpIndividualTPPercent=100.0
+InpMagicNumber=0
+InpComment=ToramaGridPro_BTC

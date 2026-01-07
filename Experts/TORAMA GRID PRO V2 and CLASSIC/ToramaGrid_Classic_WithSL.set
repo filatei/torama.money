@@ -1,0 +1,12 @@
+; ToramaGrid Classic - With Stop Loss Protection
+; For volatile markets - includes individual SL
+InpGridDirection=0
+InpGapPercent=0.5
+InpBaseLotSize=0.01
+InpMaxPositions=8
+InpIndividualTPPercent=100.0
+InpGlobalTPDollar=50.0
+InpIndividualSLPercent=100.0
+InpMaxDrawdownPercent=15.0
+InpMagicNumber=0
+InpComment=ToramaClassic

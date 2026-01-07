@@ -1,0 +1,10 @@
+; ToramaGrid Pro V2 - Conservative Settings
+; For $5,000 - $10,000 accounts
+InpGapPercent=0.5
+InpBaseLotSize=0.01
+InpMaxPositionsPerSide=10
+InpGlobalTPDollar=100.0
+InpMaxDrawdownPercent=20.0
+InpIndividualTPPercent=100.0
+InpMagicNumber=0
+InpComment=ToramaGridPro
