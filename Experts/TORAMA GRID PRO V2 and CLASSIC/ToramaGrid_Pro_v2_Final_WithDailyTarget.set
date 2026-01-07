@@ -1,0 +1,11 @@
+; ToramaGrid Pro V2 Final - Conservative with Daily Target
+; Perfect for consistent daily profits
+InpGapPercent=0.5
+InpBaseLotSize=0.01
+InpMaxPositionsPerSide=10
+InpGlobalTPDollar=100.0
+InpMaxDrawdownPercent=20.0
+InpIndividualTPPercent=100.0
+InpDailyTargetPercent=10.0
+InpMagicNumber=0
+InpComment=ToramaGridPro
