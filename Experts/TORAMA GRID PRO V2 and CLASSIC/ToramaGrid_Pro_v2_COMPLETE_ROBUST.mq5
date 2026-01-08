@@ -486,8 +486,12 @@ void CheckGridLevelsStrict()
    if(TimeCurrent() - lastTradeTime < minSecondsBetweenTrades)
       return;
    
+   //--- Count current positions per side
+   int buys = 0, sells = 0;
+   CountBuysSells(buys, sells);
+   
    //--- Check BUY levels (price above reference)
-   if(currentPrice > refPrice)
+   if(currentPrice > refPrice && buys < InpMaxPositionsPerSide)
    {
       for(int i = 0; i < ArraySize(buyLevels); i++)
       {
@@ -515,7 +519,7 @@ void CheckGridLevelsStrict()
    }
    
    //--- Check SELL levels (price below reference)
-   if(currentPrice < refPrice)
+   if(currentPrice < refPrice && sells < InpMaxPositionsPerSide)
    {
       for(int i = 0; i < ArraySize(sellLevels); i++)
       {
