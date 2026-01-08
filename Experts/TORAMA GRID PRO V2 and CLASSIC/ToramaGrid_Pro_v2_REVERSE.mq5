@@ -491,8 +491,12 @@ void CheckGridLevelsStrictReverse()
    if(TimeCurrent() - lastTradeTime < minSecondsBetweenTrades)
       return;
    
+   //--- Count current positions per side
+   int buys = 0, sells = 0;
+   CountBuysSells(buys, sells);
+   
    //--- REVERSE: Check SELL levels (price ABOVE reference - fade the rally)
-   if(currentPrice > refPrice)
+   if(currentPrice > refPrice && sells < InpMaxPositionsPerSide)
    {
       for(int i = 0; i < ArraySize(sellLevels); i++)
       {
@@ -521,7 +525,7 @@ void CheckGridLevelsStrictReverse()
    }
    
    //--- REVERSE: Check BUY levels (price BELOW reference - fade the dip)
-   if(currentPrice < refPrice)
+   if(currentPrice < refPrice && buys < InpMaxPositionsPerSide)
    {
       for(int i = 0; i < ArraySize(buyLevels); i++)
       {
