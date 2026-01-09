@@ -493,16 +493,15 @@ void CheckGridLevelsStrict()
    //--- Check BUY levels (price above reference)
    if(currentPrice > refPrice && buys < InpMaxPositionsPerSide)
    {
+      //--- Find the first unoccupied level at or above current price
       for(int i = 0; i < ArraySize(buyLevels); i++)
       {
          if(!buyLevels[i].occupied)
          {
             double levelPrice = buyLevels[i].price;
-            double distanceToLevel = MathAbs(currentPrice - levelPrice);
-            double entryTolerance = gap * 0.15; // 15% tolerance
             
-            if(distanceToLevel <= entryTolerance && 
-               currentPrice >= levelPrice - entryTolerance)
+            // Check if current price has reached or passed this level
+            if(currentPrice >= levelPrice)
             {
                if(!PositionExistsAtPrice(levelPrice, ORDER_TYPE_BUY, gap * 0.25))
                {
@@ -514,6 +513,11 @@ void CheckGridLevelsStrict()
                   }
                }
             }
+            else
+            {
+               // Price hasn't reached this level yet, stop checking
+               break;
+            }
          }
       }
    }
@@ -521,16 +525,15 @@ void CheckGridLevelsStrict()
    //--- Check SELL levels (price below reference)
    if(currentPrice < refPrice && sells < InpMaxPositionsPerSide)
    {
+      //--- Find the first unoccupied level at or below current price
       for(int i = 0; i < ArraySize(sellLevels); i++)
       {
          if(!sellLevels[i].occupied)
          {
             double levelPrice = sellLevels[i].price;
-            double distanceToLevel = MathAbs(currentPrice - levelPrice);
-            double entryTolerance = gap * 0.15;
             
-            if(distanceToLevel <= entryTolerance && 
-               currentPrice <= levelPrice + entryTolerance)
+            // Check if current price has reached or passed this level
+            if(currentPrice <= levelPrice)
             {
                if(!PositionExistsAtPrice(levelPrice, ORDER_TYPE_SELL, gap * 0.25))
                {
@@ -541,6 +544,11 @@ void CheckGridLevelsStrict()
                      return;
                   }
                }
+            }
+            else
+            {
+               // Price hasn't reached this level yet, stop checking
+               break;
             }
          }
       }
@@ -1230,21 +1238,29 @@ void UpdatePanel()
    ObjectSetString(0, "ToramaPanelValRefPrice", OBJPROP_TEXT, DoubleToString(refPrice, symbolDigits));
    ObjectSetString(0, "ToramaPanelValCurrPrice", OBJPROP_TEXT, DoubleToString(currentPrice, symbolDigits));
    
-   double nextBuy = refPrice + gap;
-   double nextSell = refPrice - gap;
+   //--- Find next UNOCCUPIED level for BUY
+   double nextBuy = 0;
+   for(int i = 0; i < ArraySize(buyLevels); i++)
+   {
+      if(!buyLevels[i].occupied && buyLevels[i].price >= currentPrice)
+      {
+         nextBuy = buyLevels[i].price;
+         break;
+      }
+   }
+   if(nextBuy == 0) nextBuy = refPrice + gap; // Fallback if all occupied
    
-   if(currentPrice > refPrice)
+   //--- Find next UNOCCUPIED level for SELL
+   double nextSell = 0;
+   for(int i = 0; i < ArraySize(sellLevels); i++)
    {
-      int level = (int)MathCeil((currentPrice - refPrice) / gap);
-      if(level < 1) level = 1;
-      nextBuy = refPrice + (level * gap);
+      if(!sellLevels[i].occupied && sellLevels[i].price <= currentPrice)
+      {
+         nextSell = sellLevels[i].price;
+         break;
+      }
    }
-   else if(currentPrice < refPrice)
-   {
-      int level = (int)MathCeil((refPrice - currentPrice) / gap);
-      if(level < 1) level = 1;
-      nextSell = refPrice - (level * gap);
-   }
+   if(nextSell == 0) nextSell = refPrice - gap; // Fallback if all occupied
    
    ObjectSetString(0, "ToramaPanelValNextBuy", OBJPROP_TEXT, DoubleToString(nextBuy, symbolDigits));
    ObjectSetString(0, "ToramaPanelValNextSell", OBJPROP_TEXT, DoubleToString(nextSell, symbolDigits));

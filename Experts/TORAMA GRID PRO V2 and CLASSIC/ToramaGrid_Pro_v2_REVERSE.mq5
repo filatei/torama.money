@@ -498,16 +498,15 @@ void CheckGridLevelsStrictReverse()
    //--- REVERSE: Check SELL levels (price ABOVE reference - fade the rally)
    if(currentPrice > refPrice && sells < InpMaxPositionsPerSide)
    {
+      //--- Find the first unoccupied SELL level at or above current price
       for(int i = 0; i < ArraySize(sellLevels); i++)
       {
          if(!sellLevels[i].occupied)
          {
             double levelPrice = sellLevels[i].price;
-            double distanceToLevel = MathAbs(currentPrice - levelPrice);
-            double entryTolerance = gap * 0.15;
             
-            if(distanceToLevel <= entryTolerance && 
-               currentPrice >= levelPrice - entryTolerance)
+            // REVERSE: Open SELL when price reaches or passes this level (going up)
+            if(currentPrice >= levelPrice)
             {
                if(!PositionExistsAtPrice(levelPrice, ORDER_TYPE_SELL, gap * 0.25))
                {
@@ -520,6 +519,11 @@ void CheckGridLevelsStrictReverse()
                   }
                }
             }
+            else
+            {
+               // Price hasn't reached this level yet, stop checking
+               break;
+            }
          }
       }
    }
@@ -527,16 +531,15 @@ void CheckGridLevelsStrictReverse()
    //--- REVERSE: Check BUY levels (price BELOW reference - fade the dip)
    if(currentPrice < refPrice && buys < InpMaxPositionsPerSide)
    {
+      //--- Find the first unoccupied BUY level at or below current price
       for(int i = 0; i < ArraySize(buyLevels); i++)
       {
          if(!buyLevels[i].occupied)
          {
             double levelPrice = buyLevels[i].price;
-            double distanceToLevel = MathAbs(currentPrice - levelPrice);
-            double entryTolerance = gap * 0.15;
             
-            if(distanceToLevel <= entryTolerance && 
-               currentPrice <= levelPrice + entryTolerance)
+            // REVERSE: Open BUY when price reaches or passes this level (going down)
+            if(currentPrice <= levelPrice)
             {
                if(!PositionExistsAtPrice(levelPrice, ORDER_TYPE_BUY, gap * 0.25))
                {
@@ -548,6 +551,11 @@ void CheckGridLevelsStrictReverse()
                      return;
                   }
                }
+            }
+            else
+            {
+               // Price hasn't reached this level yet, stop checking
+               break;
             }
          }
       }
@@ -1252,22 +1260,29 @@ void UpdatePanel()
    ObjectSetString(0, "ToramaPanelValRefPrice", OBJPROP_TEXT, DoubleToString(refPrice, symbolDigits));
    ObjectSetString(0, "ToramaPanelValCurrPrice", OBJPROP_TEXT, DoubleToString(currentPrice, symbolDigits));
    
-   // REVERSE: Next SELL is above, next BUY is below
-   double nextSell = refPrice + gap;
-   double nextBuy = refPrice - gap;
+   //--- REVERSE: Find next UNOCCUPIED SELL level (above current price)
+   double nextSell = 0;
+   for(int i = 0; i < ArraySize(sellLevels); i++)
+   {
+      if(!sellLevels[i].occupied && sellLevels[i].price >= currentPrice)
+      {
+         nextSell = sellLevels[i].price;
+         break;
+      }
+   }
+   if(nextSell == 0) nextSell = refPrice + gap;
    
-   if(currentPrice > refPrice)
+   //--- REVERSE: Find next UNOCCUPIED BUY level (below current price)
+   double nextBuy = 0;
+   for(int i = 0; i < ArraySize(buyLevels); i++)
    {
-      int level = (int)MathCeil((currentPrice - refPrice) / gap);
-      if(level < 1) level = 1;
-      nextSell = refPrice + (level * gap);
+      if(!buyLevels[i].occupied && buyLevels[i].price <= currentPrice)
+      {
+         nextBuy = buyLevels[i].price;
+         break;
+      }
    }
-   else if(currentPrice < refPrice)
-   {
-      int level = (int)MathCeil((refPrice - currentPrice) / gap);
-      if(level < 1) level = 1;
-      nextBuy = refPrice - (level * gap);
-   }
+   if(nextBuy == 0) nextBuy = refPrice - gap;
    
    ObjectSetString(0, "ToramaPanelValNextSell", OBJPROP_TEXT, DoubleToString(nextSell, symbolDigits));
    ObjectSetString(0, "ToramaPanelValNextBuy", OBJPROP_TEXT, DoubleToString(nextBuy, symbolDigits));
