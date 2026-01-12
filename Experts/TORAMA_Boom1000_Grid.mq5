@@ -20,7 +20,7 @@
 //| Input Parameters                                                  |
 //+------------------------------------------------------------------+
 input group "=== GRID SETTINGS ==="
-input double   InpLotSize           = 0.01;     // Lot Size (Fixed)
+input double   InpLotSize           = 0.20;     // Lot Size (Fixed)
 input int      InpGridSpacing       = 100;      // Grid Spacing (Points)
 input int      InpMaxGridLevels     = 8;        // Maximum Grid Levels
 input double   InpBasketTP_Points   = 500;      // Basket Take Profit (Points)
@@ -79,7 +79,7 @@ datetime       g_lastSpikeTime     = 0;
 // Panel objects
 string         g_panelPrefix       = "TORAMA_B1000_";
 int            g_panelWidth        = 280;
-int            g_panelHeight       = 420;
+int            g_panelHeight       = 450;
 
 // Button states
 bool           g_btnPauseState     = false;
@@ -313,6 +313,11 @@ void CreatePanel()
    
    CreateButton(g_panelPrefix + "BtnTakeTP", x + 15, row, btnWidth, btnHeight, "💰 TAKE TP", C'0,100,0', InpTextColor);
    CreateButton(g_panelPrefix + "BtnResetDaily", x + 15 + btnWidth + btnSpacing, row, btnWidth, btnHeight, "🔄 RESET DAY", C'70,70,50', InpTextColor);
+   row += btnHeight + 15;
+   
+   // TORAMA Capital branding at bottom right
+   CreateLabel(g_panelPrefix + "Brand", x + g_panelWidth - 15, row, "TORAMA CAPITAL", C'255,255,255', 10, "Arial Bold");
+   ObjectSetInteger(0, g_panelPrefix + "Brand", OBJPROP_ANCHOR, ANCHOR_RIGHT_UPPER);
    
    ChartRedraw(0);
 }
@@ -331,10 +336,11 @@ void CreateRectangle(string name, int x, int y, int width, int height, color bgC
    ObjectSetInteger(0, name, OBJPROP_BORDER_COLOR, borderColor);
    ObjectSetInteger(0, name, OBJPROP_BORDER_TYPE, BORDER_FLAT);
    ObjectSetInteger(0, name, OBJPROP_CORNER, CORNER_LEFT_UPPER);
-   ObjectSetInteger(0, name, OBJPROP_WIDTH, 1);
+   ObjectSetInteger(0, name, OBJPROP_WIDTH, 2);
    ObjectSetInteger(0, name, OBJPROP_BACK, false);
    ObjectSetInteger(0, name, OBJPROP_SELECTABLE, false);
    ObjectSetInteger(0, name, OBJPROP_HIDDEN, true);
+   ObjectSetInteger(0, name, OBJPROP_ZORDER, 100);
 }
 
 //+------------------------------------------------------------------+
@@ -353,6 +359,8 @@ void CreateLabel(string name, int x, int y, string text, color clr, int fontSize
    ObjectSetInteger(0, name, OBJPROP_ANCHOR, ANCHOR_LEFT_UPPER);
    ObjectSetInteger(0, name, OBJPROP_SELECTABLE, false);
    ObjectSetInteger(0, name, OBJPROP_HIDDEN, true);
+   ObjectSetInteger(0, name, OBJPROP_BACK, false);
+   ObjectSetInteger(0, name, OBJPROP_ZORDER, 101);
 }
 
 //+------------------------------------------------------------------+
@@ -374,6 +382,8 @@ void CreateButton(string name, int x, int y, int width, int height, string text,
    ObjectSetInteger(0, name, OBJPROP_CORNER, CORNER_LEFT_UPPER);
    ObjectSetInteger(0, name, OBJPROP_SELECTABLE, false);
    ObjectSetInteger(0, name, OBJPROP_HIDDEN, true);
+   ObjectSetInteger(0, name, OBJPROP_BACK, false);
+   ObjectSetInteger(0, name, OBJPROP_ZORDER, 102);
 }
 
 //+------------------------------------------------------------------+
@@ -676,13 +686,28 @@ bool OpenBuyOrder(double lots)
 {
    double price = SymbolInfoDouble(_Symbol, SYMBOL_ASK);
    
-   // Normalize lot size
+   // Get broker lot constraints
    double minLot = SymbolInfoDouble(_Symbol, SYMBOL_VOLUME_MIN);
    double maxLot = SymbolInfoDouble(_Symbol, SYMBOL_VOLUME_MAX);
    double lotStep = SymbolInfoDouble(_Symbol, SYMBOL_VOLUME_STEP);
    
-   lots = MathMax(minLot, MathMin(maxLot, lots));
+   // Ensure lot size respects broker minimum
+   if(lots < minLot)
+   {
+      lots = minLot;
+      Print("Lot size adjusted to broker minimum: ", DoubleToString(minLot, 2));
+   }
+   
+   // Clamp to max and normalize to lot step
+   lots = MathMin(maxLot, lots);
    lots = NormalizeDouble(MathRound(lots / lotStep) * lotStep, 2);
+   
+   // Final validation
+   if(lots < minLot)
+   {
+      Print("Error: Calculated lot size ", DoubleToString(lots, 2), " is below broker minimum ", DoubleToString(minLot, 2));
+      return false;
+   }
    
    if(trade.Buy(lots, _Symbol, price, 0, 0, InpComment))
    {
