@@ -45,20 +45,20 @@ input double   GroupTPDollars = 200.0;                // Group TP target ($200 t
 double   IndividualSLDollars = 0.0;           // SL risk per trade ($100 max loss, 0 = disabled)
 
 input group "=== RISK MANAGEMENT ==="
-input double   MaxDrawdownPercent = 20.0;             // Max drawdown % (emergency stop)
-double   DailyTargetPercent = 200.0;            // Daily profit target (% of start balance)
+input double   MaxDrawdownPercent = 50.0;             // Max drawdown % (emergency stop)
+double   DailyTargetPercent = 300.0;            // Daily profit target (% of start balance)
 
 input group "=== SETTINGS ==="
-input int      MagicNumber = 777888;                  // Magic number for order identification
+input int      MagicNumber = 777811;                  // Magic number for order identification
 input int      MaxSpread = 2000;                      // Maximum spread (points)
 bool     ShowPanel = true;                      // Show info panel
 
-input group "=== TIME CONTROLS ==="
-input bool     EnableTimeFilter = false;              // Enable time-based trading filter
-input int      TradingStartHour = 6;                  // Trading start hour (0-23, WAT)
-input int      TradingStartMinute = 0;                // Trading start minute (0-59)
-input int      TradingEndHour = 17;                   // Trading end hour (0-23, WAT)
-input int      TradingEndMinute = 0;                  // Trading end minute (0-59)
+
+bool     EnableTimeFilter = false;              // Enable time-based trading filter
+int      TradingStartHour = 6;                  // Trading start hour (0-23, WAT)
+int      TradingStartMinute = 0;                // Trading start minute (0-59)
+int      TradingEndHour = 17;                   // Trading end hour (0-23, WAT)
+int      TradingEndMinute = 0;                  // Trading end minute (0-59)
 
 //+------------------------------------------------------------------+
 //| GLOBAL VARIABLES                                                  |
