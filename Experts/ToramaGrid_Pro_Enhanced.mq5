@@ -1,11 +1,11 @@
 //+------------------------------------------------------------------+
-//|                                              ToramaGrid_Pro.mq5 |
+//|                                       ToramaGrid_Pro_Enhanced.mq5|
 //|                                          TORAMA CAPITAL          |
 //|                                          https://torama.money    |
 //+------------------------------------------------------------------+
 #property copyright "TORAMA CAPITAL"
 #property link      "https://torama.money"
-#property version   "1.00"
+#property version   "2.00"
 #property strict
 
 #include <Trade\Trade.mqh>
@@ -14,8 +14,13 @@
 input group "=== Grid Settings ==="
 input double InpGapPercent = 0.5;              // Gap Percentage of Price
 input double InpBaseLotSize = 0.01;            // Base Lot Size
+input int InpMaxPositionsPerSide = 10;         // Max Positions Per Side (Sacrosanct)
 
-input group "=== Risk Management ==="
+input group "=== Individual Position Management ==="
+input double InpIndividualTPPercent = 1.0;     // Individual TP % of Balance (0=Disabled)
+input double InpIndividualSLPercent = 1.0;     // Individual SL % of Balance (0=Disabled)
+
+input group "=== Global Risk Management ==="
 input double InpGlobalTPDollar = 100.0;        // Global Take Profit (USD)
 input double InpMaxDrawdownPercent = 50.0;     // Max Drawdown % (default 50%)
 
@@ -29,6 +34,7 @@ int magicNumber;
 double refPrice = 0.0;
 datetime startOfDay;
 double startDayBalance;
+double startingBalance;  // Balance when EA started (for TP/SL calc)
 bool eaPaused = false;
 
 //--- Statistics
@@ -42,7 +48,7 @@ string eaStatus = "Active";
 int panelX = 20;
 int panelY = 30;
 int panelWidth = 280;
-int panelHeight = 410;
+int panelHeight = 450;
 int buttonHeight = 25;
 int buttonWidth = 85;
 int buttonSpacing = 5;
@@ -69,9 +75,25 @@ int OnInit()
       refPrice = SymbolInfoDouble(_Symbol, SYMBOL_BID);
    }
    
+   //--- Initialize starting balance for TP/SL calculations
+   startingBalance = AccountInfoDouble(ACCOUNT_BALANCE);
+   
    //--- Initialize day tracking
    startOfDay = GetStartOfDay();
    startDayBalance = AccountInfoDouble(ACCOUNT_BALANCE);
+   
+   //--- Validate inputs
+   if(InpMaxPositionsPerSide < 1)
+   {
+      Print("ERROR: Max Positions Per Side must be at least 1!");
+      return(INIT_PARAMETERS_INCORRECT);
+   }
+   
+   if(InpIndividualTPPercent < 0 || InpIndividualSLPercent < 0)
+   {
+      Print("ERROR: Individual TP/SL percentages cannot be negative!");
+      return(INIT_PARAMETERS_INCORRECT);
+   }
    
    //--- Create UI Panel
    CreatePanel();
@@ -79,7 +101,13 @@ int OnInit()
    //--- Set timer for panel updates
    EventSetTimer(1);
    
-   Print("ToramaGrid Pro initialized. Magic: ", magicNumber, " RefPrice: ", refPrice);
+   Print("ToramaGrid Pro Enhanced initialized");
+   Print("Magic: ", magicNumber);
+   Print("Reference Price: ", refPrice);
+   Print("Starting Balance: $", startingBalance);
+   Print("Max Positions Per Side: ", InpMaxPositionsPerSide);
+   Print("Individual TP: ", InpIndividualTPPercent > 0 ? "$" + DoubleToString(CalculateIndividualTP(), 2) : "Disabled");
+   Print("Individual SL: ", InpIndividualSLPercent > 0 ? "$" + DoubleToString(CalculateIndividualSL(), 2) : "Disabled");
    
    return(INIT_SUCCEEDED);
 }
@@ -95,7 +123,7 @@ void OnDeinit(const int reason)
    //--- Delete all objects
    ObjectsDeleteAll(0, "ToramaPanel");
    
-   Print("ToramaGrid Pro deinitialized");
+   Print("ToramaGrid Pro Enhanced deinitialized");
 }
 
 //+------------------------------------------------------------------+
@@ -145,7 +173,7 @@ void OnTick()
    }
    lastPositionCount = currentPositionCount;
    
-   //--- Check and manage existing positions
+   //--- Manage existing positions (check individual TP/SL)
    ManagePositions();
    
    //--- Check for new grid entries
@@ -186,6 +214,55 @@ void OnChartEvent(const int id, const long &lparam, const double &dparam, const 
 }
 
 //+------------------------------------------------------------------+
+//| Calculate individual TP in dollars                               |
+//+------------------------------------------------------------------+
+double CalculateIndividualTP()
+{
+   if(InpIndividualTPPercent <= 0)
+      return 0.0;
+   
+   return (startingBalance * InpIndividualTPPercent / 100.0);
+}
+
+//+------------------------------------------------------------------+
+//| Calculate individual SL in dollars                               |
+//+------------------------------------------------------------------+
+double CalculateIndividualSL()
+{
+   if(InpIndividualSLPercent <= 0)
+      return 0.0;
+   
+   return (startingBalance * InpIndividualSLPercent / 100.0);
+}
+
+//+------------------------------------------------------------------+
+//| Count positions by side                                          |
+//+------------------------------------------------------------------+
+void CountBuysSells(int &buys, int &sells)
+{
+   buys = 0;
+   sells = 0;
+   
+   for(int i = PositionsTotal() - 1; i >= 0; i--)
+   {
+      ulong ticket = PositionGetTicket(i);
+      if(ticket > 0)
+      {
+         if(PositionGetString(POSITION_SYMBOL) == _Symbol &&
+            PositionGetInteger(POSITION_MAGIC) == magicNumber)
+         {
+            ENUM_POSITION_TYPE posType = (ENUM_POSITION_TYPE)PositionGetInteger(POSITION_TYPE);
+            
+            if(posType == POSITION_TYPE_BUY)
+               buys++;
+            else if(posType == POSITION_TYPE_SELL)
+               sells++;
+         }
+      }
+   }
+}
+
+//+------------------------------------------------------------------+
 //| Check grid levels and open positions                             |
 //+------------------------------------------------------------------+
 void CheckGridLevels()
@@ -199,12 +276,23 @@ void CheckGridLevels()
       return;
    }
    
+   //--- Get current position counts
+   int buys = 0, sells = 0;
+   CountBuysSells(buys, sells);
+   
    //--- Check if we should open a BUY at current level (above reference)
    if(currentPrice > refPrice)
    {
+      //--- SACROSANCT: Check max positions per side
+      if(buys >= InpMaxPositionsPerSide)
+      {
+         // Max buys reached - do not open more
+         return;
+      }
+      
       // Calculate which grid level we're at (starting from 1)
       int level = (int)MathRound((currentPrice - refPrice) / gap);
-      if(level < 1) level = 1; // Ensure we start from first level, not at reference
+      if(level < 1) level = 1;
       
       double gridLevel = refPrice + (level * gap);
       
@@ -221,9 +309,16 @@ void CheckGridLevels()
    //--- Check if we should open a SELL at current level (below reference)
    if(currentPrice < refPrice)
    {
+      //--- SACROSANCT: Check max positions per side
+      if(sells >= InpMaxPositionsPerSide)
+      {
+         // Max sells reached - do not open more
+         return;
+      }
+      
       // Calculate which grid level we're at (starting from 1)
       int level = (int)MathRound((refPrice - currentPrice) / gap);
-      if(level < 1) level = 1; // Ensure we start from first level, not at reference
+      if(level < 1) level = 1;
       
       double gridLevel = refPrice - (level * gap);
       
@@ -282,18 +377,63 @@ void OpenGridPosition(ENUM_ORDER_TYPE type, double gridLevel)
       return;
    }
    
+   //--- Double-check position limits before opening
+   int buys = 0, sells = 0;
+   CountBuysSells(buys, sells);
+   
+   if(type == ORDER_TYPE_BUY && buys >= InpMaxPositionsPerSide)
+   {
+      Print("Cannot open BUY - Max positions per side reached: ", InpMaxPositionsPerSide);
+      return;
+   }
+   
+   if(type == ORDER_TYPE_SELL && sells >= InpMaxPositionsPerSide)
+   {
+      Print("Cannot open SELL - Max positions per side reached: ", InpMaxPositionsPerSide);
+      return;
+   }
+   
    double price = (type == ORDER_TYPE_BUY) ? SymbolInfoDouble(_Symbol, SYMBOL_ASK) : SymbolInfoDouble(_Symbol, SYMBOL_BID);
    
-   //--- Open position without TP/SL (global TP management)
+   //--- Calculate TP and SL in price levels (0 means disabled)
+   double tpPrice = 0.0;
+   double slPrice = 0.0;
+   
+   double individualTP = CalculateIndividualTP();
+   double individualSL = CalculateIndividualSL();
+   
+   if(individualTP > 0)
+   {
+      // Calculate TP price based on dollar value
+      double tpPoints = CalculatePriceForProfit(lotSize, individualTP, type);
+      if(type == ORDER_TYPE_BUY)
+         tpPrice = price + tpPoints;
+      else
+         tpPrice = price - tpPoints;
+   }
+   
+   if(individualSL > 0)
+   {
+      // Calculate SL price based on dollar value
+      double slPoints = CalculatePriceForProfit(lotSize, individualSL, type);
+      if(type == ORDER_TYPE_BUY)
+         slPrice = price - slPoints;
+      else
+         slPrice = price + slPoints;
+   }
+   
+   //--- Open position with individual TP/SL
    bool result = false;
    if(type == ORDER_TYPE_BUY)
-      result = trade.Buy(lotSize, _Symbol, price, 0, 0, InpComment);
+      result = trade.Buy(lotSize, _Symbol, price, slPrice, tpPrice, InpComment);
    else
-      result = trade.Sell(lotSize, _Symbol, price, 0, 0, InpComment);
+      result = trade.Sell(lotSize, _Symbol, price, slPrice, tpPrice, InpComment);
    
    if(result)
    {
-      Print("Grid position opened: ", EnumToString(type), " at ", gridLevel, " (Lot: ", lotSize, ")");
+      Print("Grid position opened: ", EnumToString(type), " at ", gridLevel);
+      Print("  Lot: ", lotSize, " TP: ", tpPrice > 0 ? DoubleToString(tpPrice, _Digits) : "None", 
+            " SL: ", slPrice > 0 ? DoubleToString(slPrice, _Digits) : "None");
    }
    else
    {
@@ -302,12 +442,72 @@ void OpenGridPosition(ENUM_ORDER_TYPE type, double gridLevel)
 }
 
 //+------------------------------------------------------------------+
-//| Manage existing positions                                        |
+//| Calculate price distance for target profit                       |
+//+------------------------------------------------------------------+
+double CalculatePriceForProfit(double lotSize, double targetProfit, ENUM_ORDER_TYPE type)
+{
+   double tickValue = SymbolInfoDouble(_Symbol, SYMBOL_TRADE_TICK_VALUE);
+   double tickSize = SymbolInfoDouble(_Symbol, SYMBOL_TRADE_TICK_SIZE);
+   double point = SymbolInfoDouble(_Symbol, SYMBOL_POINT);
+   
+   if(tickValue <= 0 || tickSize <= 0)
+   {
+      Print("Error: Invalid tick value or tick size");
+      return 0.0;
+   }
+   
+   // Calculate required price movement
+   double requiredTicks = targetProfit / (tickValue * lotSize);
+   double priceDistance = requiredTicks * tickSize;
+   
+   return priceDistance;
+}
+
+//+------------------------------------------------------------------+
+//| Manage existing positions (check individual TP/SL)               |
 //+------------------------------------------------------------------+
 void ManagePositions()
 {
-   // Position management handled by global TP check
-   // No individual TP/SL management needed
+   //--- Individual TP/SL are set at position open
+   //--- This function monitors and can implement additional logic if needed
+   
+   double individualTP = CalculateIndividualTP();
+   double individualSL = CalculateIndividualSL();
+   
+   if(individualTP <= 0 && individualSL <= 0)
+      return; // No individual management needed
+   
+   //--- Check each position
+   for(int i = PositionsTotal() - 1; i >= 0; i--)
+   {
+      ulong ticket = PositionGetTicket(i);
+      if(ticket > 0)
+      {
+         if(PositionGetString(POSITION_SYMBOL) == _Symbol &&
+            PositionGetInteger(POSITION_MAGIC) == magicNumber)
+         {
+            double profit = PositionGetDouble(POSITION_PROFIT) + PositionGetDouble(POSITION_SWAP);
+            
+            //--- Check individual TP
+            if(individualTP > 0 && profit >= individualTP)
+            {
+               if(trade.PositionClose(ticket))
+               {
+                  Print("Position ", ticket, " closed at individual TP: $", profit);
+               }
+            }
+            
+            //--- Check individual SL
+            if(individualSL > 0 && profit <= -individualSL)
+            {
+               if(trade.PositionClose(ticket))
+               {
+                  Print("Position ", ticket, " closed at individual SL: $", profit);
+               }
+            }
+         }
+      }
+   }
 }
 
 //+------------------------------------------------------------------+
@@ -436,33 +636,6 @@ int CountMyPositions()
 }
 
 //+------------------------------------------------------------------+
-//| Count buys and sells separately                                  |
-//+------------------------------------------------------------------+
-void CountBuysSells(int &buys, int &sells)
-{
-   buys = 0;
-   sells = 0;
-   
-   for(int i = PositionsTotal() - 1; i >= 0; i--)
-   {
-      ulong ticket = PositionGetTicket(i);
-      if(ticket > 0)
-      {
-         if(PositionGetString(POSITION_SYMBOL) == _Symbol &&
-            PositionGetInteger(POSITION_MAGIC) == magicNumber)
-         {
-            ENUM_POSITION_TYPE posType = (ENUM_POSITION_TYPE)PositionGetInteger(POSITION_TYPE);
-            
-            if(posType == POSITION_TYPE_BUY)
-               buys++;
-            else if(posType == POSITION_TYPE_SELL)
-               sells++;
-         }
-      }
-   }
-}
-
-//+------------------------------------------------------------------+
 //| Reset grid after all positions closed                            |
 //+------------------------------------------------------------------+
 void ResetGridAfterClose()
@@ -552,7 +725,7 @@ void CreatePanel()
    ObjectSetInteger(0, "ToramaPanelBG", OBJPROP_ZORDER, 0);
    
    //--- Title
-   CreateLabel("ToramaPanelTitle", "TORAMA GRID PRO", panelX + 10, panelY + 8, 10, clrWhiteSmoke, ANCHOR_LEFT_UPPER);
+   CreateLabel("ToramaPanelTitle", "TORAMA GRID PRO v2", panelX + 10, panelY + 8, 10, clrWhiteSmoke, ANCHOR_LEFT_UPPER);
    
    int yOffset = panelY + 35;
    int col1 = panelX + 10;
@@ -580,6 +753,13 @@ void CreatePanel()
    //--- Global TP Target
    CreateLabel("ToramaPanelLblGlobalTP", "Global TP Target:", col1, yOffset, 8, textColor, ANCHOR_LEFT_UPPER);
    CreateLabel("ToramaPanelValGlobalTP", "", col1 + 105, yOffset, 8, clrLime, ANCHOR_LEFT_UPPER);
+   yOffset += 18;
+   
+   //--- Individual TP/SL
+   CreateLabel("ToramaPanelLblIndivTP", "Indiv TP:", col1, yOffset, 8, textColor, ANCHOR_LEFT_UPPER);
+   CreateLabel("ToramaPanelValIndivTP", "", col1 + 60, yOffset, 8, clrAqua, ANCHOR_LEFT_UPPER);
+   CreateLabel("ToramaPanelLblIndivSL", "SL:", col2, yOffset, 8, textColor, ANCHOR_LEFT_UPPER);
+   CreateLabel("ToramaPanelValIndivSL", "", col2 + 20, yOffset, 8, clrAqua, ANCHOR_LEFT_UPPER);
    yOffset += 22;
    
    //--- Gap Info
@@ -616,9 +796,11 @@ void CreatePanel()
    CreateLabel("ToramaPanelValSells", "", col2 + 35, yOffset, 8, clrRed, ANCHOR_LEFT_UPPER);
    yOffset += 18;
    
-   //--- Net Position
-   CreateLabel("ToramaPanelLblNet", "Net:", col1, yOffset, 8, textColor, ANCHOR_LEFT_UPPER);
-   CreateLabel("ToramaPanelValNet", "", col1 + 30, yOffset, 8, clrWhite, ANCHOR_LEFT_UPPER);
+   //--- Max Per Side & Net Position on same line
+   CreateLabel("ToramaPanelLblMaxPS", "Max/Side:", col1, yOffset, 8, textColor, ANCHOR_LEFT_UPPER);
+   CreateLabel("ToramaPanelValMaxPS", "", col1 + 60, yOffset, 8, clrYellow, ANCHOR_LEFT_UPPER);
+   CreateLabel("ToramaPanelLblNet", "Net:", col2, yOffset, 8, textColor, ANCHOR_LEFT_UPPER);
+   CreateLabel("ToramaPanelValNet", "", col2 + 25, yOffset, 8, clrWhite, ANCHOR_LEFT_UPPER);
    yOffset += 18;
    
    //--- Magic Number
@@ -705,6 +887,12 @@ void UpdatePanel()
    //--- Global TP Target
    ObjectSetString(0, "ToramaPanelValGlobalTP", OBJPROP_TEXT, "$" + DoubleToString(InpGlobalTPDollar, 2));
    
+   //--- Individual TP/SL
+   double indivTP = CalculateIndividualTP();
+   double indivSL = CalculateIndividualSL();
+   ObjectSetString(0, "ToramaPanelValIndivTP", OBJPROP_TEXT, indivTP > 0 ? "$" + DoubleToString(indivTP, 2) : "Off");
+   ObjectSetString(0, "ToramaPanelValIndivSL", OBJPROP_TEXT, indivSL > 0 ? "$" + DoubleToString(indivSL, 2) : "Off");
+   
    //--- Gap in % and USD
    double gap = refPrice * InpGapPercent / 100.0;
    string gapPctText = DoubleToString(InpGapPercent, 2) + "%";
@@ -718,35 +906,29 @@ void UpdatePanel()
    ObjectSetString(0, "ToramaPanelValRefPrice", OBJPROP_TEXT, DoubleToString(refPrice, _Digits));
    ObjectSetString(0, "ToramaPanelValCurrPrice", OBJPROP_TEXT, DoubleToString(currentPrice, _Digits));
    
-   //--- Calculate next grid levels (first level away from reference)
-   double nextBuy = refPrice + gap;  // First buy level above reference
-   double nextSell = refPrice - gap; // First sell level below reference
+   //--- Calculate next grid levels
+   double nextBuy = refPrice + gap;
+   double nextSell = refPrice - gap;
    
-   // If price is above reference, find next buy level
    if(currentPrice > refPrice)
    {
       int level = (int)MathCeil((currentPrice - refPrice) / gap);
       if(level < 1) level = 1;
       nextBuy = refPrice + (level * gap);
-      
-      // If we're past the first sell level, next sell is at reference - gap
       nextSell = refPrice - gap;
    }
-   // If price is below reference, find next sell level
    else if(currentPrice < refPrice)
    {
       int level = (int)MathCeil((refPrice - currentPrice) / gap);
       if(level < 1) level = 1;
       nextSell = refPrice - (level * gap);
-      
-      // If we're past the first buy level, next buy is at reference + gap
       nextBuy = refPrice + gap;
    }
    
    ObjectSetString(0, "ToramaPanelValNextBuy", OBJPROP_TEXT, DoubleToString(nextBuy, _Digits));
    ObjectSetString(0, "ToramaPanelValNextSell", OBJPROP_TEXT, DoubleToString(nextSell, _Digits));
    
-   //--- Statistics - Get buy/sell counts
+   //--- Statistics
    int buys = 0, sells = 0;
    CountBuysSells(buys, sells);
    int net = buys - sells;
@@ -757,14 +939,13 @@ void UpdatePanel()
    ObjectSetString(0, "ToramaPanelValBuys", OBJPROP_TEXT, IntegerToString(buys));
    ObjectSetString(0, "ToramaPanelValSells", OBJPROP_TEXT, IntegerToString(sells));
    
-   // Net position with color indication
+   //--- Max positions per side
+   ObjectSetString(0, "ToramaPanelValMaxPS", OBJPROP_TEXT, IntegerToString(InpMaxPositionsPerSide));
+   
+   //--- Net position with color
    string netText = IntegerToString(net);
    if(net > 0)
-      netText = "+" + netText + " (Long)";
-   else if(net < 0)
-      netText = netText + " (Short)";
-   else
-      netText = netText + " (Flat)";
+      netText = "+" + netText;
    
    ObjectSetString(0, "ToramaPanelValNet", OBJPROP_TEXT, netText);
    color netColor = clrWhite;
