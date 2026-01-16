@@ -1,18 +1,18 @@
 //+------------------------------------------------------------------+
-//|                    TORAMA Aggressive Trader EA v5.7.1            |
+//|                    TORAMA Aggressive Trader EA v5.7.2            |
 //|                                           TORAMA CAPITAL          |
 //|                                      https://www.torama.money     |
 //+------------------------------------------------------------------+
 #property copyright "TORAMA CAPITAL"
 #property link      "https://www.torama.money"
-#property version   "5.71"
+#property version   "5.72"
 #property description "Aggressive Directional Grid Trader with ATR-Based Mode Switching"
 #property description "Trades ONLY in chosen direction as price moves"
 #property description "Replaces closed positions automatically"
 #property description ""
-#property description "V5.7.1: FIXED max drawdown - now SACROSANCT based on starting balance"
+#property description "V5.7.2: Fixed position sync + panel update + debug tools"
 
-#define EA_VERSION "5.7.1"
+#define EA_VERSION "5.7.2"
 #define EA_NAME "TORAMA AGGRESSIVE TRADER"
 
 //+------------------------------------------------------------------+
@@ -352,15 +352,72 @@ int OnInit()
    Print("   Replaces closed positions automatically");
    Print("   Manual mode switch button available on panel");
    Print("═══════════════════════════════════════");
-   Print("🔍 DEBUG: Press 'D' key for status");
-   Print("👁️ PANEL: Press 'H' key to hide/show");
+   Print("⌨️ KEYBOARD SHORTCUTS:");
+   Print("   Press 'D' - Full debug status report");
+   Print("   Press 'S' - Sync positions & show tracking");
+   Print("   Press 'G' - Grid check diagnostics");
+   Print("   Press 'H' - Hide/show panel");
    Print("═══════════════════════════════════════");
    
    // Create panel
    if(ShowPanel) CreatePanel();
    
    // Sync existing positions
+   Print("═══════════════════════════════════════");
+   Print("🔍 SYNCING EXISTING POSITIONS:");
+   Print("   Symbol: ", _Symbol);
+   Print("   Magic Number: ", MagicNumber);
+   Print("   Total Open Positions (All): ", PositionsTotal());
+   
+   // Check all positions
+   int matchingPositions = 0;
+   for(int i = 0; i < PositionsTotal(); i++)
+   {
+      if(PositionGetTicket(i) > 0)
+      {
+         string posSymbol = PositionGetString(POSITION_SYMBOL);
+         long posMagic = PositionGetInteger(POSITION_MAGIC);
+         
+         if(posSymbol == _Symbol)
+         {
+            Print("   Position #", i, ": Ticket=", PositionGetTicket(i), 
+                  " Symbol=", posSymbol, " Magic=", posMagic);
+            
+            if(posMagic == MagicNumber)
+            {
+               matchingPositions++;
+               Print("      ✅ MATCHES (will be tracked)");
+            }
+            else
+            {
+               Print("      ⚠️ Different magic (", posMagic, " vs ", MagicNumber, ")");
+            }
+         }
+      }
+   }
+   
    SyncPositions();
+   
+   Print("   Result: ", ArraySize(positions), " position(s) synced");
+   if(ArraySize(positions) > 0)
+   {
+      Print("   These positions will be managed by the EA");
+      for(int i = 0; i < ArraySize(positions); i++)
+      {
+         if(PositionSelectByTicket(positions[i].ticket))
+         {
+            Print("      #", i+1, ": Ticket ", positions[i].ticket, 
+                  " | Entry: $", DoubleToString(positions[i].entryPrice, specs.digits),
+                  " | Type: ", PositionGetInteger(POSITION_TYPE) == POSITION_TYPE_BUY ? "BUY" : "SELL",
+                  " | P/L: $", DoubleToString(PositionGetDouble(POSITION_PROFIT), 2));
+         }
+      }
+   }
+   else
+   {
+      Print("   No existing positions to manage");
+   }
+   Print("═══════════════════════════════════════");
    
    return(INIT_SUCCEEDED);
 }
@@ -1018,14 +1075,69 @@ void CheckGrid()
    double distanceToNearestLevel = MathAbs(currentPrice - nearestGridLevel);
    
    // Adaptive trigger zone based on symbol price
-   double triggerPercent = 0.05;  // Default 5%
+   double triggerPercent = 0.15;  // Default 15% of gap
    
    if(currentPrice > 10000)
-      triggerPercent = 0.02;  // 2% for high-value symbols
+      triggerPercent = 0.10;  // 10% for high-value symbols (e.g., BTC $90k)
    else if(currentPrice > 1000)
-      triggerPercent = 0.03;  // 3% for medium-value
+      triggerPercent = 0.12;  // 12% for medium-value (e.g., Gold $4600)
    
    double triggerZone = currentGapSize * triggerPercent;
+   
+   // Grid debug logging (every 60 seconds)
+   static datetime lastGridDebug = 0;
+   if(TimeCurrent() - lastGridDebug >= 60)
+   {
+      lastGridDebug = TimeCurrent();
+      Print("╔═══════════════════════════════════════════════════════════╗");
+      Print("║ GRID STATUS                                               ║");
+      Print("╠═══════════════════════════════════════════════════════════╣");
+      Print("   Current Price:        $", DoubleToString(currentPrice, specs.digits));
+      Print("   Reference Price:      $", DoubleToString(referencePrice, specs.digits));
+      Print("   Grid Gap:             $", DoubleToString(currentGapSize, specs.digits), " (", DoubleToString(GridGapPercent, 3), "%)");
+      Print("   Nearest Grid Level:   $", DoubleToString(nearestGridLevel, specs.digits), " (Level #", levelIndex, ")");
+      Print("   Distance to Level:    $", DoubleToString(distanceToNearestLevel, specs.digits));
+      Print("   Trigger Zone:         $", DoubleToString(triggerZone, specs.digits), " (", DoubleToString(triggerPercent * 100, 0), "% of gap)");
+      
+      if(distanceToNearestLevel <= triggerZone)
+      {
+         Print("   Status:               ✅ WITHIN TRIGGER ZONE");
+         
+         // Check for existing positions
+         bool hasPosition = false;
+         double minDistanceBetweenPositions = currentGapSize * 0.8;
+         
+         for(int i = 0; i < ArraySize(positions); i++)
+         {
+            double distToExisting = MathAbs(positions[i].entryPrice - nearestGridLevel);
+            if(distToExisting < minDistanceBetweenPositions)
+            {
+               hasPosition = true;
+               Print("   Existing Position:    Ticket #", positions[i].ticket, " @ $", DoubleToString(positions[i].entryPrice, specs.digits));
+               break;
+            }
+         }
+         
+         if(!hasPosition)
+         {
+            Print("   Level Status:         EMPTY - Ready to trade");
+            Print("   Direction:            ", CurrentDirection == BUYONLY ? "BUY ONLY" : "SELL ONLY");
+         }
+         else
+         {
+            Print("   Level Status:         OCCUPIED - No new trade");
+         }
+      }
+      else
+      {
+         double percentAway = (distanceToNearestLevel / currentGapSize) * 100.0;
+         Print("   Status:               ⏸ Outside trigger zone");
+         Print("   Distance:             ", DoubleToString(percentAway, 1), "% of gap away");
+      }
+      
+      Print("   EA Positions:         ", ArraySize(positions), "/", MaxPositions);
+      Print("╚═══════════════════════════════════════════════════════════╝");
+   }
    
    // Only trigger if close to grid level
    if(distanceToNearestLevel > triggerZone)
@@ -1052,11 +1164,22 @@ void CheckGrid()
       ENUM_ORDER_TYPE orderType = (CurrentDirection == BUYONLY) ? ORDER_TYPE_BUY : ORDER_TYPE_SELL;
       double openPrice = (CurrentDirection == BUYONLY) ? ask : bid;
       
+      Print("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
+      Print("⚡ GRID TRIGGER: Opening ", CurrentDirection == BUYONLY ? "BUY" : "SELL", " position");
+      Print("   Grid Level:    $", DoubleToString(nearestGridLevel, specs.digits));
+      Print("   Current Price: $", DoubleToString(currentPrice, specs.digits));
+      Print("   Distance:      $", DoubleToString(distanceToNearestLevel, specs.digits));
+      
       if(OpenPosition(orderType, openPrice, nearestGridLevel))
       {
          string dirStr = (CurrentDirection == BUYONLY) ? "BUY" : "SELL";
-         Print("⚡ ", dirStr, " opened at grid level: $", DoubleToString(nearestGridLevel, specs.digits));
+         Print("   ✅ ", dirStr, " position opened successfully");
       }
+      else
+      {
+         Print("   ❌ Failed to open position");
+      }
+      Print("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
    }
 }
 
@@ -1066,25 +1189,34 @@ void CheckGrid()
 void SyncPositions()
 {
    ArrayResize(positions, 0);
+   int syncCount = 0;
    
-   for(int i = PositionsTotal() - 1; i >= 0; i--)
+   for(int i = 0; i < PositionsTotal(); i++)
    {
-      ulong ticket = PositionGetTicket(i);
-      if(ticket > 0)
+      if(PositionGetTicket(i) > 0)
       {
          if(PositionGetString(POSITION_SYMBOL) == _Symbol && 
             PositionGetInteger(POSITION_MAGIC) == MagicNumber)
          {
             Position pos;
-            pos.ticket = ticket;
+            pos.ticket = PositionGetTicket(i);
             pos.entryPrice = PositionGetDouble(POSITION_PRICE_OPEN);
             pos.entryTime = (datetime)PositionGetInteger(POSITION_TIME);
             
             int size = ArraySize(positions);
             ArrayResize(positions, size + 1);
             positions[size] = pos;
+            syncCount++;
          }
       }
+   }
+   
+   // Debug logging every 60 seconds
+   static datetime lastSyncDebug = 0;
+   if(TimeCurrent() - lastSyncDebug >= 60 && syncCount > 0)
+   {
+      lastSyncDebug = TimeCurrent();
+      Print("📊 SYNC: Found ", syncCount, " EA positions (Magic: ", MagicNumber, ")");
    }
 }
 
@@ -1094,16 +1226,29 @@ void SyncPositions()
 double CalculateTotalProfit()
 {
    double profit = 0;
+   int validPositions = 0;
    
    for(int i = 0; i < ArraySize(positions); i++)
    {
       if(PositionSelectByTicket(positions[i].ticket))
       {
-         profit += PositionGetDouble(POSITION_PROFIT);
+         double posProfit = PositionGetDouble(POSITION_PROFIT);
+         profit += posProfit;
+         validPositions++;
       }
    }
    
    totalProfit = profit;
+   
+   // Debug output every 60 seconds
+   static datetime lastProfitDebug = 0;
+   if(TimeCurrent() - lastProfitDebug >= 60 && ArraySize(positions) > 0)
+   {
+      lastProfitDebug = TimeCurrent();
+      Print("💰 PROFIT CALC: Positions tracked: ", ArraySize(positions), 
+            " | Valid: ", validPositions, " | Total P/L: $", DoubleToString(profit, 2));
+   }
+   
    return profit;
 }
 
@@ -1558,6 +1703,105 @@ void OnChartEvent(const int id, const long &lparam, const double &dparam, const 
       else if(lparam == 68 || lparam == 100)
       {
          PrintDebugStatus();
+      }
+      // S key - sync positions and show status
+      else if(lparam == 83 || lparam == 115)
+      {
+         Print("═══════════════════════════════════════");
+         Print("🔄 MANUAL SYNC TRIGGERED");
+         Print("   Total positions in account: ", PositionsTotal());
+         
+         // Show all positions
+         for(int i = 0; i < PositionsTotal(); i++)
+         {
+            if(PositionGetTicket(i) > 0)
+            {
+               string posSymbol = PositionGetString(POSITION_SYMBOL);
+               long posMagic = PositionGetInteger(POSITION_MAGIC);
+               ulong ticket = PositionGetTicket(i);
+               double profit = PositionGetDouble(POSITION_PROFIT);
+               
+               Print("   #", i+1, ": Ticket=", ticket, 
+                     " Symbol=", posSymbol, 
+                     " Magic=", posMagic,
+                     " P/L=$", DoubleToString(profit, 2));
+            }
+         }
+         
+         SyncPositions();
+         CalculateTotalProfit();
+         
+         Print("   EA tracking ", ArraySize(positions), " position(s) with magic ", MagicNumber);
+         Print("   Total P/L: $", DoubleToString(totalProfit, 2));
+         Print("═══════════════════════════════════════");
+         
+         UpdatePanel();
+      }
+      // G key - force grid check with detailed diagnostics
+      else if(lparam == 71 || lparam == 103)
+      {
+         Print("═══════════════════════════════════════");
+         Print("🎯 MANUAL GRID CHECK TRIGGERED");
+         
+         double ask = SymbolInfoDouble(_Symbol, SYMBOL_ASK);
+         double bid = SymbolInfoDouble(_Symbol, SYMBOL_BID);
+         double currentPrice = (ask + bid) / 2.0;
+         
+         double distanceFromReference = currentPrice - referencePrice;
+         int levelIndex = (int)MathRound(distanceFromReference / currentGapSize);
+         double nearestGridLevel = referencePrice + (levelIndex * currentGapSize);
+         double distanceToNearestLevel = MathAbs(currentPrice - nearestGridLevel);
+         
+         double triggerPercent = 0.15;
+         if(currentPrice > 10000) triggerPercent = 0.10;
+         else if(currentPrice > 1000) triggerPercent = 0.12;
+         
+         double triggerZone = currentGapSize * triggerPercent;
+         
+         Print("   Current Price:      $", DoubleToString(currentPrice, specs.digits));
+         Print("   Reference:          $", DoubleToString(referencePrice, specs.digits));
+         Print("   Grid Gap:           $", DoubleToString(currentGapSize, specs.digits));
+         Print("   Nearest Level:      $", DoubleToString(nearestGridLevel, specs.digits), " (#", levelIndex, ")");
+         Print("   Distance to Level:  $", DoubleToString(distanceToNearestLevel, specs.digits));
+         Print("   Trigger Zone:       $", DoubleToString(triggerZone, specs.digits));
+         Print("   Within Zone?        ", distanceToNearestLevel <= triggerZone ? "✅ YES" : "❌ NO");
+         Print("   Direction:          ", CurrentDirection == BUYONLY ? "BUY ONLY" : "SELL ONLY");
+         Print("   EA Positions:       ", ArraySize(positions), "/", MaxPositions);
+         
+         if(distanceToNearestLevel <= triggerZone)
+         {
+            // Check for existing position
+            bool hasPosition = false;
+            double minDist = currentGapSize * 0.8;
+            
+            for(int i = 0; i < ArraySize(positions); i++)
+            {
+               double dist = MathAbs(positions[i].entryPrice - nearestGridLevel);
+               if(dist < minDist)
+               {
+                  hasPosition = true;
+                  Print("   Level Status:       OCCUPIED by ticket #", positions[i].ticket);
+                  break;
+               }
+            }
+            
+            if(!hasPosition)
+            {
+               Print("   Level Status:       EMPTY ✅");
+               Print("   → Would open ", CurrentDirection == BUYONLY ? "BUY" : "SELL", " position here");
+            }
+         }
+         else
+         {
+            double percentAway = (distanceToNearestLevel / currentGapSize) * 100.0;
+            Print("   Status:             Price is ", DoubleToString(percentAway, 1), "% of gap away from level");
+            Print("   → Must move $", DoubleToString(distanceToNearestLevel - triggerZone, specs.digits), " closer to trigger");
+         }
+         
+         Print("═══════════════════════════════════════");
+         
+         // Force a grid check
+         CheckGrid();
       }
    }
    
