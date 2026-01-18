@@ -1,18 +1,18 @@
 //+------------------------------------------------------------------+
-//|                    TORAMA Aggressive Trader EA v5.6              |
+//|                    TORAMA Aggressive Trader EA v6.0.0            |
 //|                                           TORAMA CAPITAL          |
 //|                                      https://www.torama.money     |
 //+------------------------------------------------------------------+
 #property copyright "TORAMA CAPITAL"
 #property link      "https://www.torama.money"
-#property version   "5.6"
-#property description "Aggressive Directional Grid Trader with ATR-Based Mode Switching"
-#property description "Trades ONLY in chosen direction as price moves"
+#property version   "6.01"
+#property description "Aggressive Directional Grid Trader"
+#property description "Trades in chosen direction (BUY, SELL, or BOTH) at every grid level"
 #property description "Replaces closed positions automatically"
 #property description ""
-#property description "V5.6: Added time-based trading controls (start/end hours)"
+#property description "V6.0.1: Added market trend display on panel (UP/DOWN/RANGING)"
 
-#define EA_VERSION "5.6"
+#define EA_VERSION "6.0.1"
 #define EA_NAME "TORAMA AGGRESSIVE TRADER"
 
 //+------------------------------------------------------------------+
@@ -22,15 +22,12 @@
 enum ENUM_TRADE_DIRECTION
 {
    BUYONLY,    // BUY ONLY - Buys up and down the grid
-   SELLONLY    // SELL ONLY - Sells up and down the grid
+   SELLONLY,   // SELL ONLY - Sells up and down the grid
+   BOTH        // BOTH - Places BUY and SELL at every grid level
 };
 
-input group "=== DIRECTION & ATR MODE SWITCHING ==="
-input ENUM_TRADE_DIRECTION StartDirection = BUYONLY;  // Starting Direction
- bool     EnableATRSwitch = false;                // Enable ATR-based mode switching
- int      ATRPeriod = 14;                        // ATR Period for mode switching
- double   ATRThresholdPercent = 70.0;            // ATR Threshold % (70 = 0.7 × ATR)
- bool     CloseOnModeSwitch = false;             // Close positions on mode switch (false = let them run)
+input group "=== DIRECTION ==="
+input ENUM_TRADE_DIRECTION StartDirection = BUYONLY;  // Trading Direction (BUY, SELL, or BOTH)
 
 input group "=== GRID SETTINGS ==="
 input double   GridGapPercent = 0.05;                 // Grid gap % (0.01 = tight, 0.3 = wide)
@@ -40,25 +37,26 @@ input double   LotSize = 0.1;                         // Lot size per position
 input group "=== TAKE PROFIT ==="
 input double   IndividualTPDollars = 50.0;            // Individual TP target ($50 per position)
 input double   GroupTPDollars = 200.0;                // Group TP target ($200 total profit closes all)
-
-
-double   IndividualSLDollars = 0.0;           // SL risk per trade ($100 max loss, 0 = disabled)
+input double   IndividualSLDollars = 0.0;             // SL risk per trade ($100 max loss, 0 = disabled)
 
 input group "=== RISK MANAGEMENT ==="
-input double   MaxDrawdownPercent = 20.0;             // Max drawdown % (emergency stop)
-double   DailyTargetPercent = 200.0;            // Daily profit target (% of start balance)
+input double   MaxDrawdownPercent = 50.0;             // Max drawdown % (SACROSANCT - based on starting balance)
+input double   DailyTargetPercent = 300.0;            // Daily profit target (% of start balance)
 
 input group "=== SETTINGS ==="
-input int      MagicNumber = 777888;                  // Magic number for order identification
+input int      MagicNumber = 777811;                  // Magic number for order identification
 input int      MaxSpread = 2000;                      // Maximum spread (points)
-bool     ShowPanel = true;                      // Show info panel
-
-input group "=== TIME CONTROLS ==="
+input bool     ShowPanel = true;                      // Show info panel
 input bool     EnableTimeFilter = false;              // Enable time-based trading filter
 input int      TradingStartHour = 6;                  // Trading start hour (0-23, WAT)
 input int      TradingStartMinute = 0;                // Trading start minute (0-59)
 input int      TradingEndHour = 17;                   // Trading end hour (0-23, WAT)
 input int      TradingEndMinute = 0;                  // Trading end minute (0-59)
+
+input group "=== TREND DISPLAY ==="
+input ENUM_TIMEFRAMES TrendTimeframe = PERIOD_H1;     // Timeframe for trend detection
+input int      TrendMAPeriod = 20;                    // MA period for trend
+input double   TrendThreshold = 0.1;                  // Trend threshold % (below = ranging)
 
 //+------------------------------------------------------------------+
 //| GLOBAL VARIABLES                                                  |
@@ -69,29 +67,23 @@ struct Position
    ulong    ticket;
    double   entryPrice;
    datetime entryTime;
+   ENUM_POSITION_TYPE posType;  // Track if BUY or SELL
 };
 
 Position positions[];
 
-// Current trading mode (can be switched dynamically)
+// Current trading mode (can be switched manually via MODE button)
 ENUM_TRADE_DIRECTION CurrentDirection;
-
-// ATR Mode Switching
-int atrHandle = INVALID_HANDLE;            // ATR indicator handle (FIX #1)
-double dayOpenPrice = 0;                   // Day's opening price
-double currentATR = 0;                     // Current ATR value
-datetime lastDayOpenUpdate = 0;            // Last time we updated day open
-datetime lastModeSwitchTime = 0;           // Last mode switch time (FIX #2)
-int modeSwitchCooldownBars = 100;          // Cooldown: 100 bars (~1.5h on M1)
 
 // Grid tracking
 double referencePrice = 0;
 double currentGapSize = 0;
 
-// Risk management
+// Risk management - SACROSANCT VALUES
 bool emergencyStop = false;
 string emergencyReason = "";
-double peakEquity = 0;
+double startingBalance = 0;                // SACRED: Set once at init, NEVER changes
+double maxDrawdownStopLevel = 0;           // SACRED: Absolute equity level where EA stops
 double totalProfit = 0;
 
 // Daily profit tracking
@@ -110,6 +102,10 @@ int modeSwitchCount = 0;
 // Panel
 string panelPrefix = "TORAMA_AGG_";
 bool panelVisible = true;
+
+// Trend detection
+int trendMAHandle = INVALID_HANDLE;
+string currentTrend = "---";
 
 // Symbol specifications (cached)
 struct SymbolSpecs
@@ -159,60 +155,18 @@ int OnInit()
    validatedLotSize = ValidateLotSize(LotSize);
    
    Print("📊 CONFIGURATION:");
-   Print("   Starting Direction: ", StartDirection == BUYONLY ? "BUY ONLY" : "SELL ONLY");
+   string startDirText = "";
+   if(StartDirection == BOTH) startDirText = "BOTH (BUY + SELL at every level)";
+   else if(StartDirection == BUYONLY) startDirText = "BUY ONLY";
+   else startDirText = "SELL ONLY";
+   
+   Print("   Starting Direction: ", startDirText);
    Print("   Symbol: ", _Symbol);
    Print("   Lot Size: ", DoubleToString(validatedLotSize, 3));
    Print("   Max Positions: ", MaxPositions);
    
    // Set current direction to starting direction
    CurrentDirection = StartDirection;
-   
-   // Initialize ATR mode switching
-   if(EnableATRSwitch)
-   {
-      Print("═══════════════════════════════════════");
-      Print("📈 ATR MODE SWITCHING: ENABLED");
-      Print("   ATR Period: ", ATRPeriod);
-      Print("   ATR Threshold: ", DoubleToString(ATRThresholdPercent, 1), "% of ATR");
-      Print("   Close on Switch: ", CloseOnModeSwitch ? "YES (close all positions)" : "NO (let positions run)");
-      Print("   Logic: Price moves above open by 0.7×ATR → Switch to SELL");
-      Print("          Price moves below open by 0.7×ATR → Switch to BUY");
-      
-      // FIX #1: Create ATR indicator handle
-      atrHandle = iATR(_Symbol, PERIOD_D1, ATRPeriod);
-      if(atrHandle == INVALID_HANDLE)
-      {
-         Print("❌ FAILED: Could not create ATR indicator handle");
-         return(INIT_FAILED);
-      }
-      
-      // FIX #4: Initialize day's open price immediately
-      UpdateDayOpenPrice();
-      
-      // Wait for ATR indicator to calculate
-      if(!WaitForIndicator(atrHandle))
-      {
-         Print("⚠️ WARNING: ATR indicator not ready, mode switching may be delayed");
-      }
-      else
-      {
-         // Get initial ATR value
-         double atr_buffer[];
-         ArraySetAsSeries(atr_buffer, true);
-         if(CopyBuffer(atrHandle, 0, 0, 1, atr_buffer) > 0)
-         {
-            currentATR = atr_buffer[0];
-            Print("   Current Daily ATR: $", DoubleToString(currentATR, 2));
-            Print("   Switch threshold: $", DoubleToString(currentATR * ATRThresholdPercent / 100.0, 2));
-         }
-      }
-   }
-   else
-   {
-      Print("═══════════════════════════════════════");
-      Print("📈 ATR MODE SWITCHING: DISABLED");
-      Print("   Direction will remain: ", CurrentDirection == BUYONLY ? "BUY ONLY" : "SELL ONLY");
-   }
    
    // Initialize time-based trading filter
    if(EnableTimeFilter)
@@ -247,12 +201,38 @@ int OnInit()
    Print("📍 STARTING REFERENCE: $", DoubleToString(referencePrice, specs.digits));
    Print("📏 Grid Gap: $", DoubleToString(currentGapSize, specs.digits), " (", DoubleToString(GridGapPercent, 3), "%)");
    
-   // Initialize peak equity
-   peakEquity = AccountInfoDouble(ACCOUNT_EQUITY);
+   // ═══════════════════════════════════════════════════════════════
+   // SACROSANCT MAX DRAWDOWN INITIALIZATION
+   // ═══════════════════════════════════════════════════════════════
+   startingBalance = AccountInfoDouble(ACCOUNT_BALANCE);
+   maxDrawdownStopLevel = startingBalance * (1.0 - MaxDrawdownPercent / 100.0);
+   
+   Print("═══════════════════════════════════════");
+   Print("🛡️ SACROSANCT MAX DRAWDOWN:");
+   Print("   Starting Balance: $", DoubleToString(startingBalance, 2), " (LOCKED)");
+   Print("   Max Drawdown: ", DoubleToString(MaxDrawdownPercent, 1), "% (LOCKED)");
+   Print("   Emergency Stop @ Equity: $", DoubleToString(maxDrawdownStopLevel, 2), " (LOCKED)");
+   Print("   Current Equity: $", DoubleToString(AccountInfoDouble(ACCOUNT_EQUITY), 2));
+   
+   double currentEquity = AccountInfoDouble(ACCOUNT_EQUITY);
+   if(currentEquity <= maxDrawdownStopLevel)
+   {
+      Print("   ⚠️ CRITICAL: Current equity already at/below stop level!");
+      Print("   EA will trigger emergency stop immediately");
+   }
+   else
+   {
+      double safetyBuffer = currentEquity - maxDrawdownStopLevel;
+      double bufferPercent = (safetyBuffer / startingBalance) * 100.0;
+      Print("   Safety Buffer: $", DoubleToString(safetyBuffer, 2), " (", DoubleToString(bufferPercent, 1), "%)");
+   }
+   Print("   ⚠️ These values are PERMANENT and will NOT change");
+   Print("   ⚠️ Once equity hits $", DoubleToString(maxDrawdownStopLevel, 2), " → ALL positions closed + EA paused");
    
    // Daily target setup
    dailyStartBalance = AccountInfoDouble(ACCOUNT_BALANCE);
    dailyTarget = dailyStartBalance * DailyTargetPercent / 100.0;
+   Print("═══════════════════════════════════════");
    Print("🎯 Daily Target: $", DoubleToString(dailyTarget, 2), " (", DoubleToString(DailyTargetPercent, 0), "%)");
    
    // Risk analysis
@@ -292,50 +272,90 @@ int OnInit()
    Print("⚡ AGGRESSIVE STRATEGY:");
    Print("   Opens positions as price moves through grid");
    Print("   Replaces closed positions automatically");
-   Print("   Manual mode switch button available on panel");
+   Print("   BUY ONLY: Buys at every grid level");
+   Print("   SELL ONLY: Sells at every grid level");
+   Print("   BOTH: Places BUY + SELL at every grid level");
+   Print("   Manual mode switch: Press MODE button (cycles through)");
    Print("═══════════════════════════════════════");
-   Print("🔍 DEBUG: Press 'D' key for status");
-   Print("👁️ PANEL: Press 'H' key to hide/show");
+   Print("⌨️ KEYBOARD SHORTCUTS:");
+   Print("   Press 'D' - Full debug status report");
+   Print("   Press 'S' - Sync positions & show tracking");
+   Print("   Press 'G' - Grid check diagnostics");
+   Print("   Press 'H' - Hide/show panel");
    Print("═══════════════════════════════════════");
    
    // Create panel
    if(ShowPanel) CreatePanel();
    
    // Sync existing positions
+   Print("═══════════════════════════════════════");
+   Print("🔍 SYNCING EXISTING POSITIONS:");
+   Print("   Symbol: ", _Symbol);
+   Print("   Magic Number: ", MagicNumber);
+   Print("   Total Open Positions (All): ", PositionsTotal());
+   
+   // Check all positions
+   int matchingPositions = 0;
+   for(int i = 0; i < PositionsTotal(); i++)
+   {
+      if(PositionGetTicket(i) > 0)
+      {
+         string posSymbol = PositionGetString(POSITION_SYMBOL);
+         long posMagic = PositionGetInteger(POSITION_MAGIC);
+         
+         if(posSymbol == _Symbol)
+         {
+            Print("   Position #", i, ": Ticket=", PositionGetTicket(i), 
+                  " Symbol=", posSymbol, " Magic=", posMagic);
+            
+            if(posMagic == MagicNumber)
+            {
+               matchingPositions++;
+               Print("      ✅ MATCHES (will be tracked)");
+            }
+            else
+            {
+               Print("      ⚠️ Different magic (", posMagic, " vs ", MagicNumber, ")");
+            }
+         }
+      }
+   }
+   
    SyncPositions();
    
-   return(INIT_SUCCEEDED);
-}
-
-//+------------------------------------------------------------------+
-//| UPDATE DAY OPEN PRICE                                            |
-//+------------------------------------------------------------------+
-void UpdateDayOpenPrice()
-{
-   MqlDateTime time;
-   TimeToStruct(TimeCurrent(), time);
-   
-   // Create datetime for today's open (00:00:00)
-   time.hour = 0;
-   time.min = 0;
-   time.sec = 0;
-   datetime todayOpen = StructToTime(time);
-   
-   // Get the open price of the current day
-   MqlRates rates[];
-   int copied = CopyRates(_Symbol, PERIOD_D1, 0, 1, rates);
-   
-   if(copied > 0)
+   Print("   Result: ", ArraySize(positions), " position(s) synced");
+   if(ArraySize(positions) > 0)
    {
-      dayOpenPrice = rates[0].open;
-      lastDayOpenUpdate = TimeCurrent();
-      
-      Print("📅 Day Open Price Updated: $", DoubleToString(dayOpenPrice, specs.digits));
+      Print("   These positions will be managed by the EA");
+      for(int i = 0; i < ArraySize(positions); i++)
+      {
+         if(PositionSelectByTicket(positions[i].ticket))
+         {
+            Print("      #", i+1, ": Ticket ", positions[i].ticket, 
+                  " | Entry: $", DoubleToString(positions[i].entryPrice, specs.digits),
+                  " | Type: ", PositionGetInteger(POSITION_TYPE) == POSITION_TYPE_BUY ? "BUY" : "SELL",
+                  " | P/L: $", DoubleToString(PositionGetDouble(POSITION_PROFIT), 2));
+         }
+      }
    }
    else
    {
-      Print("⚠️ WARNING: Could not retrieve day's open price");
+      Print("   No existing positions to manage");
    }
+   Print("═══════════════════════════════════════");
+   
+   // Initialize trend indicator
+   trendMAHandle = iMA(_Symbol, TrendTimeframe, TrendMAPeriod, 0, MODE_SMA, PRICE_CLOSE);
+   if(trendMAHandle == INVALID_HANDLE)
+   {
+      Print("⚠️ WARNING: Could not create MA indicator for trend display");
+   }
+   else
+   {
+      Print("📊 Trend Detection: MA(", TrendMAPeriod, ") on ", EnumToString(TrendTimeframe));
+   }
+   
+   return(INIT_SUCCEEDED);
 }
 
 //+------------------------------------------------------------------+
@@ -348,14 +368,15 @@ bool IsWithinTradingHours()
    MqlDateTime currentTime;
    TimeToStruct(TimeCurrent(), currentTime);
    
+   // Convert current time to minutes since midnight
    int currentMinutes = currentTime.hour * 60 + currentTime.min;
    int startMinutes = TradingStartHour * 60 + TradingStartMinute;
    int endMinutes = TradingEndHour * 60 + TradingEndMinute;
    
-   // Handle overnight sessions (e.g., start = 22:00, end = 06:00)
-   if(startMinutes > endMinutes)
+   // Handle cases where trading hours span midnight
+   if(endMinutes <= startMinutes)
    {
-      // Trading allowed if current time is after start OR before end
+      // Trading window crosses midnight (e.g., start = 22:00, end = 06:00)
       return (currentMinutes >= startMinutes || currentMinutes < endMinutes);
    }
    else
@@ -366,87 +387,103 @@ bool IsWithinTradingHours()
 }
 
 //+------------------------------------------------------------------+
-//| CHECK ATR MODE SWITCHING                                         |
+//| DETECT MARKET TREND                                               |
 //+------------------------------------------------------------------+
-void CheckATRModeSwitch()
+string DetectTrend()
 {
-   if(!EnableATRSwitch) return;
+   if(trendMAHandle == INVALID_HANDLE) return "---";
    
-   // FIX #2: Check cooldown period to prevent rapid switching
-   if(TimeCurrent() - lastModeSwitchTime < modeSwitchCooldownBars * PeriodSeconds())
-      return;  // Still in cooldown
+   double maValues[];
+   ArraySetAsSeries(maValues, true);
    
-   // FIX #1: Update ATR value using indicator handle
-   if(atrHandle != INVALID_HANDLE)
+   // Get last 3 MA values
+   if(CopyBuffer(trendMAHandle, 0, 0, 3, maValues) < 3) return "---";
+   
+   // Get current price
+   double currentPrice = SymbolInfoDouble(_Symbol, SYMBOL_BID);
+   if(currentPrice <= 0) return "---";
+   
+   // Calculate price distance from MA as percentage
+   double maDistance = ((currentPrice - maValues[0]) / maValues[0]) * 100.0;
+   
+   // Check MA slope (recent vs older)
+   double maSlope = ((maValues[0] - maValues[2]) / maValues[2]) * 100.0;
+   
+   // Determine trend
+   if(MathAbs(maDistance) < TrendThreshold && MathAbs(maSlope) < TrendThreshold * 0.5)
    {
-      double atr_buffer[];
-      ArraySetAsSeries(atr_buffer, true);
-      
-      if(CopyBuffer(atrHandle, 0, 0, 1, atr_buffer) > 0)
-      {
-         currentATR = atr_buffer[0];
-      }
-      else
-      {
-         static datetime lastATRWarning = 0;
-         if(TimeCurrent() - lastATRWarning > 3600) // Warn once per hour
-         {
-            Print("⚠️ WARNING: Could not read ATR buffer for mode switching");
-            lastATRWarning = TimeCurrent();
-         }
-         return;
-      }
+      return "RANGING";
+   }
+   else if(currentPrice > maValues[0] && maSlope > 0)
+   {
+      return "UP ▲";
+   }
+   else if(currentPrice < maValues[0] && maSlope < 0)
+   {
+      return "DOWN ▼";
+   }
+   else if(currentPrice > maValues[0])
+   {
+      return "UP ▲";
    }
    else
    {
-      return;  // No valid ATR handle
-   }
-   
-   if(currentATR <= 0) return;
-   
-   if(dayOpenPrice <= 0) return;
-   
-   // Get current price
-   double ask = SymbolInfoDouble(_Symbol, SYMBOL_ASK);
-   double bid = SymbolInfoDouble(_Symbol, SYMBOL_BID);
-   double currentPrice = (ask + bid) / 2.0;
-   
-   // Calculate distance from day's open
-   double distanceFromOpen = currentPrice - dayOpenPrice;
-   double atrThreshold = currentATR * (ATRThresholdPercent / 100.0);
-   
-   // Check for mode switch conditions
-   bool shouldSwitch = false;
-   ENUM_TRADE_DIRECTION newDirection = CurrentDirection;
-   
-   // Price moved ABOVE open by 70% ATR → Switch to SELL (if not already SELL)
-   if(distanceFromOpen >= atrThreshold && CurrentDirection == BUYONLY)
-   {
-      newDirection = SELLONLY;
-      shouldSwitch = true;
-   }
-   // Price moved BELOW open by 70% ATR → Switch to BUY (if not already BUY)
-   else if(distanceFromOpen <= -atrThreshold && CurrentDirection == SELLONLY)
-   {
-      newDirection = BUYONLY;
-      shouldSwitch = true;
-   }
-   
-   // Execute mode switch
-   if(shouldSwitch)
-   {
-      SwitchTradingMode(newDirection, "ATR Threshold");
+      return "DOWN ▼";
    }
 }
 
 //+------------------------------------------------------------------+
-//| SWITCH TRADING MODE                                              |
+//| CHECK SACROSANCT MAX DRAWDOWN                                    |
 //+------------------------------------------------------------------+
-void SwitchTradingMode(ENUM_TRADE_DIRECTION newDirection, string reason)
+void CheckMaxDrawdown()
+{
+   double currentEquity = AccountInfoDouble(ACCOUNT_EQUITY);
+   
+   // Check against the SACROSANCT stop level (locked at OnInit)
+   if(currentEquity <= maxDrawdownStopLevel)
+   {
+      emergencyStop = true;
+      emergencyReason = StringFormat("Equity ($%.2f) hit SACROSANCT max DD stop ($%.2f)", 
+                                     currentEquity, maxDrawdownStopLevel);
+      
+      Print("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
+      Print("🚨 EMERGENCY STOP - MAX DRAWDOWN REACHED!");
+      Print("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
+      Print("   Current Equity: $", DoubleToString(currentEquity, 2));
+      Print("   SACROSANCT Stop: $", DoubleToString(maxDrawdownStopLevel, 2));
+      Print("   Starting Balance: $", DoubleToString(startingBalance, 2));
+      Print("   Max DD %: ", DoubleToString(MaxDrawdownPercent, 1), "%");
+      Print("   ");
+      Print("   ⚠️ THIS STOP LEVEL IS PERMANENT");
+      Print("   ⚠️ It was locked at EA initialization");
+      Print("   ⚠️ It will NEVER change, even with profits");
+      Print("   ");
+      Print("   🔴 CLOSING ALL POSITIONS...");
+      
+      CloseAllPositions();
+      
+      Print("   ✅ All positions closed");
+      Print("   ⏸️ EA will remain paused");
+      Print("   ℹ️ Press RESUME to manually restart");
+      Print("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
+      
+      UpdatePanel();
+   }
+}
+
+//+------------------------------------------------------------------+
+//| SWITCH TRADING MODE (MANUAL ONLY)                                |
+//+------------------------------------------------------------------+
+void SwitchTradingMode(ENUM_TRADE_DIRECTION newDirection)
 {
    if(newDirection == CurrentDirection)
    {
-      Print("ℹ️ Mode is already ", newDirection == BUYONLY ? "BUY ONLY" : "SELL ONLY");
+      string modeName = "";
+      if(CurrentDirection == BOTH) modeName = "BOTH";
+      else if(CurrentDirection == BUYONLY) modeName = "BUY ONLY";
+      else modeName = "SELL ONLY";
+      
+      Print("ℹ️ Mode is already ", modeName);
       return;
    }
    
@@ -454,73 +491,38 @@ void SwitchTradingMode(ENUM_TRADE_DIRECTION newDirection, string reason)
    CurrentDirection = newDirection;
    modeSwitchCount++;
    
-   // FIX #2: Set cooldown timestamp
-   lastModeSwitchTime = TimeCurrent();
+   string oldDirectionText = "";
+   string newDirectionText = "";
+   
+   if(oldDirection == BOTH) oldDirectionText = "BOTH";
+   else if(oldDirection == BUYONLY) oldDirectionText = "BUY ONLY";
+   else oldDirectionText = "SELL ONLY";
+   
+   if(newDirection == BOTH) newDirectionText = "BOTH";
+   else if(newDirection == BUYONLY) newDirectionText = "BUY ONLY";
+   else newDirectionText = "SELL ONLY";
    
    Print("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
-   Print("🔄 MODE SWITCH #", modeSwitchCount);
-   Print("   Reason: ", reason);
-   Print("   From: ", oldDirection == BUYONLY ? "BUY ONLY" : "SELL ONLY");
-   Print("   To: ", CurrentDirection == BUYONLY ? "BUY ONLY" : "SELL ONLY");
+   Print("🔄 MODE SWITCH #", modeSwitchCount, " (Manual)");
+   Print("   From: ", oldDirectionText);
+   Print("   To: ", newDirectionText);
    
-   if(EnableATRSwitch)
-   {
-      double currentPrice = (SymbolInfoDouble(_Symbol, SYMBOL_ASK) + SymbolInfoDouble(_Symbol, SYMBOL_BID)) / 2.0;
-      double distanceFromOpen = currentPrice - dayOpenPrice;
-      Print("   Price vs Day Open: ", distanceFromOpen >= 0 ? "+" : "", DoubleToString(distanceFromOpen, 2));
-      Print("   ATR Threshold: ±", DoubleToString(currentATR * ATRThresholdPercent / 100.0, 2));
-   }
-   
-   // Handle existing positions based on CloseOnModeSwitch setting
+   // Log existing positions
    if(ArraySize(positions) > 0)
    {
-      if(CloseOnModeSwitch)
-      {
-         Print("   CloseOnModeSwitch = TRUE: Closing all ", ArraySize(positions), " existing positions...");
-         CloseAllPositions();
-      }
-      else
-      {
-         Print("   CloseOnModeSwitch = FALSE: Keeping ", ArraySize(positions), " existing positions open");
-         Print("   → Existing ", oldDirection == BUYONLY ? "BUY" : "SELL", 
-               " positions will run to their TP/SL");
-         Print("   → New positions will be ", CurrentDirection == BUYONLY ? "BUY" : "SELL", " only");
-         
-         // Log existing positions for tracking
-         Print("   Open Positions:");
-         for(int i = 0; i < ArraySize(positions); i++)
-         {
-            if(PositionSelectByTicket(positions[i].ticket))
-            {
-               double profit = PositionGetDouble(POSITION_PROFIT);
-               Print("      #", positions[i].ticket, " ", 
-                     oldDirection == BUYONLY ? "BUY" : "SELL",
-                     " @ $", DoubleToString(positions[i].entryPrice, specs.digits),
-                     " | P/L: $", DoubleToString(profit, 2));
-            }
-         }
-      }
+      Print("   Existing ", ArraySize(positions), " position(s) will continue running");
+      Print("   New positions will be ", newDirectionText);
    }
    else
    {
-      Print("   No existing positions to manage");
+      Print("   No existing positions");
    }
    
-   // Reset reference price to current price (for new positions only)
-   double ask = SymbolInfoDouble(_Symbol, SYMBOL_ASK);
-   double bid = SymbolInfoDouble(_Symbol, SYMBOL_BID);
-   referencePrice = (ask + bid) / 2.0;
-   
-   // FIX #3: Update grid gap size for new reference price
-   currentGapSize = referencePrice * GridGapPercent / 100.0;
-   
-   Print("   New Reference Price: $", DoubleToString(referencePrice, specs.digits));
-   Print("   New Grid Gap: $", DoubleToString(currentGapSize, specs.digits));
-   Print("   Cooldown: ", modeSwitchCooldownBars, " bars");
    Print("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
    
    UpdatePanel();
 }
+
 
 //+------------------------------------------------------------------+
 //| INITIALIZE SYMBOL SPECIFICATIONS                                  |
@@ -703,7 +705,7 @@ void PrintRiskAnalysis()
    {
       Print("   Individual SL: DISABLED");
       Print("   ⚠️ WARNING: Trading without stop losses!");
-      Print("   Protection: Emergency stop at ", DoubleToString(MaxDrawdownPercent, 1), "%");
+      Print("   Protection: Emergency stop at ", DoubleToString(MaxDrawdownPercent, 1), "% of starting balance");
    }
 }
 
@@ -712,10 +714,11 @@ void PrintRiskAnalysis()
 //+------------------------------------------------------------------+
 void OnDeinit(const int reason)
 {
-   // Release ATR indicator handle
-   if(atrHandle != INVALID_HANDLE)
+   // Release trend indicator handle
+   if(trendMAHandle != INVALID_HANDLE)
    {
-      IndicatorRelease(atrHandle);
+      IndicatorRelease(trendMAHandle);
+      trendMAHandle = INVALID_HANDLE;
    }
    
    ObjectsDeleteAll(0, panelPrefix);
@@ -725,6 +728,13 @@ void OnDeinit(const int reason)
    Print("👋 ", EA_NAME, " stopped");
    Print("Total trades: ", totalTrades);
    Print("Mode switches: ", modeSwitchCount);
+   
+   if(emergencyStop)
+   {
+      Print("🚨 Emergency Stop: TRIGGERED");
+      Print("   ", emergencyReason);
+   }
+   
    Print("═══════════════════════════════════════");
 }
 
@@ -767,14 +777,9 @@ void OnTick()
       lastDayCheck = TimeCurrent();
       Print("📅 New day - Daily profit reset. Target: $", DoubleToString(dailyTarget, 2));
       
-      // Update day's open price for ATR calculations
-      if(EnableATRSwitch)
-      {
-         UpdateDayOpenPrice();
-      }
    }
    
-   // FIX #5: Check spread FIRST before expensive calculations
+   // Check spread FIRST before expensive calculations
    long spread = SymbolInfoInteger(_Symbol, SYMBOL_SPREAD);
    if(spread > MaxSpread)
    {
@@ -789,24 +794,11 @@ void OnTick()
       return;
    }
    
-   // Check ATR mode switching (after spread check)
-   CheckATRModeSwitch();
+   // ═══════════════════════════════════════════════════════════════
+   // CHECK SACROSANCT MAX DRAWDOWN (Priority check)
+   // ═══════════════════════════════════════════════════════════════
+   CheckMaxDrawdown();
    
-   // Update peak equity and check drawdown
-   double equity = AccountInfoDouble(ACCOUNT_EQUITY);
-   if(equity > peakEquity)
-      peakEquity = equity;
-   
-   double drawdown = (peakEquity > 0) ? ((equity - peakEquity) / peakEquity * 100) : 0;
-   if(drawdown < -MaxDrawdownPercent)
-   {
-      emergencyStop = true;
-      emergencyReason = "Max drawdown exceeded";
-      CloseAllPositions();
-      Print("🛑 EMERGENCY STOP: ", emergencyReason);
-      UpdatePanel();
-      return;
-   }
    
    // Check daily profit target
    double currentBalance = AccountInfoDouble(ACCOUNT_BALANCE);
@@ -858,22 +850,90 @@ void CheckGrid()
    double distanceToNearestLevel = MathAbs(currentPrice - nearestGridLevel);
    
    // Adaptive trigger zone based on symbol price
-   double triggerPercent = 0.05;  // Default 5%
+   double triggerPercent = 0.15;  // Default 15% of gap
    
    if(currentPrice > 10000)
-      triggerPercent = 0.02;  // 2% for high-value symbols
+      triggerPercent = 0.10;  // 10% for high-value symbols (e.g., BTC $90k)
    else if(currentPrice > 1000)
-      triggerPercent = 0.03;  // 3% for medium-value
+      triggerPercent = 0.12;  // 12% for medium-value (e.g., Gold $4600)
    
    double triggerZone = currentGapSize * triggerPercent;
+   
+   // Grid debug logging (every 60 seconds)
+   static datetime lastGridDebug = 0;
+   if(TimeCurrent() - lastGridDebug >= 60)
+   {
+      lastGridDebug = TimeCurrent();
+      Print("╔═══════════════════════════════════════════════════════════╗");
+      Print("║ GRID STATUS                                               ║");
+      Print("╠═══════════════════════════════════════════════════════════╣");
+      Print("   Current Price:        $", DoubleToString(currentPrice, specs.digits));
+      Print("   Reference Price:      $", DoubleToString(referencePrice, specs.digits));
+      Print("   Grid Gap:             $", DoubleToString(currentGapSize, specs.digits), " (", DoubleToString(GridGapPercent, 3), "%)");
+      Print("   Nearest Grid Level:   $", DoubleToString(nearestGridLevel, specs.digits), " (Level #", levelIndex, ")");
+      Print("   Distance to Level:    $", DoubleToString(distanceToNearestLevel, specs.digits));
+      Print("   Trigger Zone:         $", DoubleToString(triggerZone, specs.digits), " (", DoubleToString(triggerPercent * 100, 0), "% of gap)");
+      
+      if(distanceToNearestLevel <= triggerZone)
+      {
+         Print("   Status:               ✅ WITHIN TRIGGER ZONE");
+         
+         string directionText;
+         if(CurrentDirection == BOTH)
+            directionText = "BOTH (BUY + SELL)";
+         else if(CurrentDirection == BUYONLY)
+            directionText = "BUY ONLY";
+         else
+            directionText = "SELL ONLY";
+         
+         Print("   Direction:            ", directionText);
+         
+         // Check for existing positions at this level
+         int buyPositionsAtLevel = 0;
+         int sellPositionsAtLevel = 0;
+         double minDistanceBetweenPositions = currentGapSize * 0.8;
+         
+         for(int i = 0; i < ArraySize(positions); i++)
+         {
+            double distToExisting = MathAbs(positions[i].entryPrice - nearestGridLevel);
+            if(distToExisting < minDistanceBetweenPositions)
+            {
+               if(positions[i].posType == POSITION_TYPE_BUY)
+                  buyPositionsAtLevel++;
+               else
+                  sellPositionsAtLevel++;
+            }
+         }
+         
+         if(buyPositionsAtLevel > 0 || sellPositionsAtLevel > 0)
+         {
+            Print("   Level Occupancy:      BUY:", buyPositionsAtLevel, " SELL:", sellPositionsAtLevel);
+         }
+         else
+         {
+            Print("   Level Status:         EMPTY - Ready to trade");
+         }
+      }
+      else
+      {
+         double percentAway = (distanceToNearestLevel / currentGapSize) * 100.0;
+         Print("   Status:               ⏸ Outside trigger zone");
+         Print("   Distance:             ", DoubleToString(percentAway, 1), "% of gap away");
+      }
+      
+      Print("   EA Positions:         ", ArraySize(positions), "/", MaxPositions);
+      Print("╚═══════════════════════════════════════════════════════════╝");
+   }
    
    // Only trigger if close to grid level
    if(distanceToNearestLevel > triggerZone)
       return;
    
-   // Check if position exists near this level
-   bool levelHasPosition = false;
+   // Check if position exists near this level (by type for BOTH mode)
    double minDistanceBetweenPositions = currentGapSize * 0.8;
+   
+   bool hasBuyAtLevel = false;
+   bool hasSellAtLevel = false;
    
    for(int i = 0; i < ArraySize(positions); i++)
    {
@@ -881,21 +941,99 @@ void CheckGrid()
       
       if(distToExistingPosition < minDistanceBetweenPositions)
       {
-         levelHasPosition = true;
-         break;
+         if(positions[i].posType == POSITION_TYPE_BUY)
+            hasBuyAtLevel = true;
+         else if(positions[i].posType == POSITION_TYPE_SELL)
+            hasSellAtLevel = true;
       }
    }
    
-   // Open position if level is empty (use CurrentDirection, not StartDirection)
-   if(!levelHasPosition && ArraySize(positions) < MaxPositions)
+   // ═══════════════════════════════════════════════════════════════
+   // TRADING LOGIC BASED ON DIRECTION MODE
+   // ═══════════════════════════════════════════════════════════════
+   
+   if(CurrentDirection == BOTH)
    {
-      ENUM_ORDER_TYPE orderType = (CurrentDirection == BUYONLY) ? ORDER_TYPE_BUY : ORDER_TYPE_SELL;
-      double openPrice = (CurrentDirection == BUYONLY) ? ask : bid;
+      // BOTH MODE: Place BUY and SELL at every level
       
-      if(OpenPosition(orderType, openPrice, nearestGridLevel))
+      // Try to open BUY if not already there
+      if(!hasBuyAtLevel && ArraySize(positions) < MaxPositions)
       {
-         string dirStr = (CurrentDirection == BUYONLY) ? "BUY" : "SELL";
-         Print("⚡ ", dirStr, " opened at grid level: $", DoubleToString(nearestGridLevel, specs.digits));
+         Print("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
+         Print("⚡ GRID TRIGGER [BOTH MODE]: Opening BUY position");
+         Print("   Grid Level:    $", DoubleToString(nearestGridLevel, specs.digits));
+         Print("   Current Price: $", DoubleToString(currentPrice, specs.digits));
+         
+         if(OpenPosition(ORDER_TYPE_BUY, ask, nearestGridLevel))
+         {
+            Print("   ✅ BUY position opened successfully");
+         }
+         else
+         {
+            Print("   ❌ Failed to open BUY position");
+         }
+         Print("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
+      }
+      
+      // Try to open SELL if not already there
+      if(!hasSellAtLevel && ArraySize(positions) < MaxPositions)
+      {
+         Print("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
+         Print("⚡ GRID TRIGGER [BOTH MODE]: Opening SELL position");
+         Print("   Grid Level:    $", DoubleToString(nearestGridLevel, specs.digits));
+         Print("   Current Price: $", DoubleToString(currentPrice, specs.digits));
+         
+         if(OpenPosition(ORDER_TYPE_SELL, bid, nearestGridLevel))
+         {
+            Print("   ✅ SELL position opened successfully");
+         }
+         else
+         {
+            Print("   ❌ Failed to open SELL position");
+         }
+         Print("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
+      }
+   }
+   else if(CurrentDirection == BUYONLY)
+   {
+      // BUY ONLY MODE: Only place BUY positions
+      if(!hasBuyAtLevel && ArraySize(positions) < MaxPositions)
+      {
+         Print("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
+         Print("⚡ GRID TRIGGER: Opening BUY position");
+         Print("   Grid Level:    $", DoubleToString(nearestGridLevel, specs.digits));
+         Print("   Current Price: $", DoubleToString(currentPrice, specs.digits));
+         
+         if(OpenPosition(ORDER_TYPE_BUY, ask, nearestGridLevel))
+         {
+            Print("   ✅ BUY position opened successfully");
+         }
+         else
+         {
+            Print("   ❌ Failed to open position");
+         }
+         Print("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
+      }
+   }
+   else if(CurrentDirection == SELLONLY)
+   {
+      // SELL ONLY MODE: Only place SELL positions
+      if(!hasSellAtLevel && ArraySize(positions) < MaxPositions)
+      {
+         Print("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
+         Print("⚡ GRID TRIGGER: Opening SELL position");
+         Print("   Grid Level:    $", DoubleToString(nearestGridLevel, specs.digits));
+         Print("   Current Price: $", DoubleToString(currentPrice, specs.digits));
+         
+         if(OpenPosition(ORDER_TYPE_SELL, bid, nearestGridLevel))
+         {
+            Print("   ✅ SELL position opened successfully");
+         }
+         else
+         {
+            Print("   ❌ Failed to open position");
+         }
+         Print("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
       }
    }
 }
@@ -906,25 +1044,35 @@ void CheckGrid()
 void SyncPositions()
 {
    ArrayResize(positions, 0);
+   int syncCount = 0;
    
-   for(int i = PositionsTotal() - 1; i >= 0; i--)
+   for(int i = 0; i < PositionsTotal(); i++)
    {
-      ulong ticket = PositionGetTicket(i);
-      if(ticket > 0)
+      if(PositionGetTicket(i) > 0)
       {
          if(PositionGetString(POSITION_SYMBOL) == _Symbol && 
             PositionGetInteger(POSITION_MAGIC) == MagicNumber)
          {
             Position pos;
-            pos.ticket = ticket;
+            pos.ticket = PositionGetTicket(i);
             pos.entryPrice = PositionGetDouble(POSITION_PRICE_OPEN);
             pos.entryTime = (datetime)PositionGetInteger(POSITION_TIME);
+            pos.posType = (ENUM_POSITION_TYPE)PositionGetInteger(POSITION_TYPE);
             
             int size = ArraySize(positions);
             ArrayResize(positions, size + 1);
             positions[size] = pos;
+            syncCount++;
          }
       }
+   }
+   
+   // Debug logging every 60 seconds
+   static datetime lastSyncDebug = 0;
+   if(TimeCurrent() - lastSyncDebug >= 60 && syncCount > 0)
+   {
+      lastSyncDebug = TimeCurrent();
+      Print("📊 SYNC: Found ", syncCount, " EA positions (Magic: ", MagicNumber, ")");
    }
 }
 
@@ -934,16 +1082,29 @@ void SyncPositions()
 double CalculateTotalProfit()
 {
    double profit = 0;
+   int validPositions = 0;
    
    for(int i = 0; i < ArraySize(positions); i++)
    {
       if(PositionSelectByTicket(positions[i].ticket))
       {
-         profit += PositionGetDouble(POSITION_PROFIT);
+         double posProfit = PositionGetDouble(POSITION_PROFIT);
+         profit += posProfit;
+         validPositions++;
       }
    }
    
    totalProfit = profit;
+   
+   // Debug output every 60 seconds
+   static datetime lastProfitDebug = 0;
+   if(TimeCurrent() - lastProfitDebug >= 60 && ArraySize(positions) > 0)
+   {
+      lastProfitDebug = TimeCurrent();
+      Print("💰 PROFIT CALC: Positions tracked: ", ArraySize(positions), 
+            " | Valid: ", validPositions, " | Total P/L: $", DoubleToString(profit, 2));
+   }
+   
    return profit;
 }
 
@@ -1002,22 +1163,26 @@ bool OpenPosition(ENUM_ORDER_TYPE orderType, double price, double levelPrice)
    Print("   Tick Value: $", DoubleToString(specs.tickValue, 4));
    Print("   Tick Size: $", DoubleToString(specs.tickSize, 5));
    
-   // Calculate point value (value per 1.0 price unit)
-   double pointValue = specs.tickValue / specs.tickSize;
-   double positionValue = pointValue * validatedLotSize;
+   // ============================================================================
+   // FIXED TP/SL CALCULATION (v5.6.2)
+   // ============================================================================
+   // Calculate tick value for this specific position
+   double tickValueForPosition = specs.tickValue * validatedLotSize;
    
-   Print("   Point Value: $", DoubleToString(pointValue, 4), " per 1.0 price unit");
-   Print("   Position Value: $", DoubleToString(positionValue, 4), " per 1.0 price move");
+   Print("   Tick Value/Position: $", DoubleToString(tickValueForPosition, 4), " per tick");
    
    // Set TP based on dollar target
    if(IndividualTPDollars > 0)
    {
-      // CORRECT FORMULA (from percentage-based EA):
-      // Distance = Target$ / (PointValue × LotSize)
-      double tpDistance = IndividualTPDollars / positionValue;
+      // CORRECT FORMULA: Calculate ticks needed, then convert to price distance
+      // Ticks needed = Target$ / TickValue per position
+      // Price distance = Ticks × TickSize
+      double ticksNeeded = IndividualTPDollars / tickValueForPosition;
+      double tpDistance = ticksNeeded * specs.tickSize;
       
       Print("   TP Target: $", DoubleToString(IndividualTPDollars, 2));
-      Print("   TP Distance: $", DoubleToString(tpDistance, 4), " (", DoubleToString((tpDistance/price)*100, 3), "%)");
+      Print("   Ticks Needed: ", DoubleToString(ticksNeeded, 2));
+      Print("   TP Distance: $", DoubleToString(tpDistance, specs.digits), " (", DoubleToString((tpDistance/price)*100, 3), "%)");
       
       // Ensure meets minimum stop distance
       if(tpDistance < specs.minStopDistance)
@@ -1049,19 +1214,27 @@ bool OpenPosition(ENUM_ORDER_TYPE orderType, double price, double levelPrice)
       }
       
       // Verify expected profit
-      double expectedProfit = tpDistance * positionValue;
+      double verifyTicks = tpDistance / specs.tickSize;
+      double expectedProfit = verifyTicks * tickValueForPosition;
       Print("   Verified TP Profit: $", DoubleToString(expectedProfit, 2));
+      
+      if(MathAbs(expectedProfit - IndividualTPDollars) > 0.5)
+      {
+         Print("   ⚠️ WARNING: Verification mismatch! Expected $", DoubleToString(IndividualTPDollars, 2),
+               " but calculated $", DoubleToString(expectedProfit, 2));
+      }
    }
    
    // Set SL based on dollar risk
    if(IndividualSLDollars > 0)
    {
-      // CORRECT FORMULA (from percentage-based EA):
-      // Distance = Risk$ / (PointValue × LotSize)
-      double slDistance = IndividualSLDollars / positionValue;
+      // CORRECT FORMULA: Calculate ticks needed, then convert to price distance
+      double ticksNeeded = IndividualSLDollars / tickValueForPosition;
+      double slDistance = ticksNeeded * specs.tickSize;
       
       Print("   SL Risk Target: $", DoubleToString(IndividualSLDollars, 2));
-      Print("   SL Distance: $", DoubleToString(slDistance, 4), " (", DoubleToString((slDistance/price)*100, 3), "%)");
+      Print("   Ticks Needed: ", DoubleToString(ticksNeeded, 2));
+      Print("   SL Distance: $", DoubleToString(slDistance, specs.digits), " (", DoubleToString((slDistance/price)*100, 3), "%)");
       
       // Ensure meets minimum stop distance
       if(slDistance < specs.minStopDistance)
@@ -1095,8 +1268,15 @@ bool OpenPosition(ENUM_ORDER_TYPE orderType, double price, double levelPrice)
       }
       
       // Verify expected loss
-      double expectedLoss = slDistance * positionValue;
+      double verifyTicks = slDistance / specs.tickSize;
+      double expectedLoss = verifyTicks * tickValueForPosition;
       Print("   Verified SL Risk: $", DoubleToString(expectedLoss, 2));
+      
+      if(MathAbs(expectedLoss - IndividualSLDollars) > 0.5)
+      {
+         Print("   ⚠️ WARNING: Verification mismatch! Expected $", DoubleToString(IndividualSLDollars, 2),
+               " but calculated $", DoubleToString(expectedLoss, 2));
+      }
       
       // Final safety check
       if(slDistance > price * 0.5)
@@ -1235,26 +1415,21 @@ void PrintDebugStatus()
    double currentPrice = (SymbolInfoDouble(_Symbol, SYMBOL_ASK) + SymbolInfoDouble(_Symbol, SYMBOL_BID)) / 2.0;
    double equity = AccountInfoDouble(ACCOUNT_EQUITY);
    double balance = AccountInfoDouble(ACCOUNT_BALANCE);
-   double dd = (peakEquity > 0) ? ((equity - peakEquity) / peakEquity * 100) : 0;
+   
+   // Calculate drawdown from STARTING BALANCE (SACROSANCT)
+   double currentDD = 0;
+   if(startingBalance > 0)
+   {
+      currentDD = ((equity - startingBalance) / startingBalance) * 100.0;
+   }
    
    Print("╔══════════════════════════════════════════════════════════════╗");
    Print("║ ", EA_NAME, " v", EA_VERSION, "                              ║");
    Print("╠══════════════════════════════════════════════════════════════╣");
-   Print("║ MODE & ATR STATUS                                            ║");
+   Print("║ MODE STATUS                                            ║");
    Print("╠══════════════════════════════════════════════════════════════╣");
    Print("Current Mode:          ", CurrentDirection == BUYONLY ? "BUY ONLY" : "SELL ONLY");
    Print("Mode Switches:         ", modeSwitchCount);
-   Print("ATR Switching:         ", EnableATRSwitch ? "ENABLED" : "DISABLED");
-   
-   if(EnableATRSwitch)
-   {
-      Print("Day Open:              $", DoubleToString(dayOpenPrice, specs.digits));
-      Print("Current Price:         $", DoubleToString(currentPrice, specs.digits));
-      double distFromOpen = currentPrice - dayOpenPrice;
-      Print("Distance from Open:    ", distFromOpen >= 0 ? "+" : "", DoubleToString(distFromOpen, 2));
-      Print("ATR (D1, ", ATRPeriod, "):        $", DoubleToString(currentATR, 2));
-      Print("Switch Threshold:      ±$", DoubleToString(currentATR * ATRThresholdPercent / 100.0, 2), " (", DoubleToString(ATRThresholdPercent, 0), "% ATR)");
-   }
    
    Print("╠══════════════════════════════════════════════════════════════╣");
    Print("║ GRID STATUS                                                  ║");
@@ -1305,14 +1480,38 @@ void PrintDebugStatus()
    
    Print("Total Trades:          ", totalTrades);
    Print("╠══════════════════════════════════════════════════════════════╣");
+   Print("║ SACROSANCT MAX DRAWDOWN                                      ║");
+   Print("╠══════════════════════════════════════════════════════════════╣");
+   Print("Starting Balance:      $", DoubleToString(startingBalance, 2), " (LOCKED)");
+   Print("Max DD Allowed:        ", DoubleToString(MaxDrawdownPercent, 1), "% (LOCKED)");
+   Print("Emergency Stop @:      $", DoubleToString(maxDrawdownStopLevel, 2), " (LOCKED)");
+   Print("Current Equity:        $", DoubleToString(equity, 2));
+   Print("Current DD:            ", DoubleToString(currentDD, 2), "%");
+   
+   double bufferToStop = equity - maxDrawdownStopLevel;
+   Print("Buffer to Stop:        $", DoubleToString(bufferToStop, 2));
+   
+   if(emergencyStop)
+   {
+      Print("Status:                🚨 EMERGENCY STOP ACTIVE");
+   }
+   else if(bufferToStop < startingBalance * 0.10)
+   {
+      Print("Status:                ⚠️ APPROACHING STOP LEVEL");
+   }
+   else
+   {
+      Print("Status:                ✅ Safe");
+   }
+   
+   Print("╠══════════════════════════════════════════════════════════════╣");
    Print("║ PROFIT & RISK                                                ║");
    Print("╠══════════════════════════════════════════════════════════════╣");
    Print("Floating P/L:          $", DoubleToString(totalProfit, 2));
-   Print("Equity:                $", DoubleToString(equity, 2));
    Print("Balance:               $", DoubleToString(balance, 2));
-   Print("Drawdown:              ", DoubleToString(dd, 2), "%");
    Print("Daily Profit:          $", DoubleToString(dailyProfit, 2));
    Print("Daily Target:          $", DoubleToString(dailyTarget, 2));
+   
    Print("╚══════════════════════════════════════════════════════════════╝");
 }
 
@@ -1334,6 +1533,105 @@ void OnChartEvent(const int id, const long &lparam, const double &dparam, const 
       else if(lparam == 68 || lparam == 100)
       {
          PrintDebugStatus();
+      }
+      // S key - sync positions and show status
+      else if(lparam == 83 || lparam == 115)
+      {
+         Print("═══════════════════════════════════════");
+         Print("🔄 MANUAL SYNC TRIGGERED");
+         Print("   Total positions in account: ", PositionsTotal());
+         
+         // Show all positions
+         for(int i = 0; i < PositionsTotal(); i++)
+         {
+            if(PositionGetTicket(i) > 0)
+            {
+               string posSymbol = PositionGetString(POSITION_SYMBOL);
+               long posMagic = PositionGetInteger(POSITION_MAGIC);
+               ulong ticket = PositionGetTicket(i);
+               double profit = PositionGetDouble(POSITION_PROFIT);
+               
+               Print("   #", i+1, ": Ticket=", ticket, 
+                     " Symbol=", posSymbol, 
+                     " Magic=", posMagic,
+                     " P/L=$", DoubleToString(profit, 2));
+            }
+         }
+         
+         SyncPositions();
+         CalculateTotalProfit();
+         
+         Print("   EA tracking ", ArraySize(positions), " position(s) with magic ", MagicNumber);
+         Print("   Total P/L: $", DoubleToString(totalProfit, 2));
+         Print("═══════════════════════════════════════");
+         
+         UpdatePanel();
+      }
+      // G key - force grid check with detailed diagnostics
+      else if(lparam == 71 || lparam == 103)
+      {
+         Print("═══════════════════════════════════════");
+         Print("🎯 MANUAL GRID CHECK TRIGGERED");
+         
+         double ask = SymbolInfoDouble(_Symbol, SYMBOL_ASK);
+         double bid = SymbolInfoDouble(_Symbol, SYMBOL_BID);
+         double currentPrice = (ask + bid) / 2.0;
+         
+         double distanceFromReference = currentPrice - referencePrice;
+         int levelIndex = (int)MathRound(distanceFromReference / currentGapSize);
+         double nearestGridLevel = referencePrice + (levelIndex * currentGapSize);
+         double distanceToNearestLevel = MathAbs(currentPrice - nearestGridLevel);
+         
+         double triggerPercent = 0.15;
+         if(currentPrice > 10000) triggerPercent = 0.10;
+         else if(currentPrice > 1000) triggerPercent = 0.12;
+         
+         double triggerZone = currentGapSize * triggerPercent;
+         
+         Print("   Current Price:      $", DoubleToString(currentPrice, specs.digits));
+         Print("   Reference:          $", DoubleToString(referencePrice, specs.digits));
+         Print("   Grid Gap:           $", DoubleToString(currentGapSize, specs.digits));
+         Print("   Nearest Level:      $", DoubleToString(nearestGridLevel, specs.digits), " (#", levelIndex, ")");
+         Print("   Distance to Level:  $", DoubleToString(distanceToNearestLevel, specs.digits));
+         Print("   Trigger Zone:       $", DoubleToString(triggerZone, specs.digits));
+         Print("   Within Zone?        ", distanceToNearestLevel <= triggerZone ? "✅ YES" : "❌ NO");
+         Print("   Direction:          ", CurrentDirection == BUYONLY ? "BUY ONLY" : "SELL ONLY");
+         Print("   EA Positions:       ", ArraySize(positions), "/", MaxPositions);
+         
+         if(distanceToNearestLevel <= triggerZone)
+         {
+            // Check for existing position
+            bool hasPosition = false;
+            double minDist = currentGapSize * 0.8;
+            
+            for(int i = 0; i < ArraySize(positions); i++)
+            {
+               double dist = MathAbs(positions[i].entryPrice - nearestGridLevel);
+               if(dist < minDist)
+               {
+                  hasPosition = true;
+                  Print("   Level Status:       OCCUPIED by ticket #", positions[i].ticket);
+                  break;
+               }
+            }
+            
+            if(!hasPosition)
+            {
+               Print("   Level Status:       EMPTY ✅");
+               Print("   → Would open ", CurrentDirection == BUYONLY ? "BUY" : "SELL", " position here");
+            }
+         }
+         else
+         {
+            double percentAway = (distanceToNearestLevel / currentGapSize) * 100.0;
+            Print("   Status:             Price is ", DoubleToString(percentAway, 1), "% of gap away from level");
+            Print("   → Must move $", DoubleToString(distanceToNearestLevel - triggerZone, specs.digits), " closer to trigger");
+         }
+         
+         Print("═══════════════════════════════════════");
+         
+         // Force a grid check
+         CheckGrid();
       }
    }
    
@@ -1358,8 +1656,22 @@ void OnChartEvent(const int id, const long &lparam, const double &dparam, const 
       else if(sparam == panelPrefix + "PauseBtn")
       {
          ObjectSetInteger(0, panelPrefix + "PauseBtn", OBJPROP_STATE, false);
-         isPaused = !isPaused;
-         Print(isPaused ? "⏸️ EA PAUSED" : "▶️ EA RESUMED");
+         
+         // If emergency stop is active, allow resume
+         if(emergencyStop)
+         {
+            emergencyStop = false;
+            emergencyReason = "";
+            isPaused = false;
+            Print("▶️ EA RESUMED - Emergency stop cleared");
+            Print("⚠️ WARNING: Max drawdown protection still active");
+            Print("   Stop level: $", DoubleToString(maxDrawdownStopLevel, 2));
+         }
+         else
+         {
+            isPaused = !isPaused;
+            Print(isPaused ? "⏸️ EA PAUSED" : "▶️ EA RESUMED");
+         }
       }
       // TAKE TP button
       else if(sparam == panelPrefix + "TPBtn")
@@ -1369,12 +1681,21 @@ void OnChartEvent(const int id, const long &lparam, const double &dparam, const 
          CloseProfitablePositions();
          Print("✅ Profitable positions closed");
       }
-      // SWITCH MODE button (NEW)
+      // SWITCH MODE button
       else if(sparam == panelPrefix + "SwitchBtn")
       {
          ObjectSetInteger(0, panelPrefix + "SwitchBtn", OBJPROP_STATE, false);
-         ENUM_TRADE_DIRECTION newDirection = (CurrentDirection == BUYONLY) ? SELLONLY : BUYONLY;
-         SwitchTradingMode(newDirection, "Manual Override");
+         
+         // Cycle through modes: BUY → SELL → BOTH → BUY
+         ENUM_TRADE_DIRECTION newDirection;
+         if(CurrentDirection == BUYONLY)
+            newDirection = SELLONLY;
+         else if(CurrentDirection == SELLONLY)
+            newDirection = BOTH;
+         else
+            newDirection = BUYONLY;
+         
+         SwitchTradingMode(newDirection);
       }
    }
 }
@@ -1391,14 +1712,14 @@ void TogglePanelVisibility()
       "PriceLabel", "Price",
       "GridLabel", "GridSpacing",
       "SpreadLabel", "Spread",
-      "ATRLabel", "ATRValue",
-      "DayOpenLabel", "DayOpenValue",
       "ReversalLabel", "ReversalSell", "ReversalLabel2", "ReversalBuy",
       "RefLabel", "RefPrice",
+      "TimeLabel", "TimeStatus", "TimeAllowed",
       "PosLabel", "Positions",
       "AccLabel", "AccCounts",
       "PnLLabel", "PnL",
       "EquityLabel", "Equity",
+      "StartCapLabel", "StartCap",
       "DDLabel", "DD",
       "DailyLabel", "DailyProfit",
       "DDTriggerLabel", "DDTrigger",
@@ -1425,15 +1746,19 @@ void CreatePanel()
 {
    int x = 20;
    int y = 30;
-   int width = 320;  // Wider for better spacing
-   int lineHeight = 22;  // More spacing between lines
+   int width = 320;
+   int lineHeight = 22;
    
-   // Background with increased height for better layout
+   // Calculate dynamic height
+   int panelHeight = 380;
+   if(EnableTimeFilter) panelHeight += lineHeight;
+   
+   // Background with dynamic height
    ObjectCreate(0, panelPrefix + "Background", OBJ_RECTANGLE_LABEL, 0, 0, 0);
    ObjectSetInteger(0, panelPrefix + "Background", OBJPROP_XDISTANCE, x);
    ObjectSetInteger(0, panelPrefix + "Background", OBJPROP_YDISTANCE, y);
    ObjectSetInteger(0, panelPrefix + "Background", OBJPROP_XSIZE, width);
-   ObjectSetInteger(0, panelPrefix + "Background", OBJPROP_YSIZE, EnableATRSwitch ? 420 : (EnableTimeFilter ? 402 : 380));  // Dynamic height
+   ObjectSetInteger(0, panelPrefix + "Background", OBJPROP_YSIZE, panelHeight);
    ObjectSetInteger(0, panelPrefix + "Background", OBJPROP_BGCOLOR, C'20,20,25');
    ObjectSetInteger(0, panelPrefix + "Background", OBJPROP_BORDER_TYPE, BORDER_FLAT);
    ObjectSetInteger(0, panelPrefix + "Background", OBJPROP_COLOR, clrGold);
@@ -1456,9 +1781,30 @@ void CreatePanel()
    yPos += 34;
    
    // === MODE ROW ===
-   color dirColor = (CurrentDirection == BUYONLY) ? clrDodgerBlue : clrOrangeRed;
+   color dirColor = clrWhite;
+   string dirText = "";
+   if(CurrentDirection == BOTH)
+   {
+      dirColor = clrYellow;
+      dirText = "BOTH";
+   }
+   else if(CurrentDirection == BUYONLY)
+   {
+      dirColor = clrDodgerBlue;
+      dirText = "BUY";
+   }
+   else
+   {
+      dirColor = clrOrangeRed;
+      dirText = "SELL";
+   }
+   
    CreateLabel(panelPrefix + "DirectionLabel", x + 10, yPos, "Mode:", clrGold, 9, "Arial Bold");
-   CreateLabel(panelPrefix + "Direction", x + 65, yPos, CurrentDirection == BUYONLY ? "BUY" : "SELL", dirColor, 10, "Arial Black");
+   CreateLabel(panelPrefix + "Direction", x + 65, yPos, dirText, dirColor, 10, "Arial Black");
+   
+   // Add Trend on same row (right side)
+   CreateLabel(panelPrefix + "TrendLabel", x + 140, yPos, "Trend:", clrGold, 9, "Arial Bold");
+   CreateLabel(panelPrefix + "Trend", x + 190, yPos, "---", clrWhite, 9, "Arial Bold");
    yPos += lineHeight;
    
    // === TIME STATUS ROW (if time filter enabled) ===
@@ -1482,25 +1828,6 @@ void CreatePanel()
    CreateLabel(panelPrefix + "Spread", x + 235, yPos, "0/2000", clrWhite, 9, "Arial");
    yPos += lineHeight;
    
-   // === ATR SECTION (if enabled) ===
-   if(EnableATRSwitch)
-   {
-      // ATR ROW
-      CreateLabel(panelPrefix + "ATRLabel", x + 10, yPos, "ATR:", clrGold, 9, "Arial Bold");
-      CreateLabel(panelPrefix + "ATRValue", x + 65, yPos, "$0", clrAqua, 9, "Arial");
-      CreateLabel(panelPrefix + "DayOpenLabel", x + 170, yPos, "Open:", clrGold, 9, "Arial Bold");
-      CreateLabel(panelPrefix + "DayOpenValue", x + 220, yPos, "$0", clrAqua, 9, "Arial");
-      yPos += lineHeight;
-      
-      // REVERSAL PRICES ROW
-      CreateLabel(panelPrefix + "ReversalLabel", x + 10, yPos, "↑SELL @:", clrOrangeRed, 9, "Arial Black");
-      CreateLabel(panelPrefix + "ReversalSell", x + 80, yPos, "$0", clrOrangeRed, 9, "Arial Bold");
-      yPos += lineHeight;
-      
-      CreateLabel(panelPrefix + "ReversalLabel2", x + 10, yPos, "↓BUY @:", clrDodgerBlue, 9, "Arial Black");
-      CreateLabel(panelPrefix + "ReversalBuy", x + 80, yPos, "$0", clrDodgerBlue, 9, "Arial Bold");
-      yPos += lineHeight;
-   }
    
    // === REFERENCE ROW ===
    CreateLabel(panelPrefix + "RefLabel", x + 10, yPos, "Reference:", clrGold, 9, "Arial Bold");
@@ -1514,7 +1841,7 @@ void CreatePanel()
    
    // === ACCOUNT POSITIONS ROW ===
    CreateLabel(panelPrefix + "AccLabel", x + 10, yPos, "Acc:", clrGold, 9, "Arial Bold");
-   CreateLabel(panelPrefix + "AccCounts", x + 60, yPos, "B:0.00 S:0.00 (0)", clrWhite, 9, "Arial");
+   CreateLabel(panelPrefix + "AccCounts", x + 60, yPos, "B:0.00 S:0.00 (0)", clrWhite, 9, "Arial Bold");  // Made bold for net position
    yPos += lineHeight + 4;
    
    // === P/L ROW ===
@@ -1527,6 +1854,11 @@ void CreatePanel()
    CreateLabel(panelPrefix + "Equity", x + 70, yPos, "$0", clrWhite, 9, "Arial");
    yPos += lineHeight;
    
+   // === STARTING CAPITAL ROW ===
+   CreateLabel(panelPrefix + "StartCapLabel", x + 10, yPos, "Start:", clrGold, 9, "Arial Bold");
+   CreateLabel(panelPrefix + "StartCap", x + 70, yPos, "$0", clrLimeGreen, 9, "Arial Black");  // Bold
+   yPos += lineHeight;
+   
    // === DRAWDOWN ROW ===
    CreateLabel(panelPrefix + "DDLabel", x + 10, yPos, "DD:", clrGold, 9, "Arial Bold");
    CreateLabel(panelPrefix + "DD", x + 60, yPos, "0%", clrWhite, 9, "Arial");
@@ -1534,7 +1866,7 @@ void CreatePanel()
    CreateLabel(panelPrefix + "DailyProfit", x + 220, yPos, "$0", clrWhite, 9, "Arial");
    yPos += lineHeight;
    
-   // === DD TRIGGER ROW ===
+   // === DD TRIGGER ROW (changed from price to equity level) ===
    CreateLabel(panelPrefix + "DDTriggerLabel", x + 10, yPos, "🛑 DD@:", clrOrangeRed, 9, "Arial Bold");
    CreateLabel(panelPrefix + "DDTrigger", x + 70, yPos, "$0", clrOrangeRed, 9, "Arial Bold");
    yPos += lineHeight;
@@ -1545,8 +1877,8 @@ void CreatePanel()
    yPos += lineHeight + 15;
    
    // === BRANDING - Bottom Right Corner ===
-   int brandY = y + (EnableATRSwitch ? 420 : 380) - 35;  // 35px from bottom
-   int brandX = x + width - 12;  // 12px from right edge
+   int brandY = y + panelHeight - 35;
+   int brandX = x + width - 12;
    
    // Main branding
    ObjectCreate(0, panelPrefix + "Brand", OBJ_LABEL, 0, 0, 0);
@@ -1565,7 +1897,7 @@ void CreatePanel()
    ObjectCreate(0, panelPrefix + "Email", OBJ_LABEL, 0, 0, 0);
    ObjectSetInteger(0, panelPrefix + "Email", OBJPROP_XDISTANCE, brandX);
    ObjectSetInteger(0, panelPrefix + "Email", OBJPROP_YDISTANCE, brandY + 16);
-   ObjectSetInteger(0, panelPrefix + "Email", OBJPROP_COLOR, C'150,150,100');  // Dimmed gold
+   ObjectSetInteger(0, panelPrefix + "Email", OBJPROP_COLOR, C'150,150,100');
    ObjectSetInteger(0, panelPrefix + "Email", OBJPROP_FONTSIZE, 7);
    ObjectSetString(0, panelPrefix + "Email", OBJPROP_FONT, "Arial");
    ObjectSetString(0, panelPrefix + "Email", OBJPROP_TEXT, "ea@torama.money");
@@ -1573,6 +1905,52 @@ void CreatePanel()
    ObjectSetInteger(0, panelPrefix + "Email", OBJPROP_SELECTABLE, false);
    ObjectSetInteger(0, panelPrefix + "Email", OBJPROP_BACK, false);
    ObjectSetInteger(0, panelPrefix + "Email", OBJPROP_HIDDEN, true);
+}
+
+//+------------------------------------------------------------------+
+//| FORMAT PRICE                                                      |
+//+------------------------------------------------------------------+
+//+------------------------------------------------------------------+
+//| FORMAT NUMBER WITH COMMA THOUSANDS SEPARATOR                      |
+//+------------------------------------------------------------------+
+string FormatWithCommas(double value, int decimals = 2)
+{
+   string result = "";
+   string valueStr = DoubleToString(MathAbs(value), decimals);
+   
+   // Split into integer and decimal parts
+   int dotPos = StringFind(valueStr, ".");
+   string intPart = "";
+   string decPart = "";
+   
+   if(dotPos >= 0)
+   {
+      intPart = StringSubstr(valueStr, 0, dotPos);
+      decPart = StringSubstr(valueStr, dotPos);
+   }
+   else
+   {
+      intPart = valueStr;
+      decPart = "";
+   }
+   
+   // Add commas to integer part (from right to left)
+   int len = StringLen(intPart);
+   for(int i = 0; i < len; i++)
+   {
+      if(i > 0 && (i % 3) == 0)
+         result = "," + result;
+      result = StringSubstr(intPart, len - i - 1, 1) + result;
+   }
+   
+   // Add decimal part
+   result = result + decPart;
+   
+   // Add negative sign if needed
+   if(value < 0)
+      result = "-" + result;
+   
+   return result;
 }
 
 //+------------------------------------------------------------------+
@@ -1606,17 +1984,18 @@ void UpdatePanel()
    double ask = SymbolInfoDouble(_Symbol, SYMBOL_ASK);
    double bid = SymbolInfoDouble(_Symbol, SYMBOL_BID);
    double currentPrice = (ask + bid) / 2.0;
+   double currentEquity = AccountInfoDouble(ACCOUNT_EQUITY);
    
-   // Status
-   if(dailyTargetReached)
+   // Status - prioritize emergency stop, then daily target
+   if(emergencyStop)
+   {
+      ObjectSetString(0, panelPrefix + "Status", OBJPROP_TEXT, "🚨 DD.STOP");
+      ObjectSetInteger(0, panelPrefix + "Status", OBJPROP_COLOR, clrRed);
+   }
+   else if(dailyTargetReached)
    {
       ObjectSetString(0, panelPrefix + "Status", OBJPROP_TEXT, "🎯 TARGET");
       ObjectSetInteger(0, panelPrefix + "Status", OBJPROP_COLOR, clrGold);
-   }
-   else if(emergencyStop)
-   {
-      ObjectSetString(0, panelPrefix + "Status", OBJPROP_TEXT, "🛑 STOP");
-      ObjectSetInteger(0, panelPrefix + "Status", OBJPROP_COLOR, clrRed);
    }
    else if(isPaused)
    {
@@ -1629,42 +2008,52 @@ void UpdatePanel()
       ObjectSetInteger(0, panelPrefix + "Status", OBJPROP_COLOR, clrLimeGreen);
    }
    
-   // Pause button
-   ObjectSetString(0, panelPrefix + "PauseBtn", OBJPROP_TEXT, isPaused ? "RESUME" : "PAUSE");
-   ObjectSetInteger(0, panelPrefix + "PauseBtn", OBJPROP_BGCOLOR, isPaused ? clrGreen : clrOrange);
-   
-   // Direction - with position mix indicator
-   color dirColor = (CurrentDirection == BUYONLY) ? clrDodgerBlue : clrOrangeRed;
-   string directionText = CurrentDirection == BUYONLY ? "BUY" : "SELL";
-   
-   // Check if we have positions from opposite direction
-   if(!CloseOnModeSwitch && ArraySize(positions) > 0)
+   // Pause button - show RESUME if emergency stop or paused
+   if(emergencyStop || isPaused)
    {
-      bool hasBuyPositions = false;
-      bool hasSellPositions = false;
-      
-      for(int i = 0; i < ArraySize(positions); i++)
-      {
-         if(PositionSelectByTicket(positions[i].ticket))
-         {
-            ENUM_POSITION_TYPE type = (ENUM_POSITION_TYPE)PositionGetInteger(POSITION_TYPE);
-            if(type == POSITION_TYPE_BUY)
-               hasBuyPositions = true;
-            else
-               hasSellPositions = true;
-         }
-      }
-      
-      // If we have mixed positions, show it
-      if(hasBuyPositions && hasSellPositions)
-      {
-         directionText = "MIXED";
-         dirColor = clrYellow;
-      }
+      ObjectSetString(0, panelPrefix + "PauseBtn", OBJPROP_TEXT, "RESUME");
+      ObjectSetInteger(0, panelPrefix + "PauseBtn", OBJPROP_BGCOLOR, clrGreen);
+   }
+   else
+   {
+      ObjectSetString(0, panelPrefix + "PauseBtn", OBJPROP_TEXT, "PAUSE");
+      ObjectSetInteger(0, panelPrefix + "PauseBtn", OBJPROP_BGCOLOR, clrOrange);
    }
    
-   ObjectSetString(0, panelPrefix + "Direction", OBJPROP_TEXT, directionText);
+   // Direction - with position mix indicator
+   color dirColor = clrWhite;
+   string directionText = "";
+   
+   if(CurrentDirection == BOTH)
+   {
+      directionText = "BOTH";
+      dirColor = clrYellow;
+   }
+   else if(CurrentDirection == BUYONLY)
+   {
+      directionText = "BUY";
+      dirColor = clrDodgerBlue;
+   }
+   else
+   {
+      directionText = "SELL";
+      dirColor = clrOrangeRed;
+   }
+   
    ObjectSetInteger(0, panelPrefix + "Direction", OBJPROP_COLOR, dirColor);
+   
+   // Update Trend display
+   currentTrend = DetectTrend();
+   color trendColor = clrWhite;
+   if(StringFind(currentTrend, "UP") >= 0)
+      trendColor = clrLimeGreen;
+   else if(StringFind(currentTrend, "DOWN") >= 0)
+      trendColor = clrOrangeRed;
+   else if(currentTrend == "RANGING")
+      trendColor = clrYellow;
+   
+   ObjectSetString(0, panelPrefix + "Trend", OBJPROP_TEXT, currentTrend);
+   ObjectSetInteger(0, panelPrefix + "Trend", OBJPROP_COLOR, trendColor);
    
    // Time Status (if time filter enabled)
    if(EnableTimeFilter)
@@ -1684,53 +2073,27 @@ void UpdatePanel()
    }
    
    // Price
-   ObjectSetString(0, panelPrefix + "Price", OBJPROP_TEXT, "$" + FormatPrice(currentPrice, specs.digits));
+   ObjectSetString(0, panelPrefix + "Price", OBJPROP_TEXT, "$" + FormatWithCommas(currentPrice, specs.digits));
    
    // Grid
    ObjectSetString(0, panelPrefix + "GridSpacing", OBJPROP_TEXT,
-                   FormatPrice(GridGapPercent, 2) + "% ($" + FormatPrice(currentGapSize, 2) + ")");
+                   FormatPrice(GridGapPercent, 2) + "% ($" + FormatWithCommas(currentGapSize, 2) + ")");
    
    // Spread
    long spread = SymbolInfoInteger(_Symbol, SYMBOL_SPREAD);
    color spreadColor = (spread > MaxSpread) ? clrRed : (spread > MaxSpread * 0.7) ? clrOrange : clrLimeGreen;
-   ObjectSetString(0, panelPrefix + "Spread", OBJPROP_TEXT, IntegerToString(spread) + "/" + IntegerToString(MaxSpread));
+   ObjectSetString(0, panelPrefix + "Spread", OBJPROP_TEXT, FormatWithCommas(spread, 0) + "/" + FormatWithCommas(MaxSpread, 0));
    ObjectSetInteger(0, panelPrefix + "Spread", OBJPROP_COLOR, spreadColor);
    
-   // ATR info and reversal prices
-   if(EnableATRSwitch)
-   {
-      ObjectSetString(0, panelPrefix + "ATRValue", OBJPROP_TEXT, "$" + FormatPrice(currentATR, 2));
-      ObjectSetString(0, panelPrefix + "DayOpenValue", OBJPROP_TEXT, "$" + FormatPrice(dayOpenPrice, specs.digits));
-      
-      // Calculate reversal prices
-      double atrThreshold = currentATR * (ATRThresholdPercent / 100.0);
-      double reversalToSell = dayOpenPrice + atrThreshold;  // Price moves above this → SELL
-      double reversalToBuy = dayOpenPrice - atrThreshold;   // Price moves below this → BUY
-      
-      ObjectSetString(0, panelPrefix + "ReversalSell", OBJPROP_TEXT, "$" + FormatPrice(reversalToSell, specs.digits));
-      ObjectSetString(0, panelPrefix + "ReversalBuy", OBJPROP_TEXT, "$" + FormatPrice(reversalToBuy, specs.digits));
-      
-      // Color code based on proximity to reversal
-      double currentPrice = (SymbolInfoDouble(_Symbol, SYMBOL_ASK) + SymbolInfoDouble(_Symbol, SYMBOL_BID)) / 2.0;
-      double distToSell = reversalToSell - currentPrice;
-      double distToBuy = currentPrice - reversalToBuy;
-      
-      // Highlight reversal price if close (within 25% of threshold)
-      color sellColor = (distToSell > 0 && distToSell < atrThreshold * 0.25) ? clrYellow : clrOrangeRed;
-      color buyColor = (distToBuy > 0 && distToBuy < atrThreshold * 0.25) ? clrYellow : clrDodgerBlue;
-      
-      ObjectSetInteger(0, panelPrefix + "ReversalSell", OBJPROP_COLOR, sellColor);
-      ObjectSetInteger(0, panelPrefix + "ReversalBuy", OBJPROP_COLOR, buyColor);
-   }
    
    // Reference
-   ObjectSetString(0, panelPrefix + "RefPrice", OBJPROP_TEXT, "$" + FormatPrice(referencePrice, specs.digits));
+   ObjectSetString(0, panelPrefix + "RefPrice", OBJPROP_TEXT, "$" + FormatWithCommas(referencePrice, specs.digits));
    
    // EA Positions
    ObjectSetString(0, panelPrefix + "Positions", OBJPROP_TEXT,
                    IntegerToString(ArraySize(positions)) + "/" + IntegerToString(MaxPositions));
    
-   // Account-wide BUY/SELL LOTS (all positions regardless of magic number)
+   // Account-wide BUY/SELL LOTS
    double totalBuyLots = 0;
    double totalSellLots = 0;
    
@@ -1739,7 +2102,7 @@ void UpdatePanel()
       ulong ticket = PositionGetTicket(i);
       if(ticket > 0)
       {
-         if(PositionGetString(POSITION_SYMBOL) == _Symbol)  // Only this symbol
+         if(PositionGetString(POSITION_SYMBOL) == _Symbol)
          {
             double volume = PositionGetDouble(POSITION_VOLUME);
             ENUM_POSITION_TYPE type = (ENUM_POSITION_TYPE)PositionGetInteger(POSITION_TYPE);
@@ -1756,24 +2119,23 @@ void UpdatePanel()
    string netText = "";
    color netColor = clrWhite;
    
-   if(MathAbs(netPosition) < 0.01)  // Effectively zero
+   if(MathAbs(netPosition) < 0.01)
    {
       netText = "(0)";
       netColor = clrWhite;
    }
    else if(netPosition > 0)
    {
-      netText = "(+" + DoubleToString(netPosition, 2) + "B)";
-      netColor = clrDodgerBlue;  // Net BUY
+      netText = "(+" + FormatWithCommas(netPosition, 2) + "B)";
+      netColor = clrDodgerBlue;
    }
    else
    {
-      netText = "(" + DoubleToString(MathAbs(netPosition), 2) + "S)";
-      netColor = clrOrangeRed;  // Net SELL
+      netText = "(" + FormatWithCommas(MathAbs(netPosition), 2) + "S)";
+      netColor = clrOrangeRed;
    }
    
-   // Format: "B:40.5 S:45.0 (4.5S)"
-   string accLotsText = "B:" + DoubleToString(totalBuyLots, 2) + " S:" + DoubleToString(totalSellLots, 2) + " " + netText;
+   string accLotsText = "B:" + FormatWithCommas(totalBuyLots, 2) + " S:" + FormatWithCommas(totalSellLots, 2) + " " + netText;
    ObjectSetString(0, panelPrefix + "AccCounts", OBJPROP_TEXT, accLotsText);
    ObjectSetInteger(0, panelPrefix + "AccCounts", OBJPROP_COLOR, netColor);
    
@@ -1781,17 +2143,36 @@ void UpdatePanel()
    CalculateTotalProfit();
    color pnlColor = (totalProfit >= 0) ? clrLimeGreen : clrRed;
    ObjectSetString(0, panelPrefix + "PnL", OBJPROP_TEXT,
-                   (totalProfit >= 0 ? "+" : "") + "$" + FormatPrice(totalProfit, 2));
+                   (totalProfit >= 0 ? "+" : "") + "$" + FormatWithCommas(totalProfit, 2));
    ObjectSetInteger(0, panelPrefix + "PnL", OBJPROP_COLOR, pnlColor);
    
    // Equity
-   double equity = AccountInfoDouble(ACCOUNT_EQUITY);
-   ObjectSetString(0, panelPrefix + "Equity", OBJPROP_TEXT, "$" + FormatPrice(equity, 2));
+   ObjectSetString(0, panelPrefix + "Equity", OBJPROP_TEXT, "$" + FormatWithCommas(currentEquity, 2));
    
-   // Drawdown
-   double dd = (peakEquity > 0) ? ((equity - peakEquity) / peakEquity * 100) : 0;
-   color ddColor = (dd >= -5) ? clrLimeGreen : (dd >= -10) ? clrYellow : clrRed;
-   ObjectSetString(0, panelPrefix + "DD", OBJPROP_TEXT, FormatPrice(dd, 1) + "%");
+   // Starting Capital (SACROSANCT)
+   ObjectSetString(0, panelPrefix + "StartCap", OBJPROP_TEXT, "$" + FormatWithCommas(startingBalance, 2));
+   
+   // ═══════════════════════════════════════════════════════════════
+   // DRAWDOWN - NOW BASED ON SACROSANCT STARTING BALANCE
+   // ═══════════════════════════════════════════════════════════════
+   double currentDD = 0;
+   if(startingBalance > 0)
+   {
+      currentDD = ((currentEquity - startingBalance) / startingBalance) * 100.0;
+   }
+   
+   // Color code based on proximity to max DD
+   color ddColor = clrLimeGreen;
+   double ddProximity = MathAbs(currentDD / MaxDrawdownPercent);
+   
+   if(ddProximity >= 0.9)
+      ddColor = clrRed;
+   else if(ddProximity >= 0.7)
+      ddColor = clrOrange;
+   else if(ddProximity >= 0.5)
+      ddColor = clrYellow;
+   
+   ObjectSetString(0, panelPrefix + "DD", OBJPROP_TEXT, FormatPrice(currentDD, 1) + "%");
    ObjectSetInteger(0, panelPrefix + "DD", OBJPROP_COLOR, ddColor);
    
    // Daily Profit
@@ -1802,64 +2183,22 @@ void UpdatePanel()
                       (dailyProfit >= 0) ? clrLimeGreen : clrRed;
    
    ObjectSetString(0, panelPrefix + "DailyProfit", OBJPROP_TEXT,
-                   (dailyProfit >= 0 ? "+" : "") + "$" + FormatPrice(dailyProfit, 2));
+                   (dailyProfit >= 0 ? "+" : "") + "$" + FormatWithCommas(dailyProfit, 2));
    ObjectSetInteger(0, panelPrefix + "DailyProfit", OBJPROP_COLOR, dailyColor);
    
-   // Drawdown trigger price calculation - NEW in v5.4
-   double ddTriggerEquity = peakEquity * (1.0 - MaxDrawdownPercent / 100.0);
-   double currentFloatingPL = CalculateTotalProfit();
-   double currentEquity = AccountInfoDouble(ACCOUNT_EQUITY);
-   double plNeededForDDTrigger = ddTriggerEquity - currentEquity;
-   
-   // Calculate price where DD would trigger
-   double ddTriggerPrice = (ask + bid) / 2.0;  // Default to current
-   
-   if(ArraySize(positions) > 0 && MathAbs(currentFloatingPL) > 0.01)
-   {
-      // Calculate total volume
-      double totalVolume = 0;
-      
-      for(int i = 0; i < ArraySize(positions); i++)
-      {
-         if(PositionSelectByTicket(positions[i].ticket))
-         {
-            totalVolume += PositionGetDouble(POSITION_VOLUME);
-         }
-      }
-      
-      if(totalVolume > 0)
-      {
-         // For Gold: tickValue / tickSize = point value
-         double pointValue = specs.tickValue / specs.tickSize;
-         double plPerPointMove = pointValue * totalVolume;
-         
-         if(plPerPointMove > 0)
-         {
-            double pointsMoveToDDTrigger = plNeededForDDTrigger / plPerPointMove;
-            
-            // Direction-aware calculation
-            if(CurrentDirection == BUYONLY)
-            {
-               ddTriggerPrice = (ask + bid) / 2.0 + pointsMoveToDDTrigger;
-            }
-            else
-            {
-               ddTriggerPrice = (ask + bid) / 2.0 - pointsMoveToDDTrigger;
-            }
-         }
-      }
-   }
-   
-   // Display with color coding
-   string ddTriggerText = "$" + FormatPrice(ddTriggerPrice, specs.digits);
+   // ═══════════════════════════════════════════════════════════════
+   // DD TRIGGER - NOW SHOWS ABSOLUTE SACROSANCT STOP LEVEL
+   // ═══════════════════════════════════════════════════════════════
+   string ddTriggerText = "$" + FormatWithCommas(maxDrawdownStopLevel, 2);
    color ddTriggerColor = clrOrangeRed;
    
-   double currentDD = (peakEquity > 0) ? ((currentEquity - peakEquity) / peakEquity * 100) : 0;
-   double ddProximity = MathAbs(currentDD / MaxDrawdownPercent * 100);
+   // Color code based on proximity to stop
+   double bufferToStop = currentEquity - maxDrawdownStopLevel;
+   double bufferPercent = (bufferToStop / startingBalance) * 100.0;
    
-   if(ddProximity > 80)
+   if(bufferPercent <= 5.0)
       ddTriggerColor = clrRed;
-   else if(ddProximity > 50)
+   else if(bufferPercent <= 10.0)
       ddTriggerColor = clrOrange;
    else
       ddTriggerColor = clrOrangeRed;
@@ -1868,7 +2207,7 @@ void UpdatePanel()
    ObjectSetInteger(0, panelPrefix + "DDTrigger", OBJPROP_COLOR, ddTriggerColor);
    
    // Mode switches
-   ObjectSetString(0, panelPrefix + "SwitchCount", OBJPROP_TEXT, IntegerToString(modeSwitchCount));
+   ObjectSetString(0, panelPrefix + "SwitchCount", OBJPROP_TEXT, FormatWithCommas(modeSwitchCount, 0));
 }
 
 //+------------------------------------------------------------------+
