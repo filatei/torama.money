@@ -36,7 +36,7 @@ input bool     ShowPanel = true;                      // Show info panel
 input group "=== GRID SETTINGS ==="
 input double   GridGapPercent = 0.05;                 // Grid gap % (0.01 = tight, 0.3 = wide)
 input int      MaxPositions = 100;                    // Maximum positions
-input int      MaxSpread = 2000;                      // Maximum spread (points)
+int      MaxSpread = 2000;                      // Maximum spread (points)
 
 input group "=== PROFIT & LOSS ==="
 input double   IndividualTPDollars = 50.0;            // Individual TP target per position
