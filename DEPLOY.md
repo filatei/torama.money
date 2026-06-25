@@ -28,13 +28,22 @@ ssh -t user1@139.162.170.253 'sudo GIT_URL=git@github.com:filatei/torama.money.g
 - Cert is scoped with `--cert-name torama.money` (`www.` included only if its DNS resolves).
 - Ends by checking otuburu.money and vote.torama.money still respond, plus a renewal dry-run.
 
-## Redeploy after the developer pushes changes
+## Redeploy after editing the site files
+
+nginx serves from `/opt/torama.money/www` (read-only volume). The site is *not*
+pulled from git — copy the files up and fix permissions (mode 644, or the nginx
+container can't read them → **403 Forbidden**):
 
 ```bash
-ssh -t user1@139.162.170.253 'sudo git -C /opt/torama.money/site pull --ff-only'
+cd "/Users/user1/Documents/Claude/Projects/TORAM.MONEY/TORAMA.MONEY WEBSITE"
+scp index.html terms.html privacy.html logo.svg user1@139.162.170.253:/tmp/
+ssh -t user1@139.162.170.253 'sudo install -m644 -o root -g root /tmp/index.html /tmp/terms.html /tmp/privacy.html /tmp/logo.svg /opt/torama.money/www/'
 ```
 
-(No restart needed — nginx serves the files live. Re-running the full script also works.)
+(No restart needed — nginx serves the files live.)
+
+> The git repo (`filatei/torama.money`) is for source control only; the server
+> does not deploy from it. Always run the scp step above to publish changes.
 
 ## If something fails
 
