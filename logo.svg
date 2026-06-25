@@ -1,0 +1,36 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 260 320" role="img" aria-label="Torama logo">
+  <g fill="#F50F0F">
+    <!-- row 1 -->
+    <circle cx="106" cy="14" r="10"/>
+    <!-- row 2 -->
+    <circle cx="62" cy="57" r="13"/>
+    <circle cx="106" cy="57" r="17"/>
+    <!-- row 3 -->
+    <circle cx="60" cy="100" r="18"/>
+    <circle cx="106" cy="100" r="20"/>
+    <circle cx="151" cy="100" r="13"/>
+    <circle cx="196" cy="100" r="13"/>
+    <circle cx="249" cy="100" r="9"/>
+    <!-- row 4 (middle) -->
+    <circle cx="14" cy="143" r="13"/>
+    <circle cx="60" cy="143" r="19"/>
+    <circle cx="106" cy="143" r="19"/>
+    <circle cx="151" cy="143" r="14"/>
+    <circle cx="199" cy="143" r="13"/>
+    <circle cx="249" cy="143" r="9"/>
+    <!-- row 5 -->
+    <circle cx="60" cy="186" r="18"/>
+    <circle cx="106" cy="186" r="18"/>
+    <!-- row 6 -->
+    <circle cx="62" cy="229" r="13"/>
+    <circle cx="106" cy="229" r="16"/>
+    <circle cx="196" cy="229" r="13"/>
+    <!-- row 7 -->
+    <circle cx="64" cy="272" r="10"/>
+    <circle cx="108" cy="272" r="14"/>
+    <circle cx="151" cy="272" r="13"/>
+    <circle cx="196" cy="272" r="13"/>
+    <!-- row 8 -->
+    <circle cx="108" cy="308" r="9"/>
+  </g>
+</svg>
