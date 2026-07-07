@@ -1,0 +1,55 @@
+name: Deploy torama.money
+
+# Publishes the static site to the nginx container's web root on push to main.
+# The site is served from /opt/torama.money/www (read-only volume, mode 644).
+# One-time server prep so CI can write without sudo:
+#   sudo chown -R user1:user1 /opt/torama.money/www
+#
+# Repo secrets required (Settings → Secrets and variables → Actions):
+#   SSH_HOST  = 139.162.170.253
+#   SSH_USER  = user1
+#   SSH_PORT  = 22
+#   SSH_KEY   = a private key whose public key is in user1's ~/.ssh/authorized_keys
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '**.html'
+      - 'logo.svg'
+      - '.github/workflows/deploy.yml'
+  workflow_dispatch:
+
+concurrency:
+  group: deploy-torama-money
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Copy static files to the web root
+        uses: appleboy/scp-action@v0.1.7
+        with:
+          host: ${{ secrets.SSH_HOST }}
+          username: ${{ secrets.SSH_USER }}
+          key: ${{ secrets.SSH_KEY }}
+          port: ${{ secrets.SSH_PORT }}
+          source: "index.html,terms.html,privacy.html,logo.svg"
+          target: "/opt/torama.money/www/"
+          overwrite: true
+
+      - name: Fix perms so nginx can read (644) + health check
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.SSH_HOST }}
+          username: ${{ secrets.SSH_USER }}
+          key: ${{ secrets.SSH_KEY }}
+          port: ${{ secrets.SSH_PORT }}
+          script: |
+            chmod 644 /opt/torama.money/www/*.html /opt/torama.money/www/*.svg
+            # Confirm the site still answers on its localhost port (nginx serves live).
+            curl -fsS -o /dev/null http://127.0.0.1:8091/ && echo "torama.money OK" || (echo "site not responding"; exit 1)
