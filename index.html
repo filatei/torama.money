@@ -7,13 +7,24 @@
 <meta name="description" content="Torama Global Services Ltd is a global software company building civic, public-finance, capital-markets and digital-payments products: Torama Vote, Torama eTax, Phidex, Otuburu, BibiTrust and the Situation Room." />
 <meta name="theme-color" content="#FFFFFF" />
 <link rel="icon" type="image/svg+xml" href="logo.svg" />
-<link rel="canonical" href="https://torama.ng/" />
+<!-- Self-referencing canonical: empty href resolves to THIS page's own URL, so the
+     same file self-canonicalises on whichever domain serves it (torama.money AND
+     torama.ng are each their own canonical). JS below upgrades it to a clean
+     absolute URL for crawlers that render. Do NOT hardcode a cross-domain href. -->
+<link rel="canonical" href="" id="canonical-link" />
 
 <!-- Open Graph -->
 <meta property="og:type" content="website" />
 <meta property="og:title" content="Torama Global Services Ltd" />
 <meta property="og:description" content="Six products, one company. Fair elections, honest tax, open markets, everyday payments." />
-<meta property="og:url" content="https://torama.ng" />
+<meta property="og:url" content="" id="og-url" />
+<script>
+  (function () {
+    var url = location.origin + location.pathname.replace(/\/index\.html$/, '/');
+    var c = document.getElementById('canonical-link'); if (c) c.href = url;
+    var o = document.getElementById('og-url'); if (o) o.setAttribute('content', url);
+  })();
+</script>
 
 <!-- Fonts: Clash Display (display) via Fontshare, Hanken Grotesk + Space Mono via Google -->
 <link rel="preconnect" href="https://fonts.googleapis.com" />

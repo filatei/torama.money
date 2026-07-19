@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- torama.ng sitemap. Serve this at https://torama.ng/sitemap.xml (or submit it
+     directly in the torama.ng Search Console property). -->
+<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
+  <url><loc>https://torama.ng/</loc><changefreq>monthly</changefreq><priority>1.0</priority></url>
+  <url><loc>https://torama.ng/privacy.html</loc><changefreq>yearly</changefreq><priority>0.3</priority></url>
+  <url><loc>https://torama.ng/terms.html</loc><changefreq>yearly</changefreq><priority>0.3</priority></url>
+</urlset>

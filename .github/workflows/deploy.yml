@@ -17,6 +17,8 @@ on:
     paths:
       - '**.html'
       - 'logo.svg'
+      - 'robots.txt'
+      - 'sitemap.xml'
       - '.github/workflows/deploy.yml'
   workflow_dispatch:
 
@@ -38,7 +40,7 @@ jobs:
           username: ${{ secrets.SSH_USER }}
           key: ${{ secrets.SSH_KEY }}
           port: ${{ secrets.SSH_PORT }}
-          source: "index.html,terms.html,privacy.html,logo.svg"
+          source: "index.html,terms.html,privacy.html,logo.svg,robots.txt,sitemap.xml"
           target: "/opt/torama.money/www/"
           overwrite: true
 
@@ -50,6 +52,6 @@ jobs:
           key: ${{ secrets.SSH_KEY }}
           port: ${{ secrets.SSH_PORT }}
           script: |
-            chmod 644 /opt/torama.money/www/*.html /opt/torama.money/www/*.svg
+            chmod 644 /opt/torama.money/www/*.html /opt/torama.money/www/*.svg /opt/torama.money/www/*.txt /opt/torama.money/www/*.xml
             # Confirm the site still answers on its localhost port (nginx serves live).
             curl -fsS -o /dev/null http://127.0.0.1:8091/ && echo "torama.money OK" || (echo "site not responding"; exit 1)
